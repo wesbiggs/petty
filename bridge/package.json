@@ -1,0 +1,20 @@
+{
+  "name": "petty-bridge",
+  "version": "1.0.0",
+  "description": "Mac-side bridge for the PETTY C64 terminal",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "node --test",
+    "start": "node src/bridge.js",
+    "glyphs": "node scripts/gen-glyphs.js",
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
+  },
+  "keywords": [],
+  "type": "module",
+  "dependencies": {
+    "@xterm/headless": "^6.0.0",
+    "node-pty": "^1.1.0"
+  }
+}
