@@ -1,38 +1,44 @@
-// The hi-res client's screen codes 128-255, loaded with extended glyphs
-// (extglyphs.js) as they appear on screen. A slot is reused, least recently
-// shown first, once nothing on the new screen needs it; the client's bitmap
-// keeps the old pixels, so only the bridge's idea of which cells show that
-// code has to be forgotten. Beyond 128 different glyphs on one screen, the
-// rest fall back to their aliases in the ordinary character set.
+// Characters from 128 up on an `ext` display, loaded with extended glyphs
+// (extglyphs.js) as they appear on screen: 128-255 on the C64 hi-res screen,
+// 128-511 on the C128 (bit 8 is the VDC's alternate character set attribute).
+// A slot is reused, least recently shown first, once nothing on the new
+// screen needs it; beyond that, the rest fall back to their aliases in the
+// ordinary character set.
+//
+// Reloading a slot changes what the bridge's copy of the client's screen
+// means: the C64's bitmap keeps the old pixels, and the C128 redraws the
+// cells with the new glyph. Either way, those cells become unknown.
 
-import { OP } from './protocol.js';
+import { OP, VDC } from './protocol.js';
 import { EXT, EXT_GLYPHS } from './extglyphs.js';
+import { INVERSE } from './glyphs.js';
 
-const FIRST = 128, SLOTS = 128;
+const ALT_SPACE = 256 + 32; // looks like a space to the encoder: never used
 
 export class GlyphCache {
-  constructor() {
+  constructor(display) {
+    this.display = display;
+    const last = display.hires ? 255 : 511;
+    this.slots = [];
+    for (let s = 128; s <= last; s++) if (s !== ALT_SPACE) this.slots.push(s);
     this.slotOf = new Map(); // extended glyph -> slot
-    this.glyphIn = new Array(SLOTS).fill(null); // slot - FIRST -> extended glyph
-    this.shown = new Array(SLOTS).fill(0); // slot - FIRST -> frame last on screen
+    this.glyphIn = new Map(); // slot -> extended glyph
+    this.shown = new Map(); // slot -> frame last on screen
     this.frame = 0;
   }
 
-  // Replaces extended glyphs in `want.glyph` with slots, and returns the GLYPH
+  // Replaces extended glyphs in `want` with slots, and returns the GLYPH
   // commands that must precede the frame. Cells of `state` (the client's
-  // screen, if known) that show a redefined slot become unknown.
+  // screen, if known) that show a reloaded slot become unknown.
   place(want, state) {
-    const { glyph } = want;
+    const { glyph, color } = want;
     const needed = new Set();
     for (const g of glyph) if (g >= EXT) needed.add(g);
     if (!needed.size) return [];
     this.frame++;
 
     const inUse = new Set();
-    for (const g of needed) {
-      const slot = this.slotOf.get(g);
-      if (slot !== undefined) inUse.add(slot);
-    }
+    for (const g of needed) if (this.slotOf.has(g)) inUse.add(this.slotOf.get(g));
     const out = [];
     const assigned = new Map();
     for (const g of needed) {
@@ -40,38 +46,53 @@ export class GlyphCache {
       if (slot === undefined) {
         slot = this.#free(inUse);
         if (slot === undefined) continue; // full: falls back below
-        const old = this.glyphIn[slot - FIRST];
-        if (old !== null) this.slotOf.delete(old);
-        this.glyphIn[slot - FIRST] = g;
+        if (this.glyphIn.has(slot)) this.slotOf.delete(this.glyphIn.get(slot));
+        this.glyphIn.set(slot, g);
         this.slotOf.set(g, slot);
         inUse.add(slot);
-        out.push(OP.GLYPH, slot, ...EXT_GLYPHS[g - EXT].data);
-        if (state) for (let i = 0; i < state.glyph.length; i++) if (state.glyph[i] === slot) state.glyph[i] = -1;
+        out.push(OP.GLYPH, slot & 0xff, slot >> 8, ...EXT_GLYPHS[g - EXT].data);
+        if (state) this.#forget(state, slot);
       }
-      this.shown[slot - FIRST] = this.frame;
+      this.shown.set(slot, this.frame);
       assigned.set(g, slot);
     }
+
+    const alt = this.display.reverse; // the C128: bit 8 is an attribute
     for (let i = 0; i < glyph.length; i++) {
       const g = glyph[i];
       if (g < EXT) continue;
-      const slot = assigned.get(g);
-      if (slot !== undefined) { glyph[i] = slot; continue; }
-      // An inverse fallback (such as █) is its glyph with the colours swapped.
-      const code = EXT_GLYPHS[g - EXT].fallback, c = want.color[i];
-      glyph[i] = code & 0x7f;
-      if (code & 0x80) want.color[i] = (c & 15) << 4 | c >> 4;
+      let code = assigned.get(g);
+      if (code === undefined) {
+        // An inverse fallback (such as █) is its glyph in reverse.
+        code = EXT_GLYPHS[g - EXT].fallback;
+        if (code & INVERSE) {
+          code ^= INVERSE;
+          const c = color[i];
+          color[i] = this.display.hires ? (c & 15) << 4 | c >> 4 : c ^ VDC.RVS;
+        }
+      }
+      glyph[i] = code & 0xff;
+      if (alt && code > 0xff) color[i] |= VDC.ALT;
     }
     return out;
+  }
+
+  #forget(state, slot) {
+    const code = slot & 0xff, alt = slot > 0xff;
+    for (let i = 0; i < state.glyph.length; i++) {
+      if (state.glyph[i] !== code) continue;
+      if (this.display.reverse && ((state.color[i] & VDC.ALT) !== 0) !== alt) continue;
+      state.glyph[i] = -1;
+    }
   }
 
   // An empty slot, else the one shown longest ago that this frame doesn't use.
   #free(inUse) {
     let best;
-    for (let k = 0; k < SLOTS; k++) {
-      const slot = FIRST + k;
+    for (const slot of this.slots) {
       if (inUse.has(slot)) continue;
-      if (this.glyphIn[k] === null) return slot;
-      if (best === undefined || this.shown[k] < this.shown[best - FIRST]) best = slot;
+      if (!this.glyphIn.has(slot)) return slot;
+      if (best === undefined || this.shown.get(slot) < this.shown.get(best)) best = slot;
     }
     return best;
   }

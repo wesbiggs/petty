@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DISPLAY, OP, Decoder, encodeFrame, encodeReset, sameLook } from '../src/protocol.js';
+import { DISPLAY, OP, VDC, Decoder, encodeFrame, encodeReset, sameLook } from '../src/protocol.js';
 import { toScreenCode, screenCodeToChar, INVERSE } from '../src/glyphs.js';
 import { keyToBytes, MATRIX, SHIFT, CTRL, CBM, ALT } from '../src/keymap.js';
 import { VIC, RGBI, palette, oscReply, THEME_NAMES } from '../src/colors.js';
@@ -333,13 +333,13 @@ test('hi-res: colours per cell and extended glyphs', async () => {
 });
 
 test('hi-res: glyph cache loads, reuses and evicts slots', () => {
-  const cache = new GlyphCache();
+  const cache = new GlyphCache(DISPLAY.C64_HIRES);
   const screen = gs => { const w = blank(DISPLAY.C64_HIRES); w.hires = true; gs.forEach((g, i) => { w.glyph[i] = g; }); return w; };
   const dbl = extendedGlyph('═'), cross = extendedGlyph('╬');
 
   let want = screen([dbl, cross, dbl]);
   let ops = cache.place(want, null);
-  assert.equal(ops.filter((b, i) => i % 10 === 0 && b === OP.GLYPH).length, 2, 'two GLYPH commands');
+  assert.equal(ops.filter((b, i) => i % 11 === 0 && b === OP.GLYPH).length, 2, 'two GLYPH commands');
   const [a, b] = want.glyph;
   assert.ok(a >= 128 && b >= 128 && a !== b);
   assert.equal(want.glyph[2], a);
@@ -371,7 +371,7 @@ test('hi-res: frames round-trip through the decoder', async () => {
   const term = new xterm.Terminal({ cols: 40, rows: 25, allowProposedApi: true });
   await new Promise(r => term.write('\x1b[42m ok \x1b[0m ╔═╗ \x1b[31m♦', r));
   const want = snapshot(term, 0, DISPLAY.C64_HIRES, 'dark');
-  const cache = new GlyphCache();
+  const cache = new GlyphCache(DISPLAY.C64_HIRES);
   const glyphs = cache.place(want, null);
   const { bytes } = encodeReset(want, 0, 0, 15 << 4);
   const dec = new Decoder(40, 25);
@@ -379,4 +379,30 @@ test('hi-res: frames round-trip through the decoder', async () => {
   assert.deepEqual([...dec.glyph], [...want.glyph]);
   for (let i = 0; i < want.glyph.length; i++) assert.ok(sameLook(want.glyph[i], dec.color[i], want.color[i], true), `cell ${i}`);
   assert.equal(dec.glyphs.size, 3, '╔ ═ ╗ loaded');
+});
+
+test('C128: reverse attribute, and 383 glyph slots with the alternate set', async () => {
+  const term = new xterm.Terminal({ cols: 80, rows: 25, allowProposedApi: true });
+  const braille = Array.from({ length: 200 }, (_, i) => String.fromCodePoint(0x2801 + i)).join('');
+  await new Promise(r => term.write(`\x1b[30;47mA\x1b[0m█═${braille}`, r));
+  const want = snapshot(term, 0, DISPLAY.C128, 'dark');
+  assert.deepEqual([want.glyph[0], want.color[0]], [toScreenCode('A'), 14 | VDC.RVS], 'reversed in the card colour');
+  assert.deepEqual([want.glyph[1], want.color[1] & VDC.RVS], [SPACE, VDC.RVS], '█ is a reversed space');
+  assert.equal(want.glyph[2], extendedGlyph('═'));
+
+  const cache = new GlyphCache(DISPLAY.C128);
+  const glyphs = cache.place(want, null);
+  assert.ok(want.glyph.every(g => g < 256), 'codes fit a byte');
+  const codes = want.glyph.map((g, i) => g + (want.color[i] & VDC.ALT ? 256 : 0));
+  assert.ok(codes.some(c => c > 255), 'the alternate set is used');
+  assert.ok(!codes.includes(256 + SPACE), 'never the alternate space');
+  const ext = new Set(codes.slice(2, 203));
+  assert.equal(ext.size, 201, 'all 201 extended glyphs loaded');
+
+  const { bytes } = encodeReset(want, 0, 0, 14);
+  const dec = new Decoder(80, 25);
+  dec.feed(glyphs.concat(bytes));
+  assert.deepEqual([...dec.glyph], [...want.glyph]);
+  for (let i = 0; i < want.glyph.length; i++) assert.ok(sameLook(want.glyph[i], dec.color[i], want.color[i]), `cell ${i}`);
+  for (const c of ext) assert.ok(dec.glyphs.has(c), `glyph ${c} loaded`);
 });

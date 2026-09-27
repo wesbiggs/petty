@@ -5,10 +5,12 @@
 ; bytes (RGBI in bits 0-3), already mapped by the bridge. Runs at 2 MHz with
 ; the 40-column screen blanked, and sends raw key matrix codes 0-87, so the
 ; C128's extra keys (ESC, TAB, ALT, keypad, ...) reach the bridge. Attribute
-; bit 5 underlines, including spaces.
+; bit 5 underlines, including spaces, bit 6 reverses the cell, and bit 7
+; selects characters 256-511.
 ;
-; VDC RAM: screen $0000, attributes $0800, font $2000 (256 characters of 16
-; bytes: 0-127 ROM lowercase + patches, 128-255 their inverse).
+; VDC RAM: screen $0000, attributes $0800, font $2000-$3FFF (512 characters of
+; 16 bytes: 0-127 ROM lowercase + patches; the bridge loads 128-511 with
+; GLYPH as it needs them).
 
 ; --- hardware ---------------------------------------------------------------
 VDC_ADDR    = $D600             ; write: register number; read: bit 7 = ready
@@ -72,7 +74,8 @@ OP_SCROLL   = 5
 OP_COLORS   = 6
 OP_CLS      = 7
 OP_FRAME    = 8
-NUM_OPS     = 9
+OP_GLYPH    = 11
+NUM_OPS     = 12
 
 MSG_ACK     = 1
 MSG_KEY     = 2
@@ -165,6 +168,7 @@ cmdloop:
 optable:
         .word cmdloop-1, op_goto-1, op_color-1, op_put-1, op_repeat-1
         .word op_scroll-1, op_colors-1, op_cls-1, op_frame-1
+        .word cmdloop-1, cmdloop-1, op_glyph-1    ; no SPRITE, NOSPRITE here
 
 op_goto:
         jsr rb_get
@@ -250,6 +254,40 @@ op_cls:
 op_frame:
         lda #MSG_ACK
         jsr send
+        jmp cmdloop
+
+; GLYPH lo hi d0..d7: the first 8 of character lo + 256 * hi's 16 bytes.
+op_glyph:
+        jsr rb_get              ; addr = VDC_FONT + code * 16
+        sta addr
+        lsr
+        lsr
+        lsr
+        lsr
+        sta addr+1
+        jsr rb_get
+        asl
+        asl
+        asl
+        asl
+        ora addr+1
+        clc
+        adc #>VDC_FONT
+        sta addr+1
+        lda addr
+        asl
+        asl
+        asl
+        asl
+        sta addr
+        jsr vdc_seek
+        lda #8
+        sta count
+:       jsr rb_get
+        ldx #R_DATA
+        jsr vdc_set
+        dec count
+        bne :-
         jmp cmdloop
 
 ; SCROLL top bot n: rows top..bot move up n, vacated rows cleared. Uses the
@@ -643,7 +681,7 @@ banner:
         .byte 16,5,20,20,25,": ",23,1,9,20,9,14,7," ",6,15,18," ",2,18,9,4,7,5,"...",0
 
 ; Build characters 0-127 in FONTBUF from the ROM and the custom glyphs, then
-; upload them and their inverse to the VDC. Called with interrupts off.
+; upload them to the VDC and clear 128-511. Called with interrupts off.
 init_font:
         lda #$01                ; character ROM at $D000
         sta MMU_CR
@@ -704,9 +742,7 @@ init_font:
         jsr vdc_seek
         ldx #R_DATA
         stx VDC_ADDR
-        lda #0                  ; first pass as is, second inverted
-        sta tmp
-@pass:  lda #<FONTBUF
+        lda #<FONTBUF
         sta src
         lda #>FONTBUF
         sta src+1
@@ -714,7 +750,6 @@ init_font:
         sta count
 @char:  ldy #0
 :       lda (src),y             ; 8 rows of pixels
-        eor tmp
         jsr vdc_write
         iny
         cpy #8
@@ -732,11 +767,12 @@ init_font:
         inc src+1
 :       dec count
         bne @char
-        lda tmp
-        eor #$FF
-        sta tmp
-        bne @pass
-        rts
+        lda #<(384 * 16)        ; the update address is at character 128
+        sta cnt
+        lda #>(384 * 16)
+        sta cnt+1
+        lda #0
+        jmp vdc_fill
 
 ; Row offsets, including row 25 (= a full screen of bytes).
 rowlo:

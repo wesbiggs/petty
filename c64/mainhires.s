@@ -233,10 +233,12 @@ op_nosprite:
         jsr rb_get
         jmp cmdloop
 
-; GLYPH code d0..d7: redefine a screen code. rb_get leaves X alone.
+; GLYPH lo hi d0..d7: redefine screen code lo (hi is 0 here). rb_get leaves
+; X alone.
 op_glyph:
         jsr rb_get
         tax
+        jsr rb_get
 .repeat 8, r
         jsr rb_get
         sta FONT + r * 256,x

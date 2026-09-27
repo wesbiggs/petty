@@ -4,7 +4,7 @@ A Commodore 64 terminal (PETSCII + TTY) for Claude Code or any other terminal
 program. There are also 80-column clients: one for the C128's 80-column
 screen, and one for the C64 that draws 80 columns in the hi-res bitmap. A
 third C64 client draws 40 columns in the hi-res bitmap, for colours per cell
-and several hundred more glyphs.
+and several hundred more glyphs, which the C128 client has too.
 
 A bridge on a Mac or Linux host runs the program in a pty the size of the
 client's screen (40×25, or 80×25) and emulates the terminal headlessly
@@ -113,12 +113,15 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
   for the logo. Codes 128–255 are the inverse of 0–127, so `█ ▐ ▄ ▛ ▜ ▙ ▟` cost
   nothing extra. Other Unicode is aliased or falls back to `?`. Edit
   [bridge/src/glyphs.js](bridge/src/glyphs.js); `make` regenerates `c64/glyphs.inc`.
-  The C128 client uploads the same 256 characters to the VDC's font RAM.
+  The C128 client uploads characters 0–127 to the VDC's font RAM, which holds
+  512. The VDC reverses a cell with an attribute bit, so it needs no inverse
+  copies, and the bridge loads the other 383 with extended glyphs, as on the
+  hi-res C64 (below).
 - **Colours:** ANSI 16 colours use a hand-tuned table per theme; 256-colour and
   truecolor use the nearest readable match in a Colodore-style palette. The C128's VDC has the ANSI
   colours themselves (RGBI), so they map one-to-one, except black and dark blue text.
 - **Backgrounds:** text mode has no per-cell background. A cell with a coloured
-  background is drawn as an inverse glyph in that colour, so diff lines show as
+  background is drawn as an inverse glyph (on the C128, a reversed cell) in that colour, so diff lines show as
   solid green or red bars, with text in the screen colour showing through. On
   the light theme, backgrounds only use colours dark enough for that white text.
 - **Cursor:** drawn by the bridge as an inverse cell when the program shows it.
@@ -142,9 +145,9 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
   the bridge loads 128–255 with glyphs the other clients only alias
   ([bridge/src/extglyphs.js](bridge/src/extglyphs.js)): heavy, double and dashed box
   drawing, eighth blocks and shades, braille (for graphs), arrows, shapes and
-  a few symbols. It keeps up to 128 of them on screen at once, reusing the
-  least recently shown slot; past that, the rest fall back to their aliases
-  ([bridge/src/glyphcache.js](bridge/src/glyphcache.js)). Scrolling moves the
+  a few symbols. It keeps up to 128 of them on screen at once (383 on the
+  C128), reusing the least recently shown slot; past that, the rest fall back
+  to their aliases ([bridge/src/glyphcache.js](bridge/src/glyphcache.js)). Scrolling moves the
   whole bitmap, which takes about 90 ms, as on the soft 80-column screen.
 
   ![ttysolitaire on the text client (left) and the hi-res client (right)](docs/solitaire.png)
@@ -153,7 +156,7 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
 
 See [bridge/src/protocol.js](bridge/src/protocol.js). Host→C64 opcodes are GOTO,
 COLOR, PUT, REPEAT, SCROLL, COLORS, CLS and FRAME, plus SPRITE and NOSPRITE for
-the soft 80-column screen and GLYPH for the hi-res one. Every frame ends with FRAME and
+the soft 80-column screen and GLYPH for the hi-res one and the C128. Every frame ends with FRAME and
 the C64 answers ACK. The bridge keeps only one frame in flight, so fast output
 merges into fewer frames instead of overflowing the client's receive buffer (256
 bytes; 4 KB on the bitmap C64 clients).
@@ -161,7 +164,8 @@ C64→host messages are ACK, `KEY code mods` and HELLO. A client on another
 display sends `HELLO_ON id` instead (1 = C128 VDC, 2 = C64 soft 80 columns,
 both 80×25; 3 = C64 hi-res, 40×25), and the bridge
 resizes the program's terminal to match. For the C128, colours are VDC
-attribute bytes, and key codes go up to 87 with ALT as modifier bit 3. For
+attribute bytes (bit 6 reverses the cell, bit 7 selects characters 256–511),
+and key codes go up to 87 with ALT as modifier bit 3. For
 the hi-res C64, a colour is foreground × 16 + background.
 
 For each frame the encoder tries every full-screen scroll offset and picks the
@@ -203,7 +207,7 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `bridge/src/protocol.js` | encoder and reference decoder |
 | `bridge/src/glyphs.js` / `colors.js` / `keymap.js` | character, colour, key mappings |
 | `bridge/src/font4x8.js` | 4×8 font for the soft 80-column screen |
-| `bridge/src/extglyphs.js` / `glyphcache.js` | the hi-res screen's extra glyphs, and which are loaded |
+| `bridge/src/extglyphs.js` / `glyphcache.js` | the extra glyphs for the hi-res C64 and the C128, and which are loaded |
 | `bridge/scripts/gen-glyphs.js` | writes `c64/glyphs.inc` and `c64/font4x8.inc` |
 | `bridge/scripts/fake-c64.js` | pretend client for testing without VICE |
 | `bridge/scripts/mock-soft80.js` | renders a program's soft 80-column screen to an image |
@@ -216,13 +220,13 @@ tables `$4000–$4FFF` (built at startup), sprite data `$5000–$51FF`, colours
 `$5C00` (sprite pointers `$5FF8`) and the bitmap `$6000–$7F3F`; receive ring
 `$8000–$8FFF` (4 KB, because a bitmap scroll takes about 90 ms).
 
-Hi-res 40 columns: code `$0801–$0E7A`; the VIC uses its second bank, with the
+Hi-res 40 columns: code `$0801–$0E7D`; the VIC uses its second bank, with the
 font `$4000–$47FF` (one page per pixel row), colours `$5C00` and the bitmap
 `$6000–$7F3F`; receive ring `$8000–$8FFF`.
 
-C128 (bank 15): code `$1C01–$2245`, font build buffer `$3800–$3BFF` (startup
+C128 (bank 15): code `$1C01–$2280`, font build buffer `$3800–$3BFF` (startup
 only), receive ring `$3F00`. VDC RAM: screen `$0000`, attributes `$0800`, font
-`$2000–$2FFF`.
+`$2000–$3FFF` (512 characters; 128–511 loaded by the bridge).
 
 ## Real hardware notes
 

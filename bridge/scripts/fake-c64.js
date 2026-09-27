@@ -3,7 +3,7 @@
 // usage: node scripts/fake-c64.js [--c128 | --soft80 | --hires] [port] "text to type"
 import net from 'node:net';
 import { parseArgs } from 'node:util';
-import { Decoder, DISPLAY, MSG, OP } from '../src/protocol.js';
+import { Decoder, DISPLAY, MSG, OP, VDC } from '../src/protocol.js';
 import { MATRIX, SHIFT } from '../src/keymap.js';
 import { screenCodeToChar } from '../src/glyphs.js';
 import { EXT_GLYPHS } from '../src/extglyphs.js';
@@ -28,11 +28,15 @@ sock.on('data', d => {
   for (const b of d) if (b === OP.FRAME) sock.write(Buffer.from([MSG.ACK]));
 });
 
-// Hi-res codes 128-255 are whatever GLYPH loaded: find it by its pixels.
+// Characters from 128 up (on the C128, with the alternate set attribute)
+// are whatever GLYPH loaded: find it by its pixels. The C128 reverses a cell
+// with an attribute instead.
 const byPixels = new Map(EXT_GLYPHS.map(g => [g.data.join(), g.ch]));
-function charAt(code) {
-  if (display.hires && code >= 128) return byPixels.get(dec.glyphs.get(code)?.join()) ?? '?';
-  return screenCodeToChar(code);
+function charAt(i) {
+  let code = dec.glyph[i];
+  if (display === DISPLAY.C128 && dec.color[i] & VDC.ALT) code += 256;
+  if (display.ext && code >= 128) return byPixels.get(dec.glyphs.get(code)?.join()) ?? '?';
+  return screenCodeToChar(display.reverse && dec.color[i] & VDC.RVS ? code | 128 : code);
 }
 
 function keyFor(ch) {
@@ -50,7 +54,7 @@ setTimeout(async () => {
   setTimeout(() => {
     for (let r = 0; r < rows; r++) {
       let line = '';
-      for (let c = 0; c < cols; c++) line += charAt(dec.glyph[r * cols + c]);
+      for (let c = 0; c < cols; c++) line += charAt(r * cols + c);
       console.log('|' + line + '|');
     }
     sock.end();

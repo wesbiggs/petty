@@ -205,8 +205,8 @@ class Connection {
   sendFrame() {
     const want = snapshot(term, panX, display, opt.theme, panY);
     const pal = paletteFor(display, opt.theme);
-    // After a reset, reload the hi-res client's extended glyphs too.
-    if (!this.state) this.glyphs = display.hires ? new GlyphCache() : null;
+    // After a reset, reload the client's extended glyphs too.
+    if (!this.state) this.glyphs = display.ext ? new GlyphCache(display) : null;
     const glyphs = this.glyphs?.place(want, this.state) ?? [];
     const colour = display.hires ? pal.defaultFg << 4 | pal.screenBg : pal.defaultFg;
     let { bytes, state } = this.state

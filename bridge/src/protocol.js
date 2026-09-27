@@ -3,7 +3,8 @@
 // Host -> C64 (the C64 keeps a write pointer and a current colour):
 //   01 row col         GOTO     move write pointer
 //   02 color           COLOR    set current colour (C64: 0-15; C128: VDC attribute,
-//                               RGBI in bits 0-3, bit 5 underline; C64 hi-res:
+//                               RGBI in bits 0-3, bit 5 underline, bit 6 reverse,
+//                               bit 7 characters 256-511; C64 hi-res:
 //                               foreground << 4 | background)
 //   03 n g1..gn        PUT      write n screen codes, advancing
 //   04 n g             REPEAT   write screen code g n times
@@ -15,8 +16,10 @@
 //                               n (0-7) with 24x21 pixels d, its top left
 //                               corner on character col, row
 //   0A n               NOSPRITE hide sprite n
-//   0B code d0..d7     GLYPH    (C64 hi-res) redefine screen code 128-255;
-//                               cells already drawn with it keep their pixels
+//   0B lo hi d0..d7    GLYPH    redefine character lo + 256 * hi as 8 rows of
+//                               pixels: 128-255 on the C64 hi-res screen (cells
+//                               already drawn keep their pixels), 128-511 on the
+//                               C128 (cells showing it change)
 //
 // C64 -> host:
 //   01                 ACK      frame processed
@@ -29,13 +32,14 @@
 // pointer wraps at the end of the screen. `pair`: two neighbouring cells share
 // one colour (the bridge makes them equal). `hires`: every cell has its own
 // foreground and background, and there is no inverse half of the character
-// set: codes 128-255 are loaded with GLYPH.
+// set. `reverse`: inverse video is an attribute (VDC.RVS), not a character.
+// `ext`: characters from 128 up are extended glyphs, loaded with GLYPH.
 
 export const DISPLAY = {
   C64: { id: 0, name: 'C64', cols: 40, rows: 25 },
-  C128: { id: 1, name: 'C128 VDC', cols: 80, rows: 25 },
+  C128: { id: 1, name: 'C128 VDC', cols: 80, rows: 25, reverse: true, ext: true },
   C64_80: { id: 2, name: 'C64 soft-80', cols: 80, rows: 25, pair: true },
-  C64_HIRES: { id: 3, name: 'C64 hi-res', cols: 40, rows: 25, hires: true },
+  C64_HIRES: { id: 3, name: 'C64 hi-res', cols: 40, rows: 25, hires: true, ext: true },
 };
 export const displayById = id => Object.values(DISPLAY).find(d => d.id === id);
 
@@ -47,6 +51,8 @@ export const CELLS = COLS * ROWS;
 export const OP = { GOTO: 1, COLOR: 2, PUT: 3, REPEAT: 4, SCROLL: 5, COLORS: 6, CLS: 7, FRAME: 8, SPRITE: 9, NOSPRITE: 10, GLYPH: 11 };
 const SPRITES = 8;
 const spriteKey = s => s ? `${s.col},${s.row},${s.color},${s.data.join(',')}` : null;
+// VDC attribute bits beyond the colour.
+export const VDC = { UNDERLINE: 0x20, RVS: 0x40, ALT: 0x80 };
 export const MSG = { ACK: 1, KEY: 2, HELLO: 3, HELLO_ON: 4 };
 
 const SPACE = 32;
@@ -253,7 +259,7 @@ export class Decoder {
           break;
         }
         case OP.NOSPRITE: this.sprites[next()] = null; break;
-        case OP.GLYPH: { const code = next(); this.glyphs.set(code, Uint8Array.from({ length: 8 }, next)); break; }
+        case OP.GLYPH: { const code = next() | next() << 8; this.glyphs.set(code, Uint8Array.from({ length: 8 }, next)); break; }
         default: throw new Error(`bad opcode at ${i - 1}`);
       }
     }
