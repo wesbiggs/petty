@@ -14,6 +14,10 @@ const KIND = { [DISPLAY.C64.id]: 'vic', [DISPLAY.C128.id]: 'rgbi', [DISPLAY.C64_
 const COVER = Array.from({ length: 256 }, (_, code) => FONT4[code & 0x7f]
   .reduce((n, row) => n + [...((code & 0x80 ? ~row : row) & 15).toString(2)].filter(b => b === '1').length, 0) / 32);
 
+// Card suits are colour-coded, so on a coloured background (a card) they
+// keep their own colour rather than the card's.
+const SUITS = new Set([...'♠♥♦♣'].map(toScreenCode));
+
 // The palette a display shows in theme `theme` (see colors.js).
 export const paletteFor = (display, theme = 'dark') => palette(KIND[display.id], theme);
 
@@ -55,6 +59,11 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', 
       let g = cell.getWidth() === 0 || cell.isInvisible() ? SPACE : toScreenCode(cell.getChars());
       let fg = cellFg(cell, pal);
       let bg = cellBg(cell, pal);
+      // A suit's colour survives the inverse glyph only if it is the screen
+      // colour (black on the dark theme); otherwise it is drawn in its colour
+      // on the screen colour, a hole in the card.
+      const ownColour = SUITS.has(g) && !cell.isInverse() && !cell.isFgDefault() &&
+        pal.bg(cell.isFgRGB() ? 'rgb' : 'palette', cell.getFgColor()) !== null;
       if (cell.isInverse()) [fg, bg] = [bg ?? pal.screenBg, fg];
       if (showCursor && panX + x === buf.cursorX && y === cursorRow) [fg, bg] = [bg ?? pal.screenBg, fg];
 
@@ -62,8 +71,8 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', 
       // screen colour. Text on a coloured background becomes an inverted glyph
       // in the background colour (the text shows in the screen colour); a
       // glyph that covers most of its cell, like the blocks in Claude Code's
-      // logo, keeps its own colour instead.
-      if (bg !== null && bg !== pal.screenBg && COVER[g] < 0.5) {
+      // logo, keeps its own colour instead, and so does a suit (see SUITS).
+      if (bg !== null && bg !== pal.screenBg && COVER[g] < 0.5 && !ownColour) {
         g ^= INVERSE;
         fg = bg;
       }

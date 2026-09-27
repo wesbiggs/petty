@@ -106,7 +106,7 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
 
 - **Characters:** the lowercase character ROM is copied to RAM at `$3800`, and
   41 custom glyphs are patched over the PETSCII graphics: missing ASCII
-  (`\ ^ _ \` { | } ~`), box drawing, `⏺ ❯ ✻ ✳ ✓ ✗ … ↑ ↓ → ▶`, and quadrant blocks
+  (`\ ^ _ \` { | } ~`), box drawing, `⏺ ❯ ✻ ✓ … ↑ ↓ →`, card suits `♠ ♥ ♦ ♣`, and quadrant blocks
   for the logo. Codes 128–255 are the inverse of 0–127, so `█ ▐ ▄ ▛ ▜ ▙ ▟` cost
   nothing extra. Other Unicode is aliased or falls back to `?`. Edit
   [bridge/src/glyphs.js](bridge/src/glyphs.js); `make` regenerates `c64/glyphs.inc`.

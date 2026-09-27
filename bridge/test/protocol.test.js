@@ -304,3 +304,15 @@ test('snapshot of a terminal taller than the display', async () => {
   assert.equal(line(bottom, 0), 'row 3 ');
   assert.equal(line(bottom, 24), 'row 27');
 });
+
+test('card suits keep their colour on a card', async () => {
+  const term = new xterm.Terminal({ cols: 40, rows: 25, allowProposedApi: true });
+  await new Promise(r => term.write('\x1b[30;47mA\x1b[31m♥\x1b[30m♠\x1b[0m', r));
+  const dark = snapshot(term, 0, DISPLAY.C64, 'dark');
+  assert.deepEqual([dark.glyph[0], dark.color[0]], [toScreenCode('A') | INVERSE, 15], 'text: inverse in the card colour');
+  assert.deepEqual([dark.glyph[1], dark.color[1]], [toScreenCode('♥'), 2], 'red suit: red');
+  assert.deepEqual([dark.glyph[2], dark.color[2]], [toScreenCode('♠') | INVERSE, 15], 'black suit: black shows through');
+  const light = snapshot(term, 0, DISPLAY.C64, 'light');
+  assert.deepEqual([light.glyph[1], light.color[1]], [toScreenCode('♥'), 2]);
+  assert.deepEqual([light.glyph[2], light.color[2]], [toScreenCode('♠'), 0], 'black suit on a white screen: black');
+});

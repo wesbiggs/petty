@@ -38,7 +38,7 @@ for (let i = 0; i < 36; i++) {
 }
 lines.push(hue + R + ' rgb');
 lines.push('');
-lines.push('╭──────╮ ⏺ ✻ ✳ ✓ ✗ … ↑ ↓ → ▶ ❯');
+lines.push('╭──────╮ ⏺ ✻ ✓ … ↑ ↓ → ❯ ♠ ♥ ♦ ♣');
 lines.push('│ box  │ █▐▄▛▜▙▟ \\^_`{|}~');
 lines.push('╰──────╯');
 
