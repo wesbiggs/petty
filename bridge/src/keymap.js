@@ -1,10 +1,11 @@
-// C64 keyboard matrix codes (KERNAL $CB values) -> bytes for the pty.
+// Keyboard matrix codes (C64 KERNAL $CB, C128 $D4) -> bytes for the pty.
 
-export const SHIFT = 1, CBM = 2, CTRL = 4;
+export const SHIFT = 1, CBM = 2, CTRL = 4, ALT = 8; // ALT: C128 only
 
-// Index = matrix code. Modifier keys never appear ($CB ignores them).
+// Index = matrix code. Modifier keys never appear (the KERNAL ignores them).
+// 64-87 are the C128's extra keys; KP = numeric keypad.
 export const MATRIX = [
-  'DEL', 'RETURN', 'RIGHT', 'F7', 'F1', 'F3', 'F5', 'DOWN',
+  'DEL', 'RETURN', 'CRSR↔', 'F7', 'F1', 'F3', 'F5', 'CRSR↕',
   '3', 'w', 'a', '4', 'z', 's', 'e', 'LSHIFT',
   '5', 'r', 'd', '6', 'c', 'f', 't', 'x',
   '7', 'y', 'g', '8', 'b', 'h', 'u', 'v',
@@ -12,6 +13,9 @@ export const MATRIX = [
   '+', 'p', 'l', '-', '.', ':', '@', ',',
   '£', '*', ';', 'HOME', 'RSHIFT', '=', '↑', '/',
   '1', '←', 'CTRL', '2', 'SPACE', 'C=', 'q', 'STOP',
+  'HELP', 'KP8', 'KP5', 'TAB', 'KP2', 'KP4', 'KP7', 'KP1',
+  'ESC', 'KP+', 'KP-', 'LINEFEED', 'ENTER', 'KP6', 'KP9', 'KP3',
+  'ALT', 'KP0', 'KP.', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'NOSCROLL',
 ];
 
 const ESC = '\x1b';
@@ -37,6 +41,12 @@ const SPECIAL = {
   F3: ['\t', ESC + '[6~'], // F3 tab, F4 page down
   F5: ['\x12', null], // ctrl+R history search
   F7: ['\x0f', null], // ctrl+O transcript
+  // C128
+  ESC: [ESC, ESC],
+  TAB: ['\t', ESC + '[Z'],
+  LINEFEED: ['\n', '\n'], // ctrl+J = newline in Claude Code
+  HELP: [ESC + 'OP', ESC + 'OP'], // F1
+  ENTER: ['\r', '\r'],
 };
 
 // C=+CRSR does what a trackpad swipe does in iTerm2: a mouse wheel event at
@@ -54,18 +64,32 @@ function wheel(up, mouse) {
   return ESC + '[M' + String.fromCharCode(32 + button, 32 + WHEEL_COL, 32 + WHEEL_ROW);
 }
 
-export function keyToBytes(code, mods, { appCursor = false, mouse = null } = {}) {
-  const key = MATRIX[code];
+const ARROW = { UP: 'A', DOWN: 'B', RIGHT: 'C', LEFT: 'D' };
+
+// ALT (C128) sends Meta: Esc before whatever the key sends.
+export function keyToBytes(code, mods, opts) {
+  const bytes = keyToBytesNoAlt(code, mods, opts);
+  return (mods & ALT) && typeof bytes === 'string' ? ESC + bytes : bytes;
+}
+
+function keyToBytesNoAlt(code, mods, { appCursor = false, mouse = null } = {}) {
+  let key = MATRIX[code];
   if (!key) return null;
   const shift = (mods & SHIFT) !== 0;
 
-  if (key === 'DOWN' || key === 'RIGHT') {
-    const dir = key === 'DOWN' ? (shift ? 'A' : 'B') : (shift ? 'D' : 'C');
-    if (key === 'DOWN' && (mods & CBM)) return wheel(shift, mouse);
-    if (key === 'RIGHT' && (mods & CBM)) return { pan: shift ? -1 : 1 };
-    return ESC + (appCursor ? 'O' : '[') + dir;
+  // The C64's two CRSR keys use SHIFT for up and left; the C128's four
+  // cursor keys don't. C= turns up/down into scrolling, left/right into panning.
+  if (key === 'CRSR↕') key = shift ? 'UP' : 'DOWN';
+  if (key === 'CRSR↔') key = shift ? 'LEFT' : 'RIGHT';
+  if (ARROW[key]) {
+    if (mods & CBM) {
+      if (key === 'UP' || key === 'DOWN') return wheel(key === 'UP', mouse);
+      return { pan: key === 'RIGHT' ? 1 : -1 };
+    }
+    return ESC + (appCursor ? 'O' : '[') + ARROW[key];
   }
   if (SPECIAL[key]) return SPECIAL[key][shift ? 1 : 0];
+  if (key.startsWith('KP')) return key.slice(2);
 
   if (key.length === 1 && key >= 'a' && key <= 'z') {
     if (mods & CTRL) return String.fromCharCode(key.charCodeAt(0) & 0x1f);

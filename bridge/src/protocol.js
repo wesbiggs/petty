@@ -2,7 +2,8 @@
 //
 // Host -> C64 (the C64 keeps a write pointer and a current colour):
 //   01 row col         GOTO     move write pointer
-//   02 color           COLOR    set current colour (0-15)
+//   02 color           COLOR    set current colour (C64: 0-15; C128: VDC attribute,
+//                               RGBI in bits 0-3, bit 5 underline)
 //   03 n g1..gn        PUT      write n screen codes, advancing
 //   04 n g             REPEAT   write screen code g n times
 //   05 top bot n       SCROLL   scroll rows top..bot up by n, clear with spaces
@@ -13,29 +14,47 @@
 // C64 -> host:
 //   01                 ACK      frame processed
 //   02 key mods        KEY      matrix code 0-63, mods bit0 shift, bit1 C=, bit2 ctrl
-//   03                 HELLO    client (re)started; host sends a full redraw
+//   03                 HELLO    C64 client (re)started; host sends a full redraw
+//   04 display         HELLO_ON same, from a client on another display (DISPLAY ids)
+//
+// Rows and columns are those of the client's display: 40x25 on the C64, 80x25
+// on the C128's VDC. The write pointer wraps at the end of the screen.
 
-export const COLS = 40;
-export const ROWS = 25;
+export const DISPLAY = {
+  C64: { id: 0, name: 'C64', cols: 40, rows: 25 },
+  C128: { id: 1, name: 'C128 VDC', cols: 80, rows: 25 },
+};
+export const displayById = id => Object.values(DISPLAY).find(d => d.id === id);
+
+// C64 defaults, for callers that only deal with one screen size.
+export const COLS = DISPLAY.C64.cols;
+export const ROWS = DISPLAY.C64.rows;
 export const CELLS = COLS * ROWS;
 
 export const OP = { GOTO: 1, COLOR: 2, PUT: 3, REPEAT: 4, SCROLL: 5, COLORS: 6, CLS: 7, FRAME: 8 };
-export const MSG = { ACK: 1, KEY: 2, HELLO: 3 };
+export const MSG = { ACK: 1, KEY: 2, HELLO: 3, HELLO_ON: 4 };
 
 const SPACE = 32;
 const MAX_GAP = 3; // unchanged cells worth rewriting instead of a 3-byte GOTO
+const ATTRS = 0xF0; // colour bits beyond the colour itself (C128 attributes)
+
+// Do two cells with glyph g look the same in colours a and b? A space does in
+// any colour, unless an attribute such as underline shows on it.
+export const sameLook = (g, a, b) => a === b || (g === SPACE && ((a | b) & ATTRS) === 0);
 
 // Mirror of what the C64 is displaying, plus its write pointer and colour.
 export class ScreenState {
-  constructor() {
-    this.glyph = new Int16Array(CELLS).fill(-1); // -1 = unknown
-    this.color = new Int16Array(CELLS).fill(-1);
+  constructor(cols = COLS, rows = ROWS) {
+    this.cols = cols;
+    this.rows = rows;
+    this.glyph = new Int16Array(cols * rows).fill(-1); // -1 = unknown
+    this.color = new Int16Array(cols * rows).fill(-1);
     this.pos = -1;
     this.cur = -1;
   }
 
   clone() {
-    const s = new ScreenState();
+    const s = new ScreenState(this.cols, this.rows);
     s.glyph.set(this.glyph);
     s.color.set(this.color);
     s.pos = this.pos;
@@ -43,37 +62,38 @@ export class ScreenState {
     return s;
   }
 
-  // Same visible result? A space looks identical in any colour.
   matches(i, g, c) {
-    return this.glyph[i] === g && (g === SPACE || this.color[i] === c);
+    return this.glyph[i] === g && sameLook(g, this.color[i], c);
   }
 
   scrollUp(top, bot, n) {
-    const from = (top + n) * COLS, to = (bot + 1) * COLS;
-    this.glyph.copyWithin(top * COLS, from, to);
-    this.color.copyWithin(top * COLS, from, to);
-    const clear = Math.max(top, bot - n + 1) * COLS;
+    const cols = this.cols;
+    const from = (top + n) * cols, to = (bot + 1) * cols;
+    this.glyph.copyWithin(top * cols, from, to);
+    this.color.copyWithin(top * cols, from, to);
+    const clear = Math.max(top, bot - n + 1) * cols;
     this.glyph.fill(SPACE, clear, to);
     this.color.fill(this.cur, clear, to);
   }
 }
 
-// Encode the changes that take `state` to `want` ({glyph, color} arrays).
-// Mutates `state` to match what the C64 will show and returns the byte array.
+// Encode the changes that take `state` to `want` ({glyph, color} arrays of the
+// same size). Mutates `state` to match what the C64 will show.
 function encodeDiff(state, want, out) {
   const { glyph: wg, color: wc } = want;
+  const { cols } = state, cells = state.glyph.length;
   let i = 0;
-  while (i < CELLS) {
+  while (i < cells) {
     if (state.matches(i, wg[i], wc[i])) { i++; continue; }
 
     // Extend the run while changes are no more than MAX_GAP cells apart.
     let last = i;
-    for (let j = i + 1; j < CELLS && j - last <= MAX_GAP; j++) {
+    for (let j = i + 1; j < cells && j - last <= MAX_GAP; j++) {
       if (!state.matches(j, wg[j], wc[j])) last = j;
     }
 
     if (state.pos !== i) {
-      out.push(OP.GOTO, Math.floor(i / COLS), i % COLS);
+      out.push(OP.GOTO, Math.floor(i / cols), i % cols);
     }
 
     // Split into segments of one colour; spaces take whatever colour is current.
@@ -88,7 +108,7 @@ function encodeDiff(state, want, out) {
     };
     for (let k = i; k <= last; k++) {
       const g = wg[k];
-      if (g !== SPACE && wc[k] !== state.cur) {
+      if (!sameLook(g, wc[k], state.cur)) {
         flush();
         out.push(OP.COLOR, wc[k]);
         state.cur = wc[k];
@@ -98,7 +118,7 @@ function encodeDiff(state, want, out) {
       state.color[k] = state.cur;
     }
     flush();
-    state.pos = last + 1 === CELLS ? 0 : last + 1; // C64 wraps the pointer
+    state.pos = last + 1 === cells ? 0 : last + 1; // C64 wraps the pointer
     i = last + 1;
   }
 }
@@ -106,16 +126,18 @@ function encodeDiff(state, want, out) {
 // Build one frame. Tries every full-screen scroll amount and keeps the
 // cheapest encoding. Returns {bytes, state} without touching the input state.
 export function encodeFrame(state, want) {
+  const { rows } = state;
+  if (want.glyph.length !== state.glyph.length) throw new Error('frame size differs from screen state');
   let best = null;
-  for (let n = 0; n < ROWS; n++) {
+  for (let n = 0; n < rows; n++) {
     // Only bother scrolling when the top row lines up with an old row.
     if (n > 0 && !rowMatches(state, want, n, 0)) continue;
     const s = state.clone();
     const out = [];
     if (n > 0) {
       if (s.cur < 0) { out.push(OP.COLOR, 15); s.cur = 15; }
-      out.push(OP.SCROLL, 0, ROWS - 1, n);
-      s.scrollUp(0, ROWS - 1, n);
+      out.push(OP.SCROLL, 0, rows - 1, n);
+      s.scrollUp(0, rows - 1, n);
     }
     encodeDiff(s, want, out);
     if (!best || out.length < best.bytes.length) best = { bytes: out, state: s };
@@ -125,16 +147,18 @@ export function encodeFrame(state, want) {
 }
 
 function rowMatches(state, want, fromRow, toRow) {
-  for (let c = 0; c < COLS; c++) {
-    const i = fromRow * COLS + c, j = toRow * COLS + c;
+  const { cols } = state;
+  for (let c = 0; c < cols; c++) {
+    const i = fromRow * cols + c, j = toRow * cols + c;
     if (!state.matches(i, want.glyph[j], want.color[j])) return false;
   }
   return true;
 }
 
 // Full reset: colours, clear screen, then everything that isn't a space.
+// `want` may carry {cols, rows}; otherwise it is a C64 screen.
 export function encodeReset(want, border = 0, bg = 0, color = 15) {
-  const state = new ScreenState();
+  const state = new ScreenState(want.cols ?? COLS, want.rows ?? ROWS);
   const out = [OP.COLORS, border, bg, OP.COLOR, color, OP.CLS];
   state.glyph.fill(SPACE);
   state.color.fill(color);
@@ -146,9 +170,11 @@ export function encodeReset(want, border = 0, bg = 0, color = 15) {
 
 // Reference implementation of the C64 decoder, used by tests and preview.
 export class Decoder {
-  constructor() {
-    this.glyph = new Uint8Array(CELLS).fill(SPACE);
-    this.color = new Uint8Array(CELLS);
+  constructor(cols = COLS, rows = ROWS) {
+    this.cols = cols;
+    this.rows = rows;
+    this.glyph = new Uint8Array(cols * rows).fill(SPACE);
+    this.color = new Uint8Array(cols * rows);
     this.pos = 0;
     this.cur = 0;
     this.border = 0;
@@ -159,24 +185,25 @@ export class Decoder {
   put(g) {
     this.glyph[this.pos] = g;
     this.color[this.pos] = this.cur;
-    this.pos = (this.pos + 1) % CELLS;
+    this.pos = (this.pos + 1) % this.glyph.length;
   }
 
   feed(bytes) {
+    const { cols } = this;
     let i = 0;
     const next = () => bytes[i++];
     while (i < bytes.length) {
       switch (next()) {
-        case OP.GOTO: { const r = next(), c = next(); this.pos = r * COLS + c; break; }
-        case OP.COLOR: this.cur = next() & 15; break;
+        case OP.GOTO: { const r = next(), c = next(); this.pos = r * cols + c; break; }
+        case OP.COLOR: this.cur = next(); break; // the C64 masks it to 0-15
         case OP.PUT: { const n = next(); for (let k = 0; k < n; k++) this.put(next()); break; }
         case OP.REPEAT: { const n = next(), g = next(); for (let k = 0; k < n; k++) this.put(g); break; }
         case OP.SCROLL: {
           const top = next(), bot = next(), n = next();
-          const from = (top + n) * COLS, to = (bot + 1) * COLS;
-          this.glyph.copyWithin(top * COLS, from, to);
-          this.color.copyWithin(top * COLS, from, to);
-          const clear = Math.max(top, bot - n + 1) * COLS;
+          const from = (top + n) * cols, to = (bot + 1) * cols;
+          this.glyph.copyWithin(top * cols, from, to);
+          this.color.copyWithin(top * cols, from, to);
+          const clear = Math.max(top, bot - n + 1) * cols;
           this.glyph.fill(SPACE, clear, to);
           this.color.fill(this.cur, clear, to);
           break;

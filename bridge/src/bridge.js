@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-// Runs a command (default: claude) in a 40x25 pty (or wider, panned), emulates the terminal
-// headlessly, and streams screen diffs to a C64 over TCP (VICE's RS-232).
+// Runs a command (default: claude) in a pty the size of the client's screen
+// (40x25 C64, 80x25 C128 VDC, or wider and panned), emulates the terminal
+// headlessly, and streams screen diffs to the client over TCP (VICE's RS-232).
 
 import net from 'node:net';
 import { parseArgs } from 'node:util';
 import pty from 'node-pty';
 import xterm from '@xterm/headless';
-import { COLS, ROWS, MSG, encodeFrame, encodeReset } from './protocol.js';
+import { DISPLAY, MSG, displayById, encodeFrame, encodeReset } from './protocol.js';
 import { snapshot } from './screen.js';
 import { keyToBytes, MATRIX } from './keymap.js';
 
@@ -16,7 +17,7 @@ const { values: opt, positionals } = parseArgs({
     port: { type: 'string', default: '6464' },
     host: { type: 'string', default: '127.0.0.1' },
     fps: { type: 'string', default: '20' },
-    cols: { type: 'string', default: String(COLS) },
+    cols: { type: 'string' },
     verbose: { type: 'boolean', short: 'v', default: false },
   },
 });
@@ -26,11 +27,13 @@ const FRAME_MS = 1000 / Number(opt.fps);
 const ACK_TIMEOUT_MS = 5000;
 const SYNC_MAX_MS = 250; // don't wait forever on synchronized output
 
-// A terminal wider than the C64 is shown through a 40-column window that
-// C=+CRSR→ moves in half-screen steps (0-39, 20-59, 40-79 for 80 columns).
-const TERM_COLS = Math.max(COLS, Number(opt.cols));
-const PAN_STEP = COLS / 2;
-const PAN_MAX = TERM_COLS - COLS;
+// The client's screen, from its HELLO. Kept across reconnects, like the session.
+let display = DISPLAY.C64;
+
+// A terminal wider than the display (--cols) is shown through a window that
+// C=+CRSR→ moves in half-screen steps (0-39, 20-59, 40-79 for 80 columns on a C64).
+const termCols = () => Math.max(display.cols, Number(opt.cols ?? 0));
+const panMax = () => termCols() - display.cols;
 let panX = 0;
 
 const log = (...a) => console.error('[bridge]', ...a);
@@ -38,7 +41,7 @@ const debug = (...a) => opt.verbose && log(...a);
 
 // --- terminal session (survives C64 reconnects) ---------------------------
 
-const term = new xterm.Terminal({ cols: TERM_COLS, rows: ROWS, scrollback: 200, allowProposedApi: true });
+const term = new xterm.Terminal({ cols: termCols(), rows: display.rows, scrollback: 200, allowProposedApi: true });
 let proc = null;
 let dirty = true;
 let syncSince = 0;
@@ -47,8 +50,8 @@ function spawn() {
   term.reset();
   proc = pty.spawn(cmd, cmdArgs, {
     name: 'xterm-256color',
-    cols: TERM_COLS,
-    rows: ROWS,
+    cols: termCols(),
+    rows: display.rows,
     cwd: process.cwd(),
     env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
   });
@@ -59,6 +62,15 @@ function spawn() {
     term.write(`\r\n\x1b[0;33m[${cmd} exited - press RETURN to restart]\x1b[0m`);
   });
   log(`started ${cmd} ${cmdArgs.join(' ')}`);
+}
+
+function setDisplay(d) {
+  if (d === display) return;
+  display = d;
+  term.resize(termCols(), display.rows);
+  proc?.resize(termCols(), display.rows);
+  panX = Math.min(panX, panMax());
+  log(`display is ${display.name} ${display.cols}x${display.rows}, terminal ${termCols()}x${display.rows}`);
 }
 
 // Replies to terminal queries (DA, DSR, ...) go back to the program.
@@ -85,7 +97,7 @@ class Connection {
 
   close(why) {
     if (conn !== this) return;
-    log(`C64 disconnected (${why})`);
+    log(`client disconnected (${why})`);
     clearTimeout(this.ackTimer);
     conn = null;
   }
@@ -98,9 +110,13 @@ class Connection {
         this.rx.shift();
         this.inFlight = false;
         clearTimeout(this.ackTimer);
-      } else if (type === MSG.HELLO) {
-        this.rx.shift();
-        log('C64 says hello');
+      } else if (type === MSG.HELLO || type === MSG.HELLO_ON) {
+        if (type === MSG.HELLO_ON && this.rx.length < 2) return;
+        const [, id = DISPLAY.C64.id] = this.rx.splice(0, type === MSG.HELLO ? 1 : 2);
+        const d = displayById(id);
+        if (!d) log(`unknown display ${id}, assuming C64`);
+        log(`${(d ?? DISPLAY.C64).name} says hello`);
+        setDisplay(d ?? DISPLAY.C64);
         this.state = null;
         this.inFlight = false;
         clearTimeout(this.ackTimer);
@@ -129,7 +145,7 @@ class Connection {
     debug(`key ${MATRIX[code]} mods=${mods} -> ${JSON.stringify(bytes)}`);
     if (!bytes) return;
     if (bytes.pan) {
-      const x = Math.min(PAN_MAX, Math.max(0, panX + bytes.pan * PAN_STEP));
+      const x = Math.min(panMax(), Math.max(0, panX + bytes.pan * display.cols / 2));
       if (x !== panX) { panX = x; dirty = true; debug(`pan to column ${panX}`); }
       return;
     }
@@ -152,7 +168,7 @@ class Connection {
   }
 
   sendFrame() {
-    const want = snapshot(term, panX);
+    const want = snapshot(term, panX, display);
     const { bytes, state } = this.state ? encodeFrame(this.state, want) : encodeReset(want);
     this.state = state;
     if (bytes.length === 1) return; // only FRAME marker: nothing changed
@@ -181,7 +197,7 @@ function tick() {
 }
 
 const server = net.createServer(sock => {
-  log(`C64 connected from ${sock.remoteAddress}:${sock.remotePort}`);
+  log(`client connected from ${sock.remoteAddress}:${sock.remotePort}`);
   if (conn) conn.sock.destroy();
   conn = new Connection(sock);
   dirty = true;

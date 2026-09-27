@@ -1,17 +1,20 @@
-// Convert the headless xterm's visible buffer into C64 screen codes + colours.
+// Convert the headless xterm's visible buffer into screen codes + colours
+// (C64 colour numbers, or VDC attributes on a C128).
 
-import { COLS, ROWS, CELLS } from './protocol.js';
+import { DISPLAY } from './protocol.js';
 import { toScreenCode, INVERSE, SPACE } from './glyphs.js';
-import { fgColor, bgColor, DEFAULT_FG, BOLD_FG, DIM_FG, SCREEN_BG } from './colors.js';
+import { VIC, RGBI } from './colors.js';
 
-function cellFg(cell) {
-  if (cell.isFgDefault()) return cell.isBold() ? BOLD_FG : cell.isDim() ? DIM_FG : DEFAULT_FG;
-  return fgColor(cell.isFgRGB() ? 'rgb' : 'palette', cell.getFgColor());
+const PALETTES = { [DISPLAY.C64.id]: VIC, [DISPLAY.C128.id]: RGBI };
+
+function cellFg(cell, pal) {
+  if (cell.isFgDefault()) return cell.isBold() ? pal.boldFg : cell.isDim() ? pal.dimFg : pal.defaultFg;
+  return pal.fg(cell.isFgRGB() ? 'rgb' : 'palette', cell.getFgColor());
 }
 
-function cellBg(cell) {
+function cellBg(cell, pal) {
   if (cell.isBgDefault()) return null;
-  return bgColor(cell.isBgRGB() ? 'rgb' : 'palette', cell.getBgColor());
+  return pal.bg(cell.isBgRGB() ? 'rgb' : 'palette', cell.getBgColor());
 }
 
 export function cursorVisible(term) {
@@ -19,36 +22,39 @@ export function cursorVisible(term) {
   return !term._core?.coreService?.isCursorHidden;
 }
 
-// `panX` is the first terminal column shown, for terminals wider than the C64.
-export function snapshot(term, panX = 0) {
-  const glyph = new Int16Array(CELLS);
-  const color = new Int16Array(CELLS);
+// Cells for a `display` ({cols, rows}); `panX` is the first terminal column
+// shown, for terminals wider than the display.
+export function snapshot(term, panX = 0, display = DISPLAY.C64) {
+  const { cols, rows } = display;
+  const pal = PALETTES[display.id];
+  const glyph = new Int16Array(cols * rows);
+  const color = new Int16Array(cols * rows);
   const buf = term.buffer.active;
   const cell = buf.getNullCell();
   const showCursor = cursorVisible(term);
   const cursorRow = buf.baseY + buf.cursorY - buf.viewportY; // off-screen when scrolled back
 
-  for (let y = 0; y < ROWS; y++) {
+  for (let y = 0; y < rows; y++) {
     const line = buf.getLine(buf.viewportY + y);
-    for (let x = 0; x < COLS; x++) {
-      const i = y * COLS + x;
-      if (!line || !line.getCell(panX + x, cell)) { glyph[i] = SPACE; color[i] = DEFAULT_FG; continue; }
+    for (let x = 0; x < cols; x++) {
+      const i = y * cols + x;
+      if (!line || !line.getCell(panX + x, cell)) { glyph[i] = SPACE; color[i] = pal.defaultFg; continue; }
 
       let g = cell.getWidth() === 0 || cell.isInvisible() ? SPACE : toScreenCode(cell.getChars());
-      let fg = cellFg(cell);
-      let bg = cellBg(cell);
-      if (cell.isInverse()) [fg, bg] = [bg ?? SCREEN_BG, fg];
-      if (showCursor && panX + x === buf.cursorX && y === cursorRow) [fg, bg] = [bg ?? SCREEN_BG, fg];
+      let fg = cellFg(cell, pal);
+      let bg = cellBg(cell, pal);
+      if (cell.isInverse()) [fg, bg] = [bg ?? pal.screenBg, fg];
+      if (showCursor && panX + x === buf.cursorX && y === cursorRow) [fg, bg] = [bg ?? pal.screenBg, fg];
 
       // No per-cell background in text mode: a coloured background becomes an
       // inverted glyph drawn in the background colour (text shows as black).
-      if (bg !== null && bg !== SCREEN_BG) {
+      if (bg !== null && bg !== pal.screenBg) {
         g ^= INVERSE;
         fg = bg;
       }
       glyph[i] = g;
-      color[i] = fg;
+      color[i] = cell.isUnderline() ? fg | pal.underline : fg;
     }
   }
-  return { glyph, color };
+  return { cols, rows, glyph, color };
 }

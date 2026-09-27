@@ -1,14 +1,22 @@
-// Pretends to be the C64: connects to the bridge, types keys, prints the decoded screen.
-// usage: node scripts/fake-c64.js [port] "text to type"
+// Pretends to be the C64 (or a C128 in 80 columns): connects to the bridge,
+// types keys, prints the decoded screen.
+// usage: node scripts/fake-c64.js [--c128] [port] "text to type"
 import net from 'node:net';
-import { Decoder, MSG, OP, COLS, ROWS } from '../src/protocol.js';
+import { parseArgs } from 'node:util';
+import { Decoder, DISPLAY, MSG, OP } from '../src/protocol.js';
 import { MATRIX, SHIFT } from '../src/keymap.js';
 import { screenCodeToChar } from '../src/glyphs.js';
 
-const port = Number(process.argv[2] ?? 6464);
-const typed = process.argv[3] ?? 'echo hello from the c64\r';
-const dec = new Decoder();
-const sock = net.connect(port, '127.0.0.1', () => sock.write(Buffer.from([MSG.HELLO])));
+const { values: opt, positionals } = parseArgs({
+  allowPositionals: true,
+  options: { c128: { type: 'boolean', default: false } },
+});
+const port = Number(positionals[0] ?? 6464);
+const typed = positionals[1] ?? 'echo hello from the c64\r';
+const { cols, rows } = opt.c128 ? DISPLAY.C128 : DISPLAY.C64;
+const hello = opt.c128 ? [MSG.HELLO_ON, DISPLAY.C128.id] : [MSG.HELLO];
+const dec = new Decoder(cols, rows);
+const sock = net.connect(port, '127.0.0.1', () => sock.write(Buffer.from(hello)));
 sock.on('data', d => {
   dec.feed(d);
   for (const b of d) if (b === OP.FRAME) sock.write(Buffer.from([MSG.ACK]));
@@ -27,9 +35,9 @@ setTimeout(async () => {
     await new Promise(r => setTimeout(r, 20));
   }
   setTimeout(() => {
-    for (let r = 0; r < ROWS; r++) {
+    for (let r = 0; r < rows; r++) {
       let line = '';
-      for (let c = 0; c < COLS; c++) line += screenCodeToChar(dec.glyph[r * COLS + c]);
+      for (let c = 0; c < cols; c++) line += screenCodeToChar(dec.glyph[r * cols + c]);
       console.log('|' + line + '|');
     }
     sock.end();
