@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Runs a command (default: $SHELL) in a pty the size of the client's screen
-// (40x25 C64; 80x25 C128 VDC or C64 soft 80 columns; or larger and panned),
+// (40x25 C64 text or hi-res; 80x25 C128 VDC or C64 soft 80 columns; or
+// larger and panned),
 // emulates the terminal headlessly, and streams screen diffs to the client
 // over TCP (VICE's RS-232).
 
@@ -12,6 +13,7 @@ import { DISPLAY, MSG, displayById, encodeFrame, encodeReset } from './protocol.
 import { snapshot, paletteFor, cursorVisible } from './screen.js';
 import { THEME_NAMES, oscReply } from './colors.js';
 import { keyToBytes, MATRIX } from './keymap.js';
+import { GlyphCache } from './glyphcache.js';
 
 const { values: opt, positionals } = parseArgs({
   allowPositionals: true,
@@ -203,11 +205,16 @@ class Connection {
   sendFrame() {
     const want = snapshot(term, panX, display, opt.theme, panY);
     const pal = paletteFor(display, opt.theme);
-    const { bytes, state } = this.state
+    // After a reset, reload the hi-res client's extended glyphs too.
+    if (!this.state) this.glyphs = display.hires ? new GlyphCache() : null;
+    const glyphs = this.glyphs?.place(want, this.state) ?? [];
+    const colour = display.hires ? pal.defaultFg << 4 | pal.screenBg : pal.defaultFg;
+    let { bytes, state } = this.state
       ? encodeFrame(this.state, want)
-      : encodeReset(want, pal.border, pal.screenBg, pal.defaultFg);
+      : encodeReset(want, pal.border, pal.screenBg, colour);
     this.state = state;
     if (bytes.length === 1) return; // only FRAME marker: nothing changed
+    bytes = glyphs.concat(bytes);
     this.sock.write(Buffer.from(bytes));
     this.bytesSent += bytes.length;
     debug(`frame ${bytes.length} bytes`);

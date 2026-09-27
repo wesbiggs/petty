@@ -2,6 +2,7 @@ BUILD   := build
 PRG     := $(BUILD)/petty.prg
 PRG128  := $(BUILD)/petty128.prg
 PRG80   := $(BUILD)/petty80.prg
+PRGHI   := $(BUILD)/pettyhires.prg
 PORT    ?= 6464
 
 # VICE: SwiftLink cartridge (6551 at $DE00, NMI) on RS-232 device 1, which
@@ -9,9 +10,9 @@ PORT    ?= 6464
 VICE_FLAGS := -acia1 -acia1mode 1 -acia1base 0xDE00 -acia1irq 1 \
               -myaciadev 0 -rsdev1 127.0.0.1:$(PORT) +rsdev1ip232 -rsdev1baud 38400
 
-.PHONY: all clean bridge vice vice128 vice80 run test
+.PHONY: all clean bridge vice vice128 vice80 vicehires run test
 
-all: $(PRG) $(PRG128) $(PRG80)
+all: $(PRG) $(PRG128) $(PRG80) $(PRGHI)
 
 # The generator writes both includes.
 c64/glyphs.inc: bridge/src/glyphs.js bridge/src/font4x8.js bridge/scripts/gen-glyphs.js
@@ -36,6 +37,12 @@ $(BUILD)/main80.o: c64/main80.s c64/font4x8.inc | $(BUILD)
 $(PRG80): $(BUILD)/main80.o c64/petty80.cfg
 	ld65 -C c64/petty80.cfg -m $(BUILD)/petty80.map -o $@ $(BUILD)/main80.o
 
+$(BUILD)/mainhires.o: c64/mainhires.s c64/glyphs.inc | $(BUILD)
+	ca65 -I c64 -l $(BUILD)/mainhires.lst -o $@ c64/mainhires.s
+
+$(PRGHI): $(BUILD)/mainhires.o c64/pettyhires.cfg
+	ld65 -C c64/pettyhires.cfg -m $(BUILD)/pettyhires.map -o $@ $(BUILD)/mainhires.o
+
 $(BUILD):
 	mkdir -p $@
 
@@ -57,6 +64,10 @@ vice128: $(PRG128)
 # Terminal 2, C64 with the soft 80-column bitmap screen
 vice80: $(PRG80)
 	x64sc $(VICE_FLAGS) -autostart $(PRG80)
+
+# Terminal 2, C64 with the 40-column hi-res bitmap screen
+vicehires: $(PRGHI)
+	x64sc $(VICE_FLAGS) -autostart $(PRGHI)
 
 test: bridge/node_modules
 	cd bridge && node --test

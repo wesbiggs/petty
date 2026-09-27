@@ -2,7 +2,9 @@
 
 A Commodore 64 terminal (PETSCII + TTY) for Claude Code or any other terminal
 program. There are also 80-column clients: one for the C128's 80-column
-screen, and one for the C64 that draws 80 columns in the hi-res bitmap.
+screen, and one for the C64 that draws 80 columns in the hi-res bitmap. A
+third C64 client draws 40 columns in the hi-res bitmap, for colours per cell
+and several hundred more glyphs.
 
 A bridge on a Mac or Linux host runs the program in a pty the size of the
 client's screen (40×25, or 80×25) and emulates the terminal headlessly
@@ -29,11 +31,12 @@ claude ⇄ pty ⇄ xterm (headless) → diff/encode ══ TCP / serial ══�
 ## Run it in VICE
 
 ```bash
-make                  # builds build/petty.prg, petty128.prg and petty80.prg (regenerates c64/*.inc)
+make                  # builds build/petty.prg, petty128.prg, petty80.prg and pettyhires.prg (regenerates c64/*.inc)
 make bridge           # terminal 1: listens on 127.0.0.1:6464, spawns your $SHELL on connect
 make vice             # terminal 2: VICE with an emulated SwiftLink on TCP 6464
 make vice128          # ...or a C128 in 80 columns: watch VICE's VDC window
 make vice80           # ...or the C64 with the soft 80-column screen
+make vicehires        # ...or the C64 with the 40-column hi-res screen
 ```
 
 Start the bridge first, because VICE connects when the client enables the ACIA.
@@ -87,7 +90,7 @@ survives C64 resets and reconnects; a reset just triggers a full redraw.
 | SHIFT+: / SHIFT+; | `[` / `]` (C= gives `{` / `}`) | |
 | SHIFT+@, SHIFT+- | `` ` ``, `_` | |
 
-The soft 80-column client uses the same keys. The C128 client sends them too,
+The soft 80-column and hi-res clients use the same keys. The C128 client sends them too,
 plus:
 
 | C128 | Sends |
@@ -132,20 +135,34 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
   that keeps its neighbour's colour ([bridge/src/soft80.js](bridge/src/soft80.js)).
   `node bridge/scripts/mock-soft80.js out.ppm 1500 -- <cmd>` previews a
   program's screen, sprites included, without an emulator.
+- **Hi-res 40 columns (C64):** the text client's screen drawn into the hi-res
+  bitmap, where each 8×8 cell has its own foreground and background. So
+  backgrounds are real (black text on a white card, a red ♥ on it), and the
+  character set needs no inverse half: codes 0–127 are the text client's, and
+  the bridge loads 128–255 with glyphs the other clients only alias
+  ([bridge/src/extglyphs.js](bridge/src/extglyphs.js)): heavy, double and dashed box
+  drawing, eighth blocks and shades, braille (for graphs), arrows, shapes and
+  a few symbols. It keeps up to 128 of them on screen at once, reusing the
+  least recently shown slot; past that, the rest fall back to their aliases
+  ([bridge/src/glyphcache.js](bridge/src/glyphcache.js)). Scrolling moves the
+  whole bitmap, which takes about 90 ms, as on the soft 80-column screen.
+
+  ![ttysolitaire on the text client (left) and the hi-res client (right)](docs/solitaire.png)
 
 ## Protocol
 
 See [bridge/src/protocol.js](bridge/src/protocol.js). Host→C64 opcodes are GOTO,
 COLOR, PUT, REPEAT, SCROLL, COLORS, CLS and FRAME, plus SPRITE and NOSPRITE for
-the soft 80-column screen. Every frame ends with FRAME and
+the soft 80-column screen and GLYPH for the hi-res one. Every frame ends with FRAME and
 the C64 answers ACK. The bridge keeps only one frame in flight, so fast output
 merges into fewer frames instead of overflowing the client's receive buffer (256
-bytes; 4 KB on the soft 80-column C64).
+bytes; 4 KB on the bitmap C64 clients).
 C64→host messages are ACK, `KEY code mods` and HELLO. A client on another
 display sends `HELLO_ON id` instead (1 = C128 VDC, 2 = C64 soft 80 columns,
-both 80×25), and the bridge
+both 80×25; 3 = C64 hi-res, 40×25), and the bridge
 resizes the program's terminal to match. For the C128, colours are VDC
-attribute bytes, and key codes go up to 87 with ALT as modifier bit 3.
+attribute bytes, and key codes go up to 87 with ALT as modifier bit 3. For
+the hi-res C64, a colour is foreground × 16 + background.
 
 For each frame the encoder tries every full-screen scroll offset and picks the
 cheapest encoding. A spinner tick costs about 7 bytes, and a full redraw about
@@ -155,9 +172,10 @@ cheapest encoding. A spinner tick costs about 7 bytes, and a full redraw about
 
 ```bash
 cd bridge && npm test                                 # encoder vs reference decoder
-node scripts/fake-c64.js 6464 $'echo hi\r'            # pretend C64: types keys, prints screen
-node scripts/fake-c64.js --c128 6464 $'echo hi\r'     # same, as an 80-column C128
-node scripts/fake-c64.js --soft80 6464 $'echo hi\r'   # same, as the soft 80-column C64
+node bridge/scripts/fake-c64.js 6464 $'echo hi\r'            # pretend C64: types keys, prints screen
+node bridge/scripts/fake-c64.js --c128 6464 $'echo hi\r'     # same, as an 80-column C128
+node bridge/scripts/fake-c64.js --soft80 6464 $'echo hi\r'   # same, as the soft 80-column C64
+node bridge/scripts/fake-c64.js --hires 6464 $'echo hi\r'    # same, as the hi-res C64
 ```
 
 To see how colours and glyphs map, `cat colortest.ans` in a session (for
@@ -175,6 +193,8 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `c64/petty.cfg` | linker config (program must end below `$3700`) |
 | `c64/main80.s` | soft 80-column C64 client: the same, drawing into the bitmap |
 | `c64/petty80.cfg` | linker config (program must end below `$2000`) |
+| `c64/mainhires.s` | hi-res 40-column C64 client |
+| `c64/pettyhires.cfg` | linker config (program must end below `$2000`) |
 | `c128/main.s` | C128 client: the same, drawing on the VDC at 2 MHz |
 | `c128/petty128.cfg` | linker config (program must end below `$3800`) |
 | `bridge/src/bridge.js` | TCP server, pty, frame pacing |
@@ -183,6 +203,7 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `bridge/src/protocol.js` | encoder and reference decoder |
 | `bridge/src/glyphs.js` / `colors.js` / `keymap.js` | character, colour, key mappings |
 | `bridge/src/font4x8.js` | 4×8 font for the soft 80-column screen |
+| `bridge/src/extglyphs.js` / `glyphcache.js` | the hi-res screen's extra glyphs, and which are loaded |
 | `bridge/scripts/gen-glyphs.js` | writes `c64/glyphs.inc` and `c64/font4x8.inc` |
 | `bridge/scripts/fake-c64.js` | pretend client for testing without VICE |
 | `bridge/scripts/mock-soft80.js` | renders a program's soft 80-column screen to an image |
@@ -194,6 +215,10 @@ Soft 80 columns: code `$0801–$11E7`; the VIC uses its second bank, with glyph
 tables `$4000–$4FFF` (built at startup), sprite data `$5000–$51FF`, colours
 `$5C00` (sprite pointers `$5FF8`) and the bitmap `$6000–$7F3F`; receive ring
 `$8000–$8FFF` (4 KB, because a bitmap scroll takes about 90 ms).
+
+Hi-res 40 columns: code `$0801–$0E7A`; the VIC uses its second bank, with the
+font `$4000–$47FF` (one page per pixel row), colours `$5C00` and the bitmap
+`$6000–$7F3F`; receive ring `$8000–$8FFF`.
 
 C128 (bank 15): code `$1C01–$2245`, font build buffer `$3800–$3BFF` (startup
 only), receive ring `$3F00`. VDC RAM: screen `$0000`, attributes `$0800`, font

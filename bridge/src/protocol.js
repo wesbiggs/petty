@@ -3,7 +3,8 @@
 // Host -> C64 (the C64 keeps a write pointer and a current colour):
 //   01 row col         GOTO     move write pointer
 //   02 color           COLOR    set current colour (C64: 0-15; C128: VDC attribute,
-//                               RGBI in bits 0-3, bit 5 underline)
+//                               RGBI in bits 0-3, bit 5 underline; C64 hi-res:
+//                               foreground << 4 | background)
 //   03 n g1..gn        PUT      write n screen codes, advancing
 //   04 n g             REPEAT   write screen code g n times
 //   05 top bot n       SCROLL   scroll rows top..bot up by n, clear with spaces
@@ -14,6 +15,8 @@
 //                               n (0-7) with 24x21 pixels d, its top left
 //                               corner on character col, row
 //   0A n               NOSPRITE hide sprite n
+//   0B code d0..d7     GLYPH    (C64 hi-res) redefine screen code 128-255;
+//                               cells already drawn with it keep their pixels
 //
 // C64 -> host:
 //   01                 ACK      frame processed
@@ -24,12 +27,15 @@
 // Rows and columns are those of the client's display: 40x25 on the C64, 80x25
 // on the C128's VDC and on the C64's soft 80-column bitmap screen. The write
 // pointer wraps at the end of the screen. `pair`: two neighbouring cells share
-// one colour (the bridge makes them equal).
+// one colour (the bridge makes them equal). `hires`: every cell has its own
+// foreground and background, and there is no inverse half of the character
+// set: codes 128-255 are loaded with GLYPH.
 
 export const DISPLAY = {
   C64: { id: 0, name: 'C64', cols: 40, rows: 25 },
   C128: { id: 1, name: 'C128 VDC', cols: 80, rows: 25 },
   C64_80: { id: 2, name: 'C64 soft-80', cols: 80, rows: 25, pair: true },
+  C64_HIRES: { id: 3, name: 'C64 hi-res', cols: 40, rows: 25, hires: true },
 };
 export const displayById = id => Object.values(DISPLAY).find(d => d.id === id);
 
@@ -38,7 +44,7 @@ export const COLS = DISPLAY.C64.cols;
 export const ROWS = DISPLAY.C64.rows;
 export const CELLS = COLS * ROWS;
 
-export const OP = { GOTO: 1, COLOR: 2, PUT: 3, REPEAT: 4, SCROLL: 5, COLORS: 6, CLS: 7, FRAME: 8, SPRITE: 9, NOSPRITE: 10 };
+export const OP = { GOTO: 1, COLOR: 2, PUT: 3, REPEAT: 4, SCROLL: 5, COLORS: 6, CLS: 7, FRAME: 8, SPRITE: 9, NOSPRITE: 10, GLYPH: 11 };
 const SPRITES = 8;
 const spriteKey = s => s ? `${s.col},${s.row},${s.color},${s.data.join(',')}` : null;
 export const MSG = { ACK: 1, KEY: 2, HELLO: 3, HELLO_ON: 4 };
@@ -48,14 +54,17 @@ const MAX_GAP = 3; // unchanged cells worth rewriting instead of a 3-byte GOTO
 const ATTRS = 0xF0; // colour bits beyond the colour itself (C128 attributes)
 
 // Do two cells with glyph g look the same in colours a and b? A space does in
-// any colour, unless an attribute such as underline shows on it.
-export const sameLook = (g, a, b) => a === b || (g === SPACE && ((a | b) & ATTRS) === 0);
+// any colour, unless an attribute such as underline shows on it, or (`hires`)
+// in any foreground on the same background.
+export const sameLook = (g, a, b, hires = false) => a === b || (g === SPACE &&
+  (hires ? a >= 0 && b >= 0 && (a & 15) === (b & 15) : ((a | b) & ATTRS) === 0));
 
 // Mirror of what the C64 is displaying, plus its write pointer and colour.
 export class ScreenState {
-  constructor(cols = COLS, rows = ROWS) {
+  constructor(cols = COLS, rows = ROWS, hires = false) {
     this.cols = cols;
     this.rows = rows;
+    this.hires = hires;
     this.glyph = new Int16Array(cols * rows).fill(-1); // -1 = unknown
     this.color = new Int16Array(cols * rows).fill(-1);
     this.pos = -1;
@@ -64,7 +73,7 @@ export class ScreenState {
   }
 
   clone() {
-    const s = new ScreenState(this.cols, this.rows);
+    const s = new ScreenState(this.cols, this.rows, this.hires);
     s.glyph.set(this.glyph);
     s.color.set(this.color);
     s.pos = this.pos;
@@ -74,7 +83,7 @@ export class ScreenState {
   }
 
   matches(i, g, c) {
-    return this.glyph[i] === g && sameLook(g, this.color[i], c);
+    return this.glyph[i] === g && sameLook(g, this.color[i], c, this.hires);
   }
 
   scrollUp(top, bot, n) {
@@ -119,7 +128,7 @@ function encodeDiff(state, want, out) {
     };
     for (let k = i; k <= last; k++) {
       const g = wg[k];
-      if (!sameLook(g, wc[k], state.cur)) {
+      if (!sameLook(g, wc[k], state.cur, state.hires)) {
         flush();
         out.push(OP.COLOR, wc[k]);
         state.cur = wc[k];
@@ -181,9 +190,9 @@ function rowMatches(state, want, fromRow, toRow) {
 }
 
 // Full reset: colours, clear screen, then everything that isn't a space.
-// `want` may carry {cols, rows}; otherwise it is a C64 screen.
+// `want` may carry {cols, rows, hires}; otherwise it is a C64 screen.
 export function encodeReset(want, border = 0, bg = 0, color = 15) {
-  const state = new ScreenState(want.cols ?? COLS, want.rows ?? ROWS);
+  const state = new ScreenState(want.cols ?? COLS, want.rows ?? ROWS, want.hires);
   const out = [OP.COLORS, border, bg, OP.COLOR, color, OP.CLS];
   state.glyph.fill(SPACE);
   state.color.fill(color);
@@ -206,6 +215,7 @@ export class Decoder {
     this.bg = 0;
     this.frames = 0;
     this.sprites = new Array(SPRITES).fill(null);
+    this.glyphs = new Map(); // GLYPH definitions: code -> 8 bytes
   }
 
   put(g) {
@@ -243,6 +253,7 @@ export class Decoder {
           break;
         }
         case OP.NOSPRITE: this.sprites[next()] = null; break;
+        case OP.GLYPH: { const code = next(); this.glyphs.set(code, Uint8Array.from({ length: 8 }, next)); break; }
         default: throw new Error(`bad opcode at ${i - 1}`);
       }
     }

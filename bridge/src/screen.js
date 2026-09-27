@@ -6,8 +6,11 @@ import { toScreenCode, INVERSE, SPACE } from './glyphs.js';
 import { palette } from './colors.js';
 import { shareColours } from './soft80.js';
 import { FONT4 } from './font4x8.js';
+import { extendedGlyph } from './extglyphs.js';
 
-const KIND = { [DISPLAY.C64.id]: 'vic', [DISPLAY.C128.id]: 'rgbi', [DISPLAY.C64_80.id]: 'vic' };
+const INVERSE_END = 256; // glyphs from here on are extended, not inverted
+
+const KIND = { [DISPLAY.C64.id]: 'vic', [DISPLAY.C128.id]: 'rgbi', [DISPLAY.C64_80.id]: 'vic', [DISPLAY.C64_HIRES.id]: 'vic' };
 
 // How much of each screen code's cell is foreground, 0-1, from the 4x8 font
 // (close enough for the 8x8 one).
@@ -37,7 +40,9 @@ export function cursorVisible(term) {
 }
 
 // Cells for a `display` ({cols, rows}); `panX` and `panY` are the first
-// terminal column and row shown, for terminals larger than the display. On a display with `pair`
+// terminal column and row shown, for terminals larger than the display.
+// On a `hires` display, colours are foreground << 4 | background, and glyphs
+// from EXT up are extended glyphs (see glyphcache.js). On a display with `pair`
 // cells, the result also has `sprites` (see soft80.js).
 export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', panY = 0) {
   const { cols, rows } = display;
@@ -56,9 +61,16 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', 
       const i = y * cols + x;
       if (!line || !line.getCell(panX + x, cell)) { glyph[i] = SPACE; color[i] = pal.defaultFg; continue; }
 
-      let g = cell.getWidth() === 0 || cell.isInvisible() ? SPACE : toScreenCode(cell.getChars());
+      const chars = cell.getWidth() === 0 || cell.isInvisible() ? '' : cell.getChars();
+      let g = (display.hires && extendedGlyph(chars)) || toScreenCode(chars);
       let fg = cellFg(cell, pal);
       let bg = cellBg(cell, pal);
+      // The foreground colours are adjusted to read on the screen colour
+      // (black text becomes dark grey on the dark theme). On a hi-res cell
+      // with its own background, a colour is the same as a background.
+      if (display.hires && bg !== null && !cell.isFgDefault()) {
+        fg = pal.bg(cell.isFgRGB() ? 'rgb' : 'palette', cell.getFgColor()) ?? pal.screenBg;
+      }
       // A suit's colour survives the inverse glyph only if it is the screen
       // colour (black on the dark theme); otherwise it is drawn in its colour
       // on the screen colour, a hole in the card.
@@ -66,6 +78,13 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', 
         pal.bg(cell.isFgRGB() ? 'rgb' : 'palette', cell.getFgColor()) !== null;
       if (cell.isInverse()) [fg, bg] = [bg ?? pal.screenBg, fg];
       if (showCursor && panX + x === buf.cursorX && y === cursorRow) [fg, bg] = [bg ?? pal.screenBg, fg];
+
+      if (display.hires) {
+        if (g < INVERSE_END && g & INVERSE) [g, fg, bg] = [g ^ INVERSE, bg ?? pal.screenBg, fg];
+        glyph[i] = g;
+        color[i] = fg << 4 | (bg ?? pal.screenBg);
+        continue;
+      }
 
       // No per-cell background in text mode: a cell shows one colour and the
       // screen colour. Text on a coloured background becomes an inverted glyph
@@ -80,7 +99,7 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', 
       color[i] = cell.isUnderline() ? fg | pal.underline : fg;
     }
   }
-  const screen = { cols, rows, glyph, color };
+  const screen = { cols, rows, glyph, color, hires: !!display.hires };
   if (display.pair) {
     const focus = cursorRow >= 0 && cursorRow < rows ? cursorRow : rows - 1;
     screen.sprites = shareColours(screen, focus);

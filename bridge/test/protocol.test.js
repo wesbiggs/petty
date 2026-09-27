@@ -6,6 +6,8 @@ import { keyToBytes, MATRIX, SHIFT, CTRL, CBM, ALT } from '../src/keymap.js';
 import { VIC, RGBI, palette, oscReply, THEME_NAMES } from '../src/colors.js';
 import { snapshot } from '../src/screen.js';
 import { FONT4 } from '../src/font4x8.js';
+import { EXT, extendedGlyph } from '../src/extglyphs.js';
+import { GlyphCache } from '../src/glyphcache.js';
 import xterm from '@xterm/headless';
 
 const SPACE = 32;
@@ -315,4 +317,66 @@ test('card suits keep their colour on a card', async () => {
   const light = snapshot(term, 0, DISPLAY.C64, 'light');
   assert.deepEqual([light.glyph[1], light.color[1]], [toScreenCode('♥'), 2]);
   assert.deepEqual([light.glyph[2], light.color[2]], [toScreenCode('♠'), 0], 'black suit on a white screen: black');
+});
+
+test('hi-res: colours per cell and extended glyphs', async () => {
+  const term = new xterm.Terminal({ cols: 40, rows: 25, allowProposedApi: true });
+  await new Promise(r => term.write('\x1b[30;47mA\x1b[31m♥\x1b[0m█═⣿', r));
+  const s = snapshot(term, 0, DISPLAY.C64_HIRES, 'dark');
+  assert.equal(s.hires, true);
+  assert.deepEqual([s.glyph[0], s.color[0]], [toScreenCode('A'), 0 << 4 | 15], 'black on the card');
+  assert.deepEqual([s.glyph[1], s.color[1]], [toScreenCode('♥'), 2 << 4 | 15], 'red on the card');
+  assert.deepEqual([s.glyph[2], s.color[2]], [SPACE, 0 << 4 | 15], '█ is a space in reverse');
+  assert.equal(s.glyph[3], extendedGlyph('═'));
+  assert.equal(s.glyph[4], extendedGlyph('⣿'));
+  assert.ok(s.glyph[3] >= EXT && s.glyph[4] >= EXT);
+});
+
+test('hi-res: glyph cache loads, reuses and evicts slots', () => {
+  const cache = new GlyphCache();
+  const screen = gs => { const w = blank(DISPLAY.C64_HIRES); w.hires = true; gs.forEach((g, i) => { w.glyph[i] = g; }); return w; };
+  const dbl = extendedGlyph('═'), cross = extendedGlyph('╬');
+
+  let want = screen([dbl, cross, dbl]);
+  let ops = cache.place(want, null);
+  assert.equal(ops.filter((b, i) => i % 10 === 0 && b === OP.GLYPH).length, 2, 'two GLYPH commands');
+  const [a, b] = want.glyph;
+  assert.ok(a >= 128 && b >= 128 && a !== b);
+  assert.equal(want.glyph[2], a);
+
+  want = screen([dbl]);
+  assert.deepEqual(cache.place(want, null), [], 'already loaded');
+  assert.equal(want.glyph[0], a);
+
+  // Fill every other slot, forcing the least recently shown one out.
+  const others = Array.from({ length: 128 }, (_, i) => extendedGlyph(String.fromCodePoint(0x2801 + i)));
+  const { state } = encodeReset(screen([]));
+  state.glyph[0] = b; // the client shows ╬ at 0
+  want = screen([dbl, ...others.slice(0, 127)]);
+  cache.place(want, state);
+  assert.equal(want.glyph[0], a, '═ kept its slot');
+  assert.ok(!want.glyph.includes(b) || want.glyph.indexOf(b) > 0, '╬ was evicted');
+  assert.equal(state.glyph[0], -1, 'cells showing a reused slot are forgotten');
+
+  // More than 128 different glyphs: the rest fall back to their aliases.
+  // Those already loaded keep their slots; the new one falls back.
+  want = screen([...others, dbl]);
+  cache.place(want, null);
+  assert.equal(want.glyph[128], a, '═ still loaded');
+  assert.equal(want.glyph[127], toScreenCode(String.fromCodePoint(0x2801 + 127)), 'fallback');
+  assert.ok(want.glyph[127] < 128);
+});
+
+test('hi-res: frames round-trip through the decoder', async () => {
+  const term = new xterm.Terminal({ cols: 40, rows: 25, allowProposedApi: true });
+  await new Promise(r => term.write('\x1b[42m ok \x1b[0m ╔═╗ \x1b[31m♦', r));
+  const want = snapshot(term, 0, DISPLAY.C64_HIRES, 'dark');
+  const cache = new GlyphCache();
+  const glyphs = cache.place(want, null);
+  const { bytes } = encodeReset(want, 0, 0, 15 << 4);
+  const dec = new Decoder(40, 25);
+  dec.feed(glyphs.concat(bytes));
+  assert.deepEqual([...dec.glyph], [...want.glyph]);
+  for (let i = 0; i < want.glyph.length; i++) assert.ok(sameLook(want.glyph[i], dec.color[i], want.color[i], true), `cell ${i}`);
+  assert.equal(dec.glyphs.size, 3, '╔ ═ ╗ loaded');
 });
