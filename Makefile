@@ -40,7 +40,7 @@ $(BUILD):
 	mkdir -p $@
 
 bridge/node_modules:
-	cd bridge && npm install && chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper
+	cd bridge && npm install
 
 # Terminal 1: the bridge (extra args: make bridge CMD="bash")
 bridge: bridge/node_modules

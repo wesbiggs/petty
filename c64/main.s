@@ -1,6 +1,6 @@
 ; PETTY - thin terminal client for the C64
 ;
-; Receives screen updates from the Mac bridge over a SwiftLink (6551 ACIA
+; Receives screen updates from the bridge over a SwiftLink (6551 ACIA
 ; at $DE00, NMI) and sends keyboard matrix codes back. See
 ; bridge/src/protocol.js for the wire format.
 

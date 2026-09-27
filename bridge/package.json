@@ -1,7 +1,7 @@
 {
   "name": "petty-bridge",
   "version": "1.0.0",
-  "description": "Mac-side bridge for the PETTY C64 terminal",
+  "description": "Host-side bridge for the PETTY C64 terminal",
   "directories": {
     "test": "test"
   },

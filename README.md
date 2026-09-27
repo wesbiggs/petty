@@ -4,11 +4,11 @@ A Commodore 64 terminal (PETSCII + TTY) for Claude Code or any other terminal
 program. There are also 80-column clients: one for the C128's 80-column
 screen, and one for the C64 that draws 80 columns in the hi-res bitmap.
 
-The Mac runs the program in a pty the size of the client's screen (40×25, or
-80×25) and emulates the terminal headlessly (`@xterm/headless`). It sends the
-C64 only the screen cells that changed, already converted to C64 screen codes
-and colours. The C64 client (1.2 KB of 6502) just copies them into screen RAM
-and sends key presses back.
+A bridge on a Mac or Linux host runs the program in a pty the size of the
+client's screen (40×25, or 80×25) and emulates the terminal headlessly
+(`@xterm/headless`). It sends the C64 only the screen cells that changed,
+already converted to C64 screen codes and colours. The C64 client (1.2 KB of
+6502) just copies them into screen RAM and sends key presses back.
 
 Unlike C64 chat clients for Claude (such as
 [claude64](https://github.com/theletterf/claude64)), it runs the real Claude Code
@@ -23,7 +23,7 @@ claude ⇄ pty ⇄ xterm (headless) → diff/encode ══ TCP / serial ══�
 
 ## Requirements
 
-- cc65 (`ca65`, `ld65`), VICE 3.x (`x64sc`, `x128`), Node 20+
+- macOS or Linux (on Windows, use WSL); cc65 (`ca65`, `ld65`), VICE 3.x (`x64sc`, `x128`), Node 20+
 - On real hardware: a SwiftLink-compatible cartridge (6551 ACIA at `$DE00`, NMI)
 
 ## Run it in VICE
@@ -45,7 +45,9 @@ To run Claude Code directly: `make bridge CMD="-- claude"`, or
 light blue on blue), or `green` / `amber` (monochrome monitors: every colour
 becomes a shade of green or amber, by brightness). A program that asks the
 terminal for its colours (OSC 10/11/4) gets the theme's, as shown on the
-connected display; set Claude Code's own `/theme` to match.
+connected display; Claude Code picks light or dark this way.
+
+![The colour test in each theme, on the C64 (left) and the C128 (right)](docs/themes.png)
 
 For programs that need a terminal wider than the client's screen, `--cols 80`
 runs the pty at 80 columns and shows 40 of them at a time. C=+CRSR→ moves the
@@ -199,4 +201,4 @@ only), receive ring `$3F00`. VDC RAM: screen `$0000`, attributes `$0800`, font
 - The SwiftLink's crystal doubles the 6551 rates, so the "19200" setting gives
   38400 baud. Connect a USB-serial adapter and have the bridge open the serial
   device instead of listening on TCP (not implemented yet).
-- A SwiftLink-style WiFi modem can dial the bridge directly (`ATDT <mac-ip>:6464`), after the bridge is started with `--host 0.0.0.0`. The client would need a short dial step added first.
+- A SwiftLink-style WiFi modem can dial the bridge directly (`ATDT <host-ip>:6464`), after the bridge is started with `--host 0.0.0.0`. The client would need a short dial step added first.
