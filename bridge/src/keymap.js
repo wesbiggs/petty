@@ -42,6 +42,7 @@ const SPECIAL = {
 // C=+CRSR does what a trackpad swipe does in iTerm2: a mouse wheel event at
 // mid-screen if the program tracks the mouse, arrows on the alternate screen,
 // and otherwise { scroll } for the bridge to scroll its own scrollback.
+// C=+CRSR→ returns { pan } to move the 40-column window over a wider terminal.
 const WHEEL_COL = 20, WHEEL_ROW = 12, WHEEL_LINES = 3;
 function wheel(up, mouse) {
   const button = up ? 64 : 65;
@@ -61,6 +62,7 @@ export function keyToBytes(code, mods, { appCursor = false, mouse = null } = {})
   if (key === 'DOWN' || key === 'RIGHT') {
     const dir = key === 'DOWN' ? (shift ? 'A' : 'B') : (shift ? 'D' : 'C');
     if (key === 'DOWN' && (mods & CBM)) return wheel(shift, mouse);
+    if (key === 'RIGHT' && (mods & CBM)) return { pan: shift ? -1 : 1 };
     return ESC + (appCursor ? 'O' : '[') + dir;
   }
   if (SPECIAL[key]) return SPECIAL[key][shift ? 1 : 0];

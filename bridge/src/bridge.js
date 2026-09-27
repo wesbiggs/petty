@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Runs a command (default: claude) in a 40x25 pty, emulates the terminal
+// Runs a command (default: claude) in a 40x25 pty (or wider, panned), emulates the terminal
 // headlessly, and streams screen diffs to a C64 over TCP (VICE's RS-232).
 
 import net from 'node:net';
@@ -16,6 +16,7 @@ const { values: opt, positionals } = parseArgs({
     port: { type: 'string', default: '6464' },
     host: { type: 'string', default: '127.0.0.1' },
     fps: { type: 'string', default: '20' },
+    cols: { type: 'string', default: String(COLS) },
     verbose: { type: 'boolean', short: 'v', default: false },
   },
 });
@@ -25,12 +26,19 @@ const FRAME_MS = 1000 / Number(opt.fps);
 const ACK_TIMEOUT_MS = 5000;
 const SYNC_MAX_MS = 250; // don't wait forever on synchronized output
 
+// A terminal wider than the C64 is shown through a 40-column window that
+// C=+CRSR→ moves in half-screen steps (0-39, 20-59, 40-79 for 80 columns).
+const TERM_COLS = Math.max(COLS, Number(opt.cols));
+const PAN_STEP = COLS / 2;
+const PAN_MAX = TERM_COLS - COLS;
+let panX = 0;
+
 const log = (...a) => console.error('[bridge]', ...a);
 const debug = (...a) => opt.verbose && log(...a);
 
 // --- terminal session (survives C64 reconnects) ---------------------------
 
-const term = new xterm.Terminal({ cols: COLS, rows: ROWS, scrollback: 200, allowProposedApi: true });
+const term = new xterm.Terminal({ cols: TERM_COLS, rows: ROWS, scrollback: 200, allowProposedApi: true });
 let proc = null;
 let dirty = true;
 let syncSince = 0;
@@ -39,7 +47,7 @@ function spawn() {
   term.reset();
   proc = pty.spawn(cmd, cmdArgs, {
     name: 'xterm-256color',
-    cols: COLS,
+    cols: TERM_COLS,
     rows: ROWS,
     cwd: process.cwd(),
     env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
@@ -120,6 +128,11 @@ class Connection {
     });
     debug(`key ${MATRIX[code]} mods=${mods} -> ${JSON.stringify(bytes)}`);
     if (!bytes) return;
+    if (bytes.pan) {
+      const x = Math.min(PAN_MAX, Math.max(0, panX + bytes.pan * PAN_STEP));
+      if (x !== panX) { panX = x; dirty = true; debug(`pan to column ${panX}`); }
+      return;
+    }
     if (bytes.scroll) {
       term.scrollLines(bytes.scroll);
       dirty = true;
@@ -139,7 +152,7 @@ class Connection {
   }
 
   sendFrame() {
-    const want = snapshot(term);
+    const want = snapshot(term, panX);
     const { bytes, state } = this.state ? encodeFrame(this.state, want) : encodeReset(want);
     this.state = state;
     if (bytes.length === 1) return; // only FRAME marker: nothing changed

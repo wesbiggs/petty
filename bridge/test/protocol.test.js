@@ -101,4 +101,6 @@ test('keymap', () => {
   assert.equal(keyToBytes(k('DOWN'), 0, { appCursor: true }), '\x1bOB');
   assert.equal(keyToBytes(k(':'), SHIFT), '[');
   assert.equal(keyToBytes(k('£'), 0), '\\');
+  assert.deepEqual(keyToBytes(k('RIGHT'), CBM), { pan: 1 });
+  assert.deepEqual(keyToBytes(k('RIGHT'), CBM | SHIFT), { pan: -1 });
 });

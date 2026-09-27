@@ -34,7 +34,12 @@ make vice             # terminal 2: VICE with an emulated SwiftLink on TCP 6464
 
 Start the bridge first, because VICE connects when the client enables the ACIA.
 To run something other than Claude: `make bridge CMD="-- bash --norc"`, or
-`node bridge/src/bridge.js [--port N] [--fps N] [-v] -- <cmd> [args...]`.
+`node bridge/src/bridge.js [--port N] [--fps N] [--cols N] [-v] -- <cmd> [args...]`.
+
+For programs that need a wider terminal, `--cols 80` runs the pty at 80 columns
+and shows 40 of them at a time. C=+CRSR→ moves the window right by 20 columns
+(0–39 → 20–59 → 40–79), and C=+SHIFT+CRSR→ moves it left:
+`make bridge CMD="--cols 80 -- rogue"`.
 
 If the program exits, press RETURN on the C64 to start it again. The session
 survives C64 resets and reconnects; a reset just triggers a full redraw.
@@ -50,6 +55,7 @@ survives C64 resets and reconnects; a reset just triggers a full redraw.
 | F5 / F7 | Ctrl+R / Ctrl+O | history search / transcript |
 | F2 / F4 | PgUp / PgDn | |
 | CRSR keys (+SHIFT) | arrows | |
+| C=+CRSR↔ (+SHIFT) | pan right (left) by 20 columns when `--cols` is over 40 | |
 | C=+CRSR↕ (+SHIFT) | scroll down (up), like a trackpad swipe: mouse wheel if the program tracks the mouse, else the bridge's 200-line scrollback | scroll |
 | INST/DEL, SHIFT+INST | Backspace, Delete | |
 | CLR/HOME, SHIFT+CLR | Home, Ctrl+L | redraw |

@@ -19,7 +19,8 @@ export function cursorVisible(term) {
   return !term._core?.coreService?.isCursorHidden;
 }
 
-export function snapshot(term) {
+// `panX` is the first terminal column shown, for terminals wider than the C64.
+export function snapshot(term, panX = 0) {
   const glyph = new Int16Array(CELLS);
   const color = new Int16Array(CELLS);
   const buf = term.buffer.active;
@@ -31,13 +32,13 @@ export function snapshot(term) {
     const line = buf.getLine(buf.viewportY + y);
     for (let x = 0; x < COLS; x++) {
       const i = y * COLS + x;
-      if (!line || !line.getCell(x, cell)) { glyph[i] = SPACE; color[i] = DEFAULT_FG; continue; }
+      if (!line || !line.getCell(panX + x, cell)) { glyph[i] = SPACE; color[i] = DEFAULT_FG; continue; }
 
       let g = cell.getWidth() === 0 || cell.isInvisible() ? SPACE : toScreenCode(cell.getChars());
       let fg = cellFg(cell);
       let bg = cellBg(cell);
       if (cell.isInverse()) [fg, bg] = [bg ?? SCREEN_BG, fg];
-      if (showCursor && x === buf.cursorX && y === cursorRow) [fg, bg] = [bg ?? SCREEN_BG, fg];
+      if (showCursor && panX + x === buf.cursorX && y === cursorRow) [fg, bg] = [bg ?? SCREEN_BG, fg];
 
       // No per-cell background in text mode: a coloured background becomes an
       // inverted glyph drawn in the background colour (text shows as black).
