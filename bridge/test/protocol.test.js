@@ -4,6 +4,9 @@ import { DISPLAY, OP, Decoder, encodeFrame, encodeReset, sameLook } from '../src
 import { toScreenCode, INVERSE } from '../src/glyphs.js';
 import { keyToBytes, MATRIX, SHIFT, CTRL, CBM, ALT } from '../src/keymap.js';
 import { VIC, RGBI } from '../src/colors.js';
+import { snapshot } from '../src/screen.js';
+import { FONT4 } from '../src/font4x8.js';
+import xterm from '@xterm/headless';
 
 const SPACE = 32;
 
@@ -111,6 +114,79 @@ test('underlined spaces are drawn, plain spaces keep any colour', () => {
   assertShows(dec, want);
   assert.equal(dec.color[1], 14 | 0x20, 'underlined space');
   assert.equal(dec.color[3] & 0x20, 0, 'space after the underlined word');
+});
+
+test('soft 80 columns: each pair of cells shares one colour', async () => {
+  const term = new xterm.Terminal({ cols: 80, rows: 25, allowProposedApi: true });
+  // red "ab", then green "c" + space, then blue "d" + a green background cell
+  await new Promise(done => term.write('\x1b[?25l\x1b[31mab\x1b[32mc \x1b[34md\x1b[42m \x1b[0m', done));
+  const { color } = snapshot(term, 0, DISPLAY.C64_80);
+  assert.equal(color[0], VIC.fg('palette', 1));
+  assert.equal(color[1], color[0], 'a and b');
+  assert.equal(color[2], VIC.fg('palette', 2), 'c keeps its colour next to a space');
+  assert.equal(color[3], color[2]);
+  assert.equal(color[4], VIC.bg('palette', 2), 'the solid background cell outweighs d');
+  assert.equal(color[5], color[4]);
+});
+
+const soft80 = async text => {
+  const term = new xterm.Terminal({ cols: 80, rows: 25, allowProposedApi: true });
+  await new Promise(done => term.write('\x1b[?25l' + text, done));
+  return snapshot(term, 0, DISPLAY.C64_80);
+};
+
+test('soft 80 columns: letters keep their colour over punctuation', async () => {
+  const { color, sprites } = await soft80('\x1b[33m(\x1b[31mo\x1b[0m'); // "(o" in one cell
+  assert.equal(color[1], VIC.fg('palette', 1), 'o stays red');
+  assert.equal(color[0], color[1], '( takes the red');
+  assert.deepEqual(sprites.map(s => [s.col, s.color]), [[0, VIC.fg('palette', 3)]], 'a spare sprite repaints the (');
+});
+
+test('soft 80 columns: a sprite repaints a letter that lost its colour', async () => {
+  // One cell: green m (10 pixels) keeps the colour, red o (6) loses it.
+  const { color, sprites } = await soft80('\x1b[32mm\x1b[31mo');
+  assert.equal(color[1], VIC.fg('palette', 2), 'o drawn green in the bitmap');
+  assert.equal(sprites.length, 1);
+  const [s] = sprites;
+  assert.deepEqual([s.col, s.row, s.color], [1, 0, VIC.fg('palette', 1)]);
+  // o's pixels, and nothing else, in the sprite's first 4 columns
+  const c = FONT4[toScreenCode('o')];
+  for (let y = 0; y < 21; y++) {
+    const bits = (s.data[y * 3] << 16) | (s.data[y * 3 + 1] << 8) | s.data[y * 3 + 2];
+    assert.equal(bits, y < 8 ? c[y] << 20 : 0, `line ${y}`);
+  }
+
+  // Through the encoder: sent once, then not again, then hidden.
+  const dec = new Decoder(80, 25);
+  let { bytes, state } = encodeReset({ ...blank(DISPLAY.C64_80), sprites });
+  dec.feed(bytes);
+  assert.deepEqual(dec.sprites[0], s);
+  assert.equal(dec.sprites[1], null);
+  ({ bytes, state } = encodeFrame(state, { ...blank(DISPLAY.C64_80), sprites }));
+  assert.deepEqual(bytes, [OP.FRAME]);
+  ({ bytes } = encodeFrame(state, { ...blank(DISPLAY.C64_80), sprites: [] }));
+  dec.feed(bytes);
+  assert.deepEqual(bytes, [OP.NOSPRITE, 0, OP.FRAME]);
+});
+
+test('soft 80 columns: sprites group nearby losers and stop at 8', async () => {
+  // "xy " in green and red: every 6 columns a cell holds x|y, and the green x
+  // (6 pixels) loses to the red y (9). 12 rows of 14 conflicts.
+  const line = '\x1b[32mx\x1b[31my '.repeat(26);
+  const { sprites } = await soft80((line.slice(0, 80 * 12) + '\r\n').repeat(12));
+  assert.equal(sprites.length, 8);
+  assert.ok(sprites.every(s => s.color === VIC.fg('palette', 2)), 'all repaint a green x');
+  // A sprite covers two rows, so it takes the x below as well.
+  const lit = s => s.data.reduce((n, b) => n + [...b.toString(2)].filter(c => c === '1').length, 0);
+  assert.ok(sprites.every(s => lit(s) === 2 * 6), 'two x per sprite');
+});
+
+test('soft 80 columns: letters get sprites before punctuation', async () => {
+  // 9 cells of green "(" + red "o": the o keeps red, each ( loses; then one
+  // cell where a red o loses to a green m, far from the others.
+  const { sprites } = await soft80('\x1b[32m(\x1b[31mo      '.repeat(9) + '\r\n'.repeat(10) + '\x1b[32mm\x1b[31mo');
+  assert.equal(sprites.length, 8);
+  assert.deepEqual([sprites[0].row, sprites[0].col, sprites[0].color], [10, 1, VIC.fg('palette', 1)]);
 });
 
 test('glyph mapping', () => {

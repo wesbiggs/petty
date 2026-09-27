@@ -4,8 +4,9 @@
 import { DISPLAY } from './protocol.js';
 import { toScreenCode, INVERSE, SPACE } from './glyphs.js';
 import { VIC, RGBI } from './colors.js';
+import { shareColours } from './soft80.js';
 
-const PALETTES = { [DISPLAY.C64.id]: VIC, [DISPLAY.C128.id]: RGBI };
+const PALETTES = { [DISPLAY.C64.id]: VIC, [DISPLAY.C128.id]: RGBI, [DISPLAY.C64_80.id]: VIC };
 
 function cellFg(cell, pal) {
   if (cell.isFgDefault()) return cell.isBold() ? pal.boldFg : cell.isDim() ? pal.dimFg : pal.defaultFg;
@@ -23,7 +24,8 @@ export function cursorVisible(term) {
 }
 
 // Cells for a `display` ({cols, rows}); `panX` is the first terminal column
-// shown, for terminals wider than the display.
+// shown, for terminals wider than the display. On a display with `pair`
+// cells, the result also has `sprites` (see soft80.js).
 export function snapshot(term, panX = 0, display = DISPLAY.C64) {
   const { cols, rows } = display;
   const pal = PALETTES[display.id];
@@ -56,5 +58,10 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64) {
       color[i] = cell.isUnderline() ? fg | pal.underline : fg;
     }
   }
-  return { cols, rows, glyph, color };
+  const screen = { cols, rows, glyph, color };
+  if (display.pair) {
+    const focus = cursorRow >= 0 && cursorRow < rows ? cursorRow : rows - 1;
+    screen.sprites = shareColours(screen, focus);
+  }
+  return screen;
 }

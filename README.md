@@ -1,12 +1,14 @@
 # PETTY
 
 A Commodore 64 terminal (PETSCII + TTY) for Claude Code or any other terminal
-program. There is also a C128 client for the 80-column screen.
+program. There are also 80-column clients: one for the C128's 80-column
+screen, and one for the C64 that draws 80 columns in the hi-res bitmap.
 
-The Mac runs the program in a 40×25 pty and emulates the terminal headlessly
-(`@xterm/headless`). It sends the C64 only the screen cells that changed, already
-converted to C64 screen codes and colours. The C64 client (1.2 KB of 6502) just
-copies them into screen RAM and sends key presses back.
+The Mac runs the program in a pty the size of the client's screen (40×25, or
+80×25) and emulates the terminal headlessly (`@xterm/headless`). It sends the
+C64 only the screen cells that changed, already converted to C64 screen codes
+and colours. The C64 client (1.2 KB of 6502) just copies them into screen RAM
+and sends key presses back.
 
 Unlike C64 chat clients for Claude (such as
 [claude64](https://github.com/theletterf/claude64)), it runs the real Claude Code
@@ -27,23 +29,24 @@ claude ⇄ pty ⇄ xterm (headless) → diff/encode ══ TCP / serial ══�
 ## Run it in VICE
 
 ```bash
-make                  # builds build/petty.prg and build/petty128.prg (regenerates c64/glyphs.inc)
-make bridge           # terminal 1: listens on 127.0.0.1:6464, spawns `claude` on connect
+make                  # builds build/petty.prg, petty128.prg and petty80.prg (regenerates c64/*.inc)
+make bridge           # terminal 1: listens on 127.0.0.1:6464, spawns your $SHELL on connect
 make vice             # terminal 2: VICE with an emulated SwiftLink on TCP 6464
 make vice128          # ...or a C128 in 80 columns: watch VICE's VDC window
+make vice80           # ...or the C64 with the soft 80-column screen
 ```
 
 Start the bridge first, because VICE connects when the client enables the ACIA.
-To run something other than Claude: `make bridge CMD="-- bash --norc"`, or
+To run Claude Code directly: `make bridge CMD="-- claude"`, or
 `node bridge/src/bridge.js [--port N] [--fps N] [--cols N] [-v] -- <cmd> [args...]`.
 
 For programs that need a terminal wider than the client's screen, `--cols 80`
-runs the pty at 80 columns and shows 40 of them at a time. C=+CRSR→ moves the window right by 20 columns
-(0–39 → 20–59 → 40–79), and C=+SHIFT+CRSR→ moves it left:
-`make bridge CMD="--cols 80 -- rogue"`.
+runs the pty at 80 columns and shows 40 of them at a time. C=+CRSR→ moves the
+window right by 20 columns (0–39 → 20–59 → 40–79), and C=+SHIFT+CRSR→ moves it
+left: `make bridge CMD="--cols 80 -- rogue"`.
 
-On the C128 the program gets an 80×25 terminal, so it rarely needs `--cols`.
-Switching between a C64 and a C128 mid-session resizes the terminal.
+On the C128 and the soft 80-column C64 the program gets an 80×25 terminal, so
+it rarely needs `--cols`. Switching clients mid-session resizes the terminal.
 
 If the program exits, press RETURN on the C64 to start it again. The session
 survives C64 resets and reconnects; a reset just triggers a full redraw.
@@ -70,7 +73,8 @@ survives C64 resets and reconnects; a reset just triggers a full redraw.
 | SHIFT+: / SHIFT+; | `[` / `]` (C= gives `{` / `}`) | |
 | SHIFT+@, SHIFT+- | `` ` ``, `_` | |
 
-The C128 client sends the same keys, plus:
+The soft 80-column client uses the same keys. The C128 client sends them too,
+plus:
 
 | C128 | Sends |
 |---|---|
@@ -100,21 +104,37 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
   background is drawn as an inverse glyph in that colour, so diff lines show as
   solid green or red bars with dark text.
 - **Cursor:** drawn by the bridge as an inverse cell when the program shows it.
+- **Soft 80 columns (C64):** the same screen codes drawn from a 4×8 font
+  ([bridge/src/font4x8.js](bridge/src/font4x8.js), generated into
+  `c64/font4x8.inc`) into the 320×200 hi-res bitmap. Letters are 3 pixels
+  wide; `N`, `#`, lines and blocks use all 4. A bitmap cell holds two
+  characters and one colour. When two visible characters of different
+  colours share one, letters and digits keep the colour over punctuation (then
+  the one with more lit pixels wins), and the loser is repainted in its own
+  colour by a hardware sprite laid exactly over its pixels. Each 24×21 sprite
+  covers the losers of one colour within 6 characters × 2 rows; there are 8,
+  given to letters first, then to rows nearest the cursor. Anything beyond
+  that keeps its neighbour's colour ([bridge/src/soft80.js](bridge/src/soft80.js)).
+  `node bridge/scripts/mock-soft80.js out.ppm 1500 -- <cmd>` previews a
+  program's screen, sprites included, without an emulator.
 
 ## Protocol
 
 See [bridge/src/protocol.js](bridge/src/protocol.js). Host→C64 opcodes are GOTO,
-COLOR, PUT, REPEAT, SCROLL, COLORS, CLS and FRAME. Every frame ends with FRAME and
+COLOR, PUT, REPEAT, SCROLL, COLORS, CLS and FRAME, plus SPRITE and NOSPRITE for
+the soft 80-column screen. Every frame ends with FRAME and
 the C64 answers ACK. The bridge keeps only one frame in flight, so fast output
-merges into fewer frames instead of overflowing the C64's 256-byte receive buffer.
+merges into fewer frames instead of overflowing the client's receive buffer (256
+bytes; 4 KB on the soft 80-column C64).
 C64→host messages are ACK, `KEY code mods` and HELLO. A client on another
-display sends `HELLO_ON id` instead (1 = C128 VDC, 80×25), and the bridge
+display sends `HELLO_ON id` instead (1 = C128 VDC, 2 = C64 soft 80 columns,
+both 80×25), and the bridge
 resizes the program's terminal to match. For the C128, colours are VDC
 attribute bytes, and key codes go up to 87 with ALT as modifier bit 3.
 
 For each frame the encoder tries every full-screen scroll offset and picks the
 cheapest encoding. A spinner tick costs about 7 bytes, and a full redraw about
-700–1500.
+700–1500 at 40 columns, or up to about 3000 at 80.
 
 ## Testing without a C64
 
@@ -122,13 +142,15 @@ cheapest encoding. A spinner tick costs about 7 bytes, and a full redraw about
 cd bridge && npm test                                 # encoder vs reference decoder
 node scripts/fake-c64.js 6464 $'echo hi\r'            # pretend C64: types keys, prints screen
 node scripts/fake-c64.js --c128 6464 $'echo hi\r'     # same, as an 80-column C128
+node scripts/fake-c64.js --soft80 6464 $'echo hi\r'   # same, as the soft 80-column C64
 ```
 
 To see how colours and glyphs map, `cat colortest.ans` in a session (for
 example `make bridge CMD="-- bash --norc"`). It fits on a 40×25 screen and
 shows the 16 ANSI colours as text and backgrounds, attributes, the 256-colour
 cube, a truecolor sweep and the custom glyphs. Regenerate it with
-`node bridge/scripts/gen-colortest.js`.
+`node bridge/scripts/gen-colortest.js`. Screenshots:
+[C64](docs/colortest-c64.png), [C128](docs/colortest-c128.png).
 
 ## Layout
 
@@ -136,16 +158,29 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 |---|---|
 | `c64/main.s` | ca65 client: NMI serial receive, command decoder, keyboard scan |
 | `c64/petty.cfg` | linker config (program must end below `$3700`) |
+| `c64/main80.s` | soft 80-column C64 client: the same, drawing into the bitmap |
+| `c64/petty80.cfg` | linker config (program must end below `$2000`) |
 | `c128/main.s` | C128 client: the same, drawing on the VDC at 2 MHz |
 | `c128/petty128.cfg` | linker config (program must end below `$3800`) |
 | `bridge/src/bridge.js` | TCP server, pty, frame pacing |
 | `bridge/src/screen.js` | xterm buffer → screen codes/colours |
+| `bridge/src/soft80.js` | soft 80 columns: shared cell colours and sprite repaints |
 | `bridge/src/protocol.js` | encoder and reference decoder |
 | `bridge/src/glyphs.js` / `colors.js` / `keymap.js` | character, colour, key mappings |
+| `bridge/src/font4x8.js` | 4×8 font for the soft 80-column screen |
+| `bridge/scripts/gen-glyphs.js` | writes `c64/glyphs.inc` and `c64/font4x8.inc` |
+| `bridge/scripts/fake-c64.js` | pretend client for testing without VICE |
+| `bridge/scripts/mock-soft80.js` | renders a program's soft 80-column screen to an image |
+| `bridge/scripts/gen-colortest.js` | writes `colortest.ans` |
 
-Memory map: code `$0801–$0CB4`, receive ring `$3700`, character set `$3800–$3FFF`, screen `$0400`.
+Memory map: code `$0801–$0CB1`, receive ring `$3700`, character set `$3800–$3FFF`, screen `$0400`.
 
-C128 (bank 15): code `$1C01–$223E`, font build buffer `$3800–$3BFF` (startup
+Soft 80 columns: code `$0801–$11E7`; the VIC uses its second bank, with glyph
+tables `$4000–$4FFF` (built at startup), sprite data `$5000–$51FF`, colours
+`$5C00` (sprite pointers `$5FF8`) and the bitmap `$6000–$7F3F`; receive ring
+`$8000–$8FFF` (4 KB, because a bitmap scroll takes about 90 ms).
+
+C128 (bank 15): code `$1C01–$2245`, font build buffer `$3800–$3BFF` (startup
 only), receive ring `$3F00`. VDC RAM: screen `$0000`, attributes `$0800`, font
 `$2000–$2FFF`.
 

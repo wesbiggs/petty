@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// Runs a command (default: claude) in a pty the size of the client's screen
-// (40x25 C64, 80x25 C128 VDC, or wider and panned), emulates the terminal
-// headlessly, and streams screen diffs to the client over TCP (VICE's RS-232).
+// Runs a command (default: $SHELL) in a pty the size of the client's screen
+// (40x25 C64; 80x25 C128 VDC or C64 soft 80 columns; or wider and panned),
+// emulates the terminal headlessly, and streams screen diffs to the client
+// over TCP (VICE's RS-232).
 
 import net from 'node:net';
 import { parseArgs } from 'node:util';
@@ -22,7 +23,7 @@ const { values: opt, positionals } = parseArgs({
   },
 });
 
-const [cmd, ...cmdArgs] = positionals.length ? positionals : ['claude'];
+const [cmd, ...cmdArgs] = positionals.length ? positionals : [process.env.SHELL || '/bin/sh'];
 const FRAME_MS = 1000 / Number(opt.fps);
 const ACK_TIMEOUT_MS = 5000;
 const SYNC_MAX_MS = 250; // don't wait forever on synchronized output

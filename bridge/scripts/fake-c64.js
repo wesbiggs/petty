@@ -1,6 +1,6 @@
-// Pretends to be the C64 (or a C128 in 80 columns): connects to the bridge,
-// types keys, prints the decoded screen.
-// usage: node scripts/fake-c64.js [--c128] [port] "text to type"
+// Pretends to be the C64 (or a C128, or the C64 in soft 80 columns): connects
+// to the bridge, types keys, prints the decoded screen.
+// usage: node scripts/fake-c64.js [--c128 | --soft80] [port] "text to type"
 import net from 'node:net';
 import { parseArgs } from 'node:util';
 import { Decoder, DISPLAY, MSG, OP } from '../src/protocol.js';
@@ -9,12 +9,13 @@ import { screenCodeToChar } from '../src/glyphs.js';
 
 const { values: opt, positionals } = parseArgs({
   allowPositionals: true,
-  options: { c128: { type: 'boolean', default: false } },
+  options: { c128: { type: 'boolean', default: false }, soft80: { type: 'boolean', default: false } },
 });
 const port = Number(positionals[0] ?? 6464);
 const typed = positionals[1] ?? 'echo hello from the c64\r';
-const { cols, rows } = opt.c128 ? DISPLAY.C128 : DISPLAY.C64;
-const hello = opt.c128 ? [MSG.HELLO_ON, DISPLAY.C128.id] : [MSG.HELLO];
+const display = opt.c128 ? DISPLAY.C128 : opt.soft80 ? DISPLAY.C64_80 : DISPLAY.C64;
+const { cols, rows } = display;
+const hello = display === DISPLAY.C64 ? [MSG.HELLO] : [MSG.HELLO_ON, display.id];
 const dec = new Decoder(cols, rows);
 const sock = net.connect(port, '127.0.0.1', () => sock.write(Buffer.from(hello)));
 sock.on('data', d => {

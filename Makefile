@@ -1,6 +1,7 @@
 BUILD   := build
 PRG     := $(BUILD)/petty.prg
 PRG128  := $(BUILD)/petty128.prg
+PRG80   := $(BUILD)/petty80.prg
 PORT    ?= 6464
 
 # VICE: SwiftLink cartridge (6551 at $DE00, NMI) on RS-232 device 1, which
@@ -8,12 +9,14 @@ PORT    ?= 6464
 VICE_FLAGS := -acia1 -acia1mode 1 -acia1base 0xDE00 -acia1irq 1 \
               -myaciadev 0 -rsdev1 127.0.0.1:$(PORT) +rsdev1ip232 -rsdev1baud 38400
 
-.PHONY: all clean bridge vice vice128 run test
+.PHONY: all clean bridge vice vice128 vice80 run test
 
-all: $(PRG) $(PRG128)
+all: $(PRG) $(PRG128) $(PRG80)
 
-c64/glyphs.inc: bridge/src/glyphs.js bridge/scripts/gen-glyphs.js
+# The generator writes both includes.
+c64/glyphs.inc: bridge/src/glyphs.js bridge/src/font4x8.js bridge/scripts/gen-glyphs.js
 	node bridge/scripts/gen-glyphs.js
+c64/font4x8.inc: c64/glyphs.inc ;
 
 $(BUILD)/main.o: c64/main.s c64/glyphs.inc | $(BUILD)
 	ca65 -I c64 -l $(BUILD)/main.lst -o $@ c64/main.s
@@ -26,6 +29,12 @@ $(BUILD)/main128.o: c128/main.s c64/glyphs.inc | $(BUILD)
 
 $(PRG128): $(BUILD)/main128.o c128/petty128.cfg
 	ld65 -C c128/petty128.cfg -m $(BUILD)/petty128.map -o $@ $(BUILD)/main128.o
+
+$(BUILD)/main80.o: c64/main80.s c64/font4x8.inc | $(BUILD)
+	ca65 -I c64 -l $(BUILD)/main80.lst -o $@ c64/main80.s
+
+$(PRG80): $(BUILD)/main80.o c64/petty80.cfg
+	ld65 -C c64/petty80.cfg -m $(BUILD)/petty80.map -o $@ $(BUILD)/main80.o
 
 $(BUILD):
 	mkdir -p $@
@@ -44,6 +53,10 @@ vice: $(PRG)
 # Terminal 2, C128 in 80 columns (the VDC window)
 vice128: $(PRG128)
 	x128 -80col $(VICE_FLAGS) -autostart $(PRG128)
+
+# Terminal 2, C64 with the soft 80-column bitmap screen
+vice80: $(PRG80)
+	x64sc $(VICE_FLAGS) -autostart $(PRG80)
 
 test: bridge/node_modules
 	cd bridge && node --test
