@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DISPLAY, OP, Decoder, encodeFrame, encodeReset, sameLook } from '../src/protocol.js';
-import { toScreenCode, INVERSE } from '../src/glyphs.js';
+import { toScreenCode, screenCodeToChar, INVERSE } from '../src/glyphs.js';
 import { keyToBytes, MATRIX, SHIFT, CTRL, CBM, ALT } from '../src/keymap.js';
 import { VIC, RGBI, palette, oscReply, THEME_NAMES } from '../src/colors.js';
 import { snapshot } from '../src/screen.js';
@@ -258,6 +258,8 @@ test('keymap', () => {
   assert.equal(keyToBytes(k('£'), 0), '\\');
   assert.deepEqual(keyToBytes(k('CRSR↔'), CBM), { pan: 1 });
   assert.deepEqual(keyToBytes(k('CRSR↔'), CBM | SHIFT), { pan: -1 });
+  assert.deepEqual(keyToBytes(k('CRSR↕'), CTRL), { panY: 1 });
+  assert.deepEqual(keyToBytes(k('CRSR↕'), CTRL | SHIFT), { panY: -1 });
 });
 
 test('C128 keys', () => {
@@ -271,6 +273,7 @@ test('C128 keys', () => {
   assert.equal(keyToBytes(k('UP'), SHIFT), '\x1b[A', 'no SHIFT flip on the C128 cursor keys');
   assert.equal(keyToBytes(k('LEFT'), 0, { appCursor: true }), '\x1bOD');
   assert.deepEqual(keyToBytes(k('LEFT'), CBM), { pan: -1 });
+  assert.deepEqual(keyToBytes(k('UP'), CTRL), { panY: -1 });
   assert.equal(keyToBytes(k('KP7'), 0), '7');
   assert.equal(keyToBytes(k('ENTER'), 0), '\r');
   assert.equal(keyToBytes(k('a'), ALT), '\x1ba');
@@ -288,4 +291,16 @@ test('palettes', () => {
   assert.equal(RGBI.fg('rgb', 0xb1b9f9), 3, 'Claude Code blue = VDC light blue');
   assert.notEqual(VIC.fg('rgb', 0xa0b0e8), 15, 'a pale blue is not grey');
   assert.equal(VIC.fg('rgb', 0x999999), 15, 'greys still map to grey');
+});
+
+test('snapshot of a terminal taller than the display', async () => {
+  const term = new xterm.Terminal({ cols: 40, rows: 28, allowProposedApi: true });
+  await new Promise(r => term.write(Array.from({ length: 28 }, (_, i) => `row ${i}`).join('\r\n'), r));
+  const line = (s, y) => Array.from(s.glyph.slice(y * 40, y * 40 + 6), screenCodeToChar).join('');
+  const top = snapshot(term, 0, DISPLAY.C64);
+  assert.equal(top.rows, 25);
+  assert.equal(line(top, 0), 'row 0 ');
+  const bottom = snapshot(term, 0, DISPLAY.C64, 'dark', 3);
+  assert.equal(line(bottom, 0), 'row 3 ');
+  assert.equal(line(bottom, 24), 'row 27');
 });

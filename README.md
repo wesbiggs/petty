@@ -38,7 +38,7 @@ make vice80           # ...or the C64 with the soft 80-column screen
 
 Start the bridge first, because VICE connects when the client enables the ACIA.
 To run Claude Code directly: `make bridge CMD="-- claude"`, or
-`node bridge/src/bridge.js [--port N] [--fps N] [--cols N] [--theme T] [-v] -- <cmd> [args...]`.
+`node bridge/src/bridge.js [--port N] [--fps N] [--cols N] [--rows N] [--theme T] [-v] -- <cmd> [args...]`.
 
 `--theme` sets the screen colour and the program's default colours: `dark`
 (default: light grey on black), `light` (black on white), `classic` (the C64's
@@ -53,6 +53,10 @@ For programs that need a terminal wider than the client's screen, `--cols 80`
 runs the pty at 80 columns and shows 40 of them at a time. C=+CRSR→ moves the
 window right by 20 columns (0–39 → 20–59 → 40–79), and C=+SHIFT+CRSR→ moves it
 left: `make bridge CMD="--cols 80 -- rogue"`.
+
+Likewise `--rows 28` runs the pty at 28 rows and shows 25 of them.
+CTRL+CRSR↓ moves the window down by up to half a screen, and
+CTRL+SHIFT+CRSR↓ moves it up. Typing moves it to show the cursor's row.
 
 On the C128 and the soft 80-column C64 the program gets an 80×25 terminal, so
 it rarely needs `--cols`. Switching clients mid-session resizes the terminal.
@@ -72,6 +76,7 @@ survives C64 resets and reconnects; a reset just triggers a full redraw.
 | F2 / F4 | PgUp / PgDn | |
 | CRSR keys (+SHIFT) | arrows | |
 | C=+CRSR↔ (+SHIFT) | pan right (left) by half a screen when `--cols` is wider than the screen | |
+| CTRL+CRSR↕ (+SHIFT) | pan down (up) by half a screen when `--rows` is taller than the screen | |
 | C=+CRSR↕ (+SHIFT) | scroll down (up), like a trackpad swipe: mouse wheel if the program tracks the mouse, else the bridge's 200-line scrollback | scroll |
 | INST/DEL, SHIFT+INST | Backspace, Delete | |
 | CLR/HOME, SHIFT+CLR | Home, Ctrl+L | redraw |
@@ -89,7 +94,7 @@ plus:
 |---|---|
 | ESC | Esc |
 | TAB, SHIFT+TAB | Tab, Shift+Tab (cycle mode in Claude Code) |
-| ↑ ↓ ← → | arrows; with C=, scroll (↑↓) or pan (←→) |
+| ↑ ↓ ← → | arrows; with C=, scroll (↑↓) or pan (←→); with CTRL, pan (↑↓) |
 | ALT+any key | Meta: Esc, then the key |
 | LINE FEED | Ctrl+J (newline in Claude Code) |
 | HELP | F1 |

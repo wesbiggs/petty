@@ -32,10 +32,10 @@ export function cursorVisible(term) {
   return !term._core?.coreService?.isCursorHidden;
 }
 
-// Cells for a `display` ({cols, rows}); `panX` is the first terminal column
-// shown, for terminals wider than the display. On a display with `pair`
+// Cells for a `display` ({cols, rows}); `panX` and `panY` are the first
+// terminal column and row shown, for terminals larger than the display. On a display with `pair`
 // cells, the result also has `sprites` (see soft80.js).
-export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark') {
+export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', panY = 0) {
   const { cols, rows } = display;
   const pal = paletteFor(display, theme);
   const glyph = new Int16Array(cols * rows);
@@ -43,10 +43,11 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark') 
   const buf = term.buffer.active;
   const cell = buf.getNullCell();
   const showCursor = cursorVisible(term);
-  const cursorRow = buf.baseY + buf.cursorY - buf.viewportY; // off-screen when scrolled back
+  const top = buf.viewportY + panY;
+  const cursorRow = buf.baseY + buf.cursorY - top; // off-screen when scrolled back or panned away
 
   for (let y = 0; y < rows; y++) {
-    const line = buf.getLine(buf.viewportY + y);
+    const line = buf.getLine(top + y);
     for (let x = 0; x < cols; x++) {
       const i = y * cols + x;
       if (!line || !line.getCell(panX + x, cell)) { glyph[i] = SPACE; color[i] = pal.defaultFg; continue; }

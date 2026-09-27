@@ -52,7 +52,8 @@ const SPECIAL = {
 // C=+CRSR does what a trackpad swipe does in iTerm2: a mouse wheel event at
 // mid-screen if the program tracks the mouse, arrows on the alternate screen,
 // and otherwise { scroll } for the bridge to scroll its own scrollback.
-// C=+CRSR→ returns { pan } to move the 40-column window over a wider terminal.
+// C=+CRSR→ returns { pan } to move the 40-column window over a wider terminal,
+// and CTRL+CRSR↓ { panY } to move the 25-row window over a taller one.
 const WHEEL_COL = 20, WHEEL_ROW = 12, WHEEL_LINES = 3;
 function wheel(up, mouse) {
   const button = up ? 64 : 65;
@@ -78,10 +79,12 @@ function keyToBytesNoAlt(code, mods, { appCursor = false, mouse = null } = {}) {
   const shift = (mods & SHIFT) !== 0;
 
   // The C64's two CRSR keys use SHIFT for up and left; the C128's four
-  // cursor keys don't. C= turns up/down into scrolling, left/right into panning.
+  // cursor keys don't. C= turns up/down into scrolling, left/right into panning;
+  // CTRL turns up/down into panning.
   if (key === 'CRSR↕') key = shift ? 'UP' : 'DOWN';
   if (key === 'CRSR↔') key = shift ? 'LEFT' : 'RIGHT';
   if (ARROW[key]) {
+    if ((mods & CTRL) && (key === 'UP' || key === 'DOWN')) return { panY: key === 'DOWN' ? 1 : -1 };
     if (mods & CBM) {
       if (key === 'UP' || key === 'DOWN') return wheel(key === 'UP', mouse);
       return { pan: key === 'RIGHT' ? 1 : -1 };

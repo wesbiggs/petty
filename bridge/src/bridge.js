@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Runs a command (default: $SHELL) in a pty the size of the client's screen
-// (40x25 C64; 80x25 C128 VDC or C64 soft 80 columns; or wider and panned),
+// (40x25 C64; 80x25 C128 VDC or C64 soft 80 columns; or larger and panned),
 // emulates the terminal headlessly, and streams screen diffs to the client
 // over TCP (VICE's RS-232).
 
@@ -9,7 +9,7 @@ import { parseArgs } from 'node:util';
 import pty from 'node-pty';
 import xterm from '@xterm/headless';
 import { DISPLAY, MSG, displayById, encodeFrame, encodeReset } from './protocol.js';
-import { snapshot, paletteFor } from './screen.js';
+import { snapshot, paletteFor, cursorVisible } from './screen.js';
 import { THEME_NAMES, oscReply } from './colors.js';
 import { keyToBytes, MATRIX } from './keymap.js';
 
@@ -21,6 +21,7 @@ const { values: opt, positionals } = parseArgs({
     fps: { type: 'string', default: '20' },
     theme: { type: 'string', default: 'dark' },
     cols: { type: 'string' },
+    rows: { type: 'string' },
     verbose: { type: 'boolean', short: 'v', default: false },
   },
 });
@@ -38,18 +39,22 @@ const SYNC_MAX_MS = 250; // don't wait forever on synchronized output
 // The client's screen, from its HELLO. Kept across reconnects, like the session.
 let display = DISPLAY.C64;
 
-// A terminal wider than the display (--cols) is shown through a window that
-// C=+CRSR→ moves in half-screen steps (0-39, 20-59, 40-79 for 80 columns on a C64).
+// A terminal wider (--cols) or taller (--rows) than the display is shown
+// through a window that C=+CRSR→ and CTRL+CRSR↓ move in half-screen steps
+// (0-39, 20-59, 40-79 for 80 columns on a C64).
 const termCols = () => Math.max(display.cols, Number(opt.cols ?? 0));
-const panMax = () => termCols() - display.cols;
-let panX = 0;
+const termRows = () => Math.max(display.rows, Number(opt.rows ?? 0));
+const panMaxX = () => termCols() - display.cols;
+const panMaxY = () => termRows() - display.rows;
+let panX = 0, panY = 0;
 
+const clamp = (n, max) => Math.min(max, Math.max(0, n));
 const log = (...a) => console.error('[bridge]', ...a);
 const debug = (...a) => opt.verbose && log(...a);
 
 // --- terminal session (survives C64 reconnects) ---------------------------
 
-const term = new xterm.Terminal({ cols: termCols(), rows: display.rows, scrollback: 200, allowProposedApi: true });
+const term = new xterm.Terminal({ cols: termCols(), rows: termRows(), scrollback: 200, allowProposedApi: true });
 let proc = null;
 let dirty = true;
 let syncSince = 0;
@@ -59,7 +64,7 @@ function spawn() {
   proc = pty.spawn(cmd, cmdArgs, {
     name: 'xterm-256color',
     cols: termCols(),
-    rows: display.rows,
+    rows: termRows(),
     cwd: process.cwd(),
     env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
   });
@@ -75,10 +80,11 @@ function spawn() {
 function setDisplay(d) {
   if (d === display) return;
   display = d;
-  term.resize(termCols(), display.rows);
-  proc?.resize(termCols(), display.rows);
-  panX = Math.min(panX, panMax());
-  log(`display is ${display.name} ${display.cols}x${display.rows}, terminal ${termCols()}x${display.rows}`);
+  term.resize(termCols(), termRows());
+  proc?.resize(termCols(), termRows());
+  panX = Math.min(panX, panMaxX());
+  panY = Math.min(panY, panMaxY());
+  log(`display is ${display.name} ${display.cols}x${display.rows}, terminal ${termCols()}x${termRows()}`);
 }
 
 // Replies to terminal queries (DA, DSR, ...) go back to the program.
@@ -164,8 +170,13 @@ class Connection {
     debug(`key ${MATRIX[code]} mods=${mods} -> ${JSON.stringify(bytes)}`);
     if (!bytes) return;
     if (bytes.pan) {
-      const x = Math.min(panMax(), Math.max(0, panX + bytes.pan * display.cols / 2));
+      const x = clamp(panX + bytes.pan * display.cols / 2, panMaxX());
       if (x !== panX) { panX = x; dirty = true; debug(`pan to column ${panX}`); }
+      return;
+    }
+    if (bytes.panY) {
+      const y = clamp(panY + bytes.panY * Math.floor(display.rows / 2), panMaxY());
+      if (y !== panY) { panY = y; dirty = true; debug(`pan to row ${panY}`); }
       return;
     }
     if (bytes.scroll) {
@@ -179,6 +190,9 @@ class Connection {
       term.scrollToBottom();
       dirty = true;
     }
+    // ...and, in a terminal taller than the display, to the cursor's row.
+    const y = clamp(Math.min(buf.cursorY, Math.max(panY, buf.cursorY - display.rows + 1)), panMaxY());
+    if (y !== panY && cursorVisible(term)) { panY = y; dirty = true; debug(`pan to row ${panY}`); }
     if (!proc) {
       if (bytes === '\r') spawn();
       return;
@@ -187,7 +201,7 @@ class Connection {
   }
 
   sendFrame() {
-    const want = snapshot(term, panX, display, opt.theme);
+    const want = snapshot(term, panX, display, opt.theme, panY);
     const pal = paletteFor(display, opt.theme);
     const { bytes, state } = this.state
       ? encodeFrame(this.state, want)
