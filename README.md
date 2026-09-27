@@ -38,7 +38,14 @@ make vice80           # ...or the C64 with the soft 80-column screen
 
 Start the bridge first, because VICE connects when the client enables the ACIA.
 To run Claude Code directly: `make bridge CMD="-- claude"`, or
-`node bridge/src/bridge.js [--port N] [--fps N] [--cols N] [-v] -- <cmd> [args...]`.
+`node bridge/src/bridge.js [--port N] [--fps N] [--cols N] [--theme T] [-v] -- <cmd> [args...]`.
+
+`--theme` sets the screen colour and the program's default colours: `dark`
+(default: light grey on black), `light` (black on white), `classic` (the C64's
+light blue on blue), or `green` / `amber` (monochrome monitors: every colour
+becomes a shade of green or amber, by brightness). A program that asks the
+terminal for its colours (OSC 10/11/4) gets the theme's, as shown on the
+connected display; set Claude Code's own `/theme` to match.
 
 For programs that need a terminal wider than the client's screen, `--cols 80`
 runs the pty at 80 columns and shows 40 of them at a time. C=+CRSR→ moves the
@@ -97,12 +104,13 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
   nothing extra. Other Unicode is aliased or falls back to `?`. Edit
   [bridge/src/glyphs.js](bridge/src/glyphs.js); `make` regenerates `c64/glyphs.inc`.
   The C128 client uploads the same 256 characters to the VDC's font RAM.
-- **Colours:** ANSI 16 colours use a hand-tuned table; 256-colour and truecolor use
-  the nearest match in a Colodore-style palette. The C128's VDC has the ANSI
+- **Colours:** ANSI 16 colours use a hand-tuned table per theme; 256-colour and
+  truecolor use the nearest readable match in a Colodore-style palette. The C128's VDC has the ANSI
   colours themselves (RGBI), so they map one-to-one, except black and dark blue text.
 - **Backgrounds:** text mode has no per-cell background. A cell with a coloured
   background is drawn as an inverse glyph in that colour, so diff lines show as
-  solid green or red bars with dark text.
+  solid green or red bars, with text in the screen colour showing through. On
+  the light theme, backgrounds only use colours dark enough for that white text.
 - **Cursor:** drawn by the bridge as an inverse cell when the program shows it.
 - **Soft 80 columns (C64):** the same screen codes drawn from a 4×8 font
   ([bridge/src/font4x8.js](bridge/src/font4x8.js), generated into

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { DISPLAY, OP, Decoder, encodeFrame, encodeReset, sameLook } from '../src/protocol.js';
 import { toScreenCode, INVERSE } from '../src/glyphs.js';
 import { keyToBytes, MATRIX, SHIFT, CTRL, CBM, ALT } from '../src/keymap.js';
-import { VIC, RGBI } from '../src/colors.js';
+import { VIC, RGBI, palette, oscReply, THEME_NAMES } from '../src/colors.js';
 import { snapshot } from '../src/screen.js';
 import { FONT4 } from '../src/font4x8.js';
 import xterm from '@xterm/headless';
@@ -187,6 +187,51 @@ test('soft 80 columns: letters get sprites before punctuation', async () => {
   const { sprites } = await soft80('\x1b[32m(\x1b[31mo      '.repeat(9) + '\r\n'.repeat(10) + '\x1b[32mm\x1b[31mo');
   assert.equal(sprites.length, 8);
   assert.deepEqual([sprites[0].row, sprites[0].col, sprites[0].color], [10, 1, VIC.fg('palette', 1)]);
+});
+
+test('themes', () => {
+  const light = palette('vic', 'light');
+  assert.deepEqual([light.screenBg, light.defaultFg], [1, 0], 'C64: black on white');
+  assert.equal(light.bg('palette', 15), null, 'a white background is no background');
+  assert.notEqual(light.fg('palette', 3), 7, 'no yellow text on white');
+  assert.notEqual(light.bg('rgb', 0x69db7c), 13, 'no light green bar under white text');
+
+  const classic = palette('vic', 'classic');
+  assert.deepEqual([classic.screenBg, classic.border, classic.defaultFg], [6, 14, 14]);
+  assert.equal(classic.bg('palette', 4), null, 'blue background = the screen');
+  assert.notEqual(classic.fg('rgb', 0x2e2c9b), 6, 'no blue text on blue');
+
+  for (const [name, vic, rgbi] of [['green', [5, 13], [4, 5]], ['amber', [9, 8, 7], [12, 13]]]) {
+    const v = palette('vic', name), c = palette('rgbi', name);
+    for (let n = 0; n < 256; n++) {
+      assert.ok(vic.includes(v.fg('palette', n)), `${name} C64 fg ${n}`);
+      assert.ok(rgbi.includes(c.fg('palette', n)), `${name} C128 fg ${n}`);
+    }
+    assert.equal(v.screenBg, 0);
+  }
+  assert.ok(palette('vic', 'green').dimFg !== palette('vic', 'green').boldFg, 'dim differs from bold');
+  assert.throws(() => palette('vic', 'plaid'), /unknown theme/);
+  assert.deepEqual(THEME_NAMES, ['dark', 'light', 'classic', 'green', 'amber']);
+});
+
+test('a cell with both colours keeps the one covering most of it', async () => {
+  const term = new xterm.Terminal({ cols: 40, rows: 25, allowProposedApi: true });
+  // orange full block on black (Claude Code's logo), then black text on green
+  await new Promise(done => term.write('\x1b[?25l\x1b[38;2;215;119;87;48;2;0;0;0m█\x1b[0m\x1b[30;42ma', done));
+  const light = palette('vic', 'light');
+  const { glyph, color } = snapshot(term, 0, DISPLAY.C64, 'light');
+  assert.deepEqual([glyph[0], color[0]], [toScreenCode('█'), light.fg('rgb', 0xd77757)], 'block stays orange');
+  assert.deepEqual([glyph[1], color[1]], [toScreenCode('a') ^ INVERSE, light.bg('palette', 2)], 'text becomes a green bar');
+});
+
+test('colour query replies', () => {
+  const light = palette('vic', 'light');
+  assert.equal(oscReply(11, '?', light), '\x1b]11;rgb:ffff/ffff/ffff\x1b\\');
+  assert.equal(oscReply(10, '?', light), '\x1b]10;rgb:0000/0000/0000\x1b\\');
+  assert.equal(oscReply(11, '?', VIC), '\x1b]11;rgb:0000/0000/0000\x1b\\');
+  assert.equal(oscReply(4, '1;?;9;?', RGBI),
+    '\x1b]4;1;rgb:aaaa/0000/0000\x1b\\\x1b]4;9;rgb:ffff/5555/5555\x1b\\');
+  assert.equal(oscReply(11, 'rgb:0/0/0', VIC), null, 'setting a colour is not a query');
 });
 
 test('glyph mapping', () => {

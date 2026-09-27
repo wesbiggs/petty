@@ -9,7 +9,8 @@ import { parseArgs } from 'node:util';
 import pty from 'node-pty';
 import xterm from '@xterm/headless';
 import { DISPLAY, MSG, displayById, encodeFrame, encodeReset } from './protocol.js';
-import { snapshot } from './screen.js';
+import { snapshot, paletteFor } from './screen.js';
+import { THEME_NAMES, oscReply } from './colors.js';
 import { keyToBytes, MATRIX } from './keymap.js';
 
 const { values: opt, positionals } = parseArgs({
@@ -18,10 +19,16 @@ const { values: opt, positionals } = parseArgs({
     port: { type: 'string', default: '6464' },
     host: { type: 'string', default: '127.0.0.1' },
     fps: { type: 'string', default: '20' },
+    theme: { type: 'string', default: 'dark' },
     cols: { type: 'string' },
     verbose: { type: 'boolean', short: 'v', default: false },
   },
 });
+
+if (!THEME_NAMES.includes(opt.theme)) {
+  console.error(`[bridge] unknown theme ${opt.theme}: use ${THEME_NAMES.join(', ')}`);
+  process.exit(1);
+}
 
 const [cmd, ...cmdArgs] = positionals.length ? positionals : [process.env.SHELL || '/bin/sh'];
 const FRAME_MS = 1000 / Number(opt.fps);
@@ -76,6 +83,17 @@ function setDisplay(d) {
 
 // Replies to terminal queries (DA, DSR, ...) go back to the program.
 term.onData(d => proc?.write(d));
+
+// Colour queries get the theme's colours on the connected display, so
+// programs that pick light or dark by the background get it right.
+for (const code of [4, 10, 11]) {
+  term.parser.registerOscHandler(code, data => {
+    const reply = oscReply(code, data, paletteFor(display, opt.theme));
+    if (reply === null) return false;
+    proc?.write(reply);
+    return true;
+  });
+}
 term.onWriteParsed(() => { dirty = true; });
 
 // --- C64 connection ----------------------------------------------------------
@@ -169,8 +187,11 @@ class Connection {
   }
 
   sendFrame() {
-    const want = snapshot(term, panX, display);
-    const { bytes, state } = this.state ? encodeFrame(this.state, want) : encodeReset(want);
+    const want = snapshot(term, panX, display, opt.theme);
+    const pal = paletteFor(display, opt.theme);
+    const { bytes, state } = this.state
+      ? encodeFrame(this.state, want)
+      : encodeReset(want, pal.border, pal.screenBg, pal.defaultFg);
     this.state = state;
     if (bytes.length === 1) return; // only FRAME marker: nothing changed
     this.sock.write(Buffer.from(bytes));
