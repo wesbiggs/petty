@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { DISPLAY, OP, VDC, HIRES_UNDERLINE, Decoder, encodeFrame, encodeReset, sameLook } from '../src/protocol.js';
 import { toScreenCode, screenCodeToChar, INVERSE } from '../src/glyphs.js';
 import { keyToBytes, MATRIX, SHIFT, CTRL, CBM, ALT } from '../src/keymap.js';
-import { VIC, RGBI, palette, oscReply, THEME_NAMES } from '../src/colors.js';
+import { VIC, RGBI, palette, oscReply, THEME_NAMES, stepTheme } from '../src/colors.js';
 import { snapshot } from '../src/screen.js';
 import { FONT4 } from '../src/font4x8.js';
 import { EXT, extendedGlyph } from '../src/extglyphs.js';
@@ -226,6 +226,13 @@ test('a cell with both colours keeps the one covering most of it', async () => {
   assert.deepEqual([glyph[1], color[1]], [toScreenCode('a') ^ INVERSE, light.bg('palette', 2)], 'text becomes a green bar');
 });
 
+test('stepping through themes wraps around', () => {
+  const last = THEME_NAMES.at(-1);
+  assert.equal(stepTheme('dark', 1), THEME_NAMES[1]);
+  assert.equal(stepTheme(last, 1), THEME_NAMES[0]);
+  assert.equal(stepTheme(THEME_NAMES[0], -1), last);
+});
+
 test('colour query replies', () => {
   const light = palette('vic', 'light');
   assert.equal(oscReply(11, '?', light), '\x1b]11;rgb:ffff/ffff/ffff\x1b\\');
@@ -262,6 +269,9 @@ test('keymap', () => {
   assert.deepEqual(keyToBytes(k('CRSR↔'), CBM | SHIFT), { pan: -1 });
   assert.deepEqual(keyToBytes(k('CRSR↕'), CTRL), { panY: 1 });
   assert.deepEqual(keyToBytes(k('CRSR↕'), CTRL | SHIFT), { panY: -1 });
+  assert.deepEqual(keyToBytes(k('F1'), CBM), { theme: 1 });
+  assert.deepEqual(keyToBytes(k('F1'), CBM | SHIFT), { theme: -1 });
+  assert.equal(keyToBytes(k('F1'), 0), '\x1b[Z');
 });
 
 test('C128 keys', () => {

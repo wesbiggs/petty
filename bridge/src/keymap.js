@@ -54,6 +54,7 @@ const SPECIAL = {
 // and otherwise { scroll } for the bridge to scroll its own scrollback.
 // C=+CRSR→ returns { pan } to move the 40-column window over a wider terminal,
 // and CTRL+CRSR↓ { panY } to move the 25-row window over a taller one.
+// C=+F1 returns { theme } to switch to the next (SHIFT: previous) theme.
 const WHEEL_COL = 20, WHEEL_ROW = 12, WHEEL_LINES = 3;
 function wheel(up, mouse) {
   const button = up ? 64 : 65;
@@ -91,6 +92,7 @@ function keyToBytesNoAlt(code, mods, { appCursor = false, mouse = null } = {}) {
     }
     return ESC + (appCursor ? 'O' : '[') + ARROW[key];
   }
+  if (key === 'F1' && (mods & CBM)) return { theme: shift ? -1 : 1 };
   if (SPECIAL[key]) return SPECIAL[key][shift ? 1 : 0];
   if (key.startsWith('KP')) return key.slice(2);
 

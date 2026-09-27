@@ -41,7 +41,7 @@ make vicehires        # ...or the C64 with the 40-column hi-res screen
 
 Start the bridge first, because VICE connects when the client enables the ACIA.
 To run Claude Code directly: `make bridge CMD="-- claude"`, or
-`node bridge/src/bridge.js [--port N] [--fps N] [--cols N] [--rows N] [--theme T] [-v] -- <cmd> [args...]`.
+`node bridge/src/bridge.js [--port N] [--fps N] [--cols N] [--rows N] [--theme T] [--control N] [-v] -- <cmd> [args...]`.
 
 `--theme` sets the screen colour and the program's default colours: `dark`
 (default: light grey on black), `light` (black on white), `classic` (the C64's
@@ -49,6 +49,20 @@ light blue on blue), or `green` / `amber` (monochrome monitors: every colour
 becomes a shade of green or amber, by brightness). A program that asks the
 terminal for its colours (OSC 10/11/4) gets the theme's, as shown on the
 connected display; Claude Code picks light or dark this way.
+
+The theme can be changed while the bridge runs: C=+F1 on the C64 switches to
+the next theme (C=+F2, i.e. C=+SHIFT+F1, to the previous one), or from the host:
+
+```bash
+make theme T=amber    # or T=next / T=prev; no T shows the current theme
+node bridge/scripts/petty-ctl.js [--port N] theme amber
+```
+
+`petty-ctl.js` talks to the bridge's control port, which listens on `--host`
+at `--port` + 1 (6465) unless `--control N` says otherwise. The screen is
+redrawn in the new colours at once, but a program that asked for the colours
+at startup keeps its answer until it restarts: Claude Code started on `dark`
+keeps its dark-mode colours after a switch to `light`.
 
 ![The colour test in each theme, on the C64 (left) and the C128 (right)](docs/themes.png)
 
@@ -77,6 +91,7 @@ survives C64 resets and reconnects; a reset just triggers a full redraw.
 | F1 / F3 | Shift+Tab / Tab | cycle mode / complete |
 | F5 / F7 | Ctrl+R / Ctrl+O | history search / transcript |
 | F2 / F4 | PgUp / PgDn | |
+| C=+F1 / C=+F2 | next / previous theme | |
 | CRSR keys (+SHIFT) | arrows | |
 | C=+CRSR↔ (+SHIFT) | pan right (left) by half a screen when `--cols` is wider than the screen | |
 | CTRL+CRSR↕ (+SHIFT) | pan down (up) by half a screen when `--rows` is taller than the screen | |

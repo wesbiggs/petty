@@ -10,7 +10,7 @@ PORT    ?= 6464
 VICE_FLAGS := -acia1 -acia1mode 1 -acia1base 0xDE00 -acia1irq 1 \
               -myaciadev 0 -rsdev1 127.0.0.1:$(PORT) +rsdev1ip232 -rsdev1baud 38400
 
-.PHONY: all clean bridge vice vice128 vice80 vicehires run test
+.PHONY: all clean bridge theme vice vice128 vice80 vicehires run test
 
 all: $(PRG) $(PRG128) $(PRG80) $(PRGHI)
 
@@ -52,6 +52,10 @@ bridge/node_modules:
 # Terminal 1: the bridge (extra args: make bridge CMD="bash")
 bridge: bridge/node_modules
 	node bridge/src/bridge.js --port $(PORT) $(CMD)
+
+# Switch the running bridge's theme: make theme T=amber (or next, prev; no T: show it)
+theme:
+	node bridge/scripts/petty-ctl.js --port $$(($(PORT) + 1)) theme $(T)
 
 # Terminal 2: the emulator
 vice: $(PRG)

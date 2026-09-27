@@ -162,6 +162,10 @@ const THEMES = {
 };
 export const THEME_NAMES = Object.keys(THEMES);
 
+// The theme `step` places after `name` in THEME_NAMES, wrapping around.
+export const stepTheme = (name, step) =>
+  THEME_NAMES[(THEME_NAMES.indexOf(name) + step + THEME_NAMES.length) % THEME_NAMES.length];
+
 const palettes = new Map();
 
 // The palette for `kind` ('vic' or 'rgbi') in theme `name`.

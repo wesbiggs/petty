@@ -11,7 +11,7 @@ import pty from 'node-pty';
 import xterm from '@xterm/headless';
 import { DISPLAY, MSG, displayById, encodeFrame, encodeReset } from './protocol.js';
 import { snapshot, paletteFor, cursorVisible } from './screen.js';
-import { THEME_NAMES, oscReply } from './colors.js';
+import { THEME_NAMES, stepTheme, oscReply } from './colors.js';
 import { keyToBytes, MATRIX } from './keymap.js';
 import { GlyphCache } from './glyphcache.js';
 
@@ -22,6 +22,7 @@ const { values: opt, positionals } = parseArgs({
     host: { type: 'string', default: '127.0.0.1' },
     fps: { type: 'string', default: '20' },
     theme: { type: 'string', default: 'dark' },
+    control: { type: 'string' },
     cols: { type: 'string' },
     rows: { type: 'string' },
     verbose: { type: 'boolean', short: 'v', default: false },
@@ -34,6 +35,7 @@ if (!THEME_NAMES.includes(opt.theme)) {
 }
 
 const [cmd, ...cmdArgs] = positionals.length ? positionals : [process.env.SHELL || '/bin/sh'];
+const CONTROL_PORT = Number(opt.control ?? Number(opt.port) + 1);
 const FRAME_MS = 1000 / Number(opt.fps);
 const ACK_TIMEOUT_MS = 5000;
 const SYNC_MAX_MS = 250; // don't wait forever on synchronized output
@@ -49,6 +51,9 @@ const termRows = () => Math.max(display.rows, Number(opt.rows ?? 0));
 const panMaxX = () => termCols() - display.cols;
 const panMaxY = () => termRows() - display.rows;
 let panX = 0, panY = 0;
+
+// Changed by C=+F1 or the control port (scripts/petty-ctl.js).
+let theme = opt.theme;
 
 const clamp = (n, max) => Math.min(max, Math.max(0, n));
 const log = (...a) => console.error('[bridge]', ...a);
@@ -89,6 +94,16 @@ function setDisplay(d) {
   log(`display is ${display.name} ${display.cols}x${display.rows}, terminal ${termCols()}x${termRows()}`);
 }
 
+// A full redraw sets the new border and screen colours. Programs that asked
+// for the colours (OSC 10/11) at startup keep their answer until restarted.
+function setTheme(name) {
+  if (name === theme) return;
+  theme = name;
+  if (conn) conn.state = null;
+  dirty = true;
+  log(`theme is ${theme}`);
+}
+
 // Replies to terminal queries (DA, DSR, ...) go back to the program.
 term.onData(d => proc?.write(d));
 
@@ -96,7 +111,7 @@ term.onData(d => proc?.write(d));
 // programs that pick light or dark by the background get it right.
 for (const code of [4, 10, 11]) {
   term.parser.registerOscHandler(code, data => {
-    const reply = oscReply(code, data, paletteFor(display, opt.theme));
+    const reply = oscReply(code, data, paletteFor(display, theme));
     if (reply === null) return false;
     proc?.write(reply);
     return true;
@@ -181,6 +196,10 @@ class Connection {
       if (y !== panY) { panY = y; dirty = true; debug(`pan to row ${panY}`); }
       return;
     }
+    if (bytes.theme) {
+      setTheme(stepTheme(theme, bytes.theme));
+      return;
+    }
     if (bytes.scroll) {
       term.scrollLines(bytes.scroll);
       dirty = true;
@@ -203,8 +222,8 @@ class Connection {
   }
 
   sendFrame() {
-    const want = snapshot(term, panX, display, opt.theme, panY);
-    const pal = paletteFor(display, opt.theme);
+    const want = snapshot(term, panX, display, theme, panY);
+    const pal = paletteFor(display, theme);
     // After a reset, reload the client's extended glyphs too.
     if (!this.state) this.glyphs = display.ext ? new GlyphCache(display) : null;
     const glyphs = this.glyphs?.place(want, this.state) ?? [];
@@ -250,6 +269,36 @@ const server = net.createServer(sock => {
 server.listen(Number(opt.port), opt.host, () => {
   log(`listening on ${opt.host}:${opt.port} - start VICE / the C64 client now`);
 });
+
+// --- control port: one command per line, one reply line each -------------
+
+function control(line) {
+  const [cmd, arg] = line.trim().split(/\s+/);
+  if (cmd === 'theme') {
+    if (!arg) return `${theme} (${THEME_NAMES.join(', ')})`;
+    const name = arg === 'next' ? stepTheme(theme, 1) : arg === 'prev' ? stepTheme(theme, -1) : arg;
+    if (!THEME_NAMES.includes(name)) return `error: unknown theme ${arg}: use ${THEME_NAMES.join(', ')}, next or prev`;
+    setTheme(name);
+    return theme;
+  }
+  return `error: unknown command ${cmd}: use theme [name|next|prev]`;
+}
+
+net.createServer(sock => {
+  let buf = '';
+  sock.setEncoding('utf8');
+  sock.on('data', d => {
+    buf += d;
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      if (line.trim()) sock.write(control(line) + '\n');
+    }
+  });
+  sock.on('error', () => {});
+}).on('error', e => log(`control port: ${e.message}`))
+  .listen(CONTROL_PORT, opt.host, () => log(`control on ${opt.host}:${CONTROL_PORT}`));
 
 setInterval(tick, FRAME_MS);
 
