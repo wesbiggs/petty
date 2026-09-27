@@ -1,12 +1,13 @@
 // Pretends to be the C64 (or a C128, or the C64 in soft 80 columns or
 // hi-res): connects to the bridge, types keys, prints the decoded screen.
-// usage: node scripts/fake-c64.js [--c128 | --soft80 | --hires] [port] "text to type"
+// usage: node scripts/fake-c64.js [--c128 | --soft80 | --hires] [--serial dev] [port] "text to type"
 import net from 'node:net';
 import { parseArgs } from 'node:util';
 import { Decoder, DISPLAY, MSG, OP, VDC } from '../src/protocol.js';
 import { MATRIX, SHIFT } from '../src/keymap.js';
 import { screenCodeToChar } from '../src/glyphs.js';
 import { EXT_GLYPHS } from '../src/extglyphs.js';
+import { openSerial } from '../src/serial.js';
 
 const { values: opt, positionals } = parseArgs({
   allowPositionals: true,
@@ -14,6 +15,8 @@ const { values: opt, positionals } = parseArgs({
     c128: { type: 'boolean', default: false },
     soft80: { type: 'boolean', default: false },
     hires: { type: 'boolean', default: false },
+    serial: { type: 'string' },
+    baud: { type: 'string', default: '38400' },
   },
 });
 const port = Number(positionals[0] ?? 6464);
@@ -22,7 +25,9 @@ const display = opt.c128 ? DISPLAY.C128 : opt.soft80 ? DISPLAY.C64_80 : opt.hire
 const { cols, rows } = display;
 const hello = display === DISPLAY.C64 ? [MSG.HELLO] : [MSG.HELLO_ON, display.id];
 const dec = new Decoder(cols, rows);
-const sock = net.connect(port, '127.0.0.1', () => sock.write(Buffer.from(hello)));
+const sock = opt.serial ? openSerial(opt.serial, Number(opt.baud)) : net.connect(port, '127.0.0.1');
+if (opt.serial) sock.write(Buffer.from(hello));
+else sock.on('connect', () => sock.write(Buffer.from(hello)));
 sock.on('data', d => {
   dec.feed(d);
   for (const b of d) if (b === OP.FRAME) sock.write(Buffer.from([MSG.ACK]));
@@ -57,6 +62,6 @@ setTimeout(async () => {
       for (let c = 0; c < cols; c++) line += charAt(r * cols + c);
       console.log('|' + line + '|');
     }
-    sock.end();
+    process.exit(0); // closing a serial stream reports an abort
   }, 800);
 }, 800);

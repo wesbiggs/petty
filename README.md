@@ -9,7 +9,7 @@ and several hundred more glyphs, which the C128 client has too.
 A bridge on a Mac or Linux host runs the program in a pty the size of the
 client's screen (40×25, or 80×25) and emulates the terminal headlessly
 (`@xterm/headless`). It sends the C64 only the screen cells that changed,
-already converted to C64 screen codes and colours. The C64 client (1.2 KB of
+already converted to C64 screen codes and colours. The C64 client (1.3 KB of
 6502) just copies them into screen RAM and sends key presses back.
 
 Unlike C64 chat clients for Claude (such as
@@ -26,7 +26,9 @@ claude ⇄ pty ⇄ xterm (headless) → diff/encode ══ TCP / serial ══�
 ## Requirements
 
 - macOS or Linux (on Windows, use WSL); cc65 (`ca65`, `ld65`), VICE 3.x (`x64sc`, `x128`), Node 20+
-- On real hardware: a SwiftLink-compatible cartridge (6551 ACIA at `$DE00`, NMI)
+- On real hardware: a SwiftLink-compatible cartridge (6551 ACIA at `$DE00`, NMI),
+  wired to the host by a USB-serial adapter or through a WiFi modem (see
+  [Real hardware](#real-hardware))
 
 ## Run it in VICE
 
@@ -41,7 +43,7 @@ make vicehires        # ...or the C64 with the 40-column hi-res screen
 
 Start the bridge first, because VICE connects when the client enables the ACIA.
 To run Claude Code directly: `make bridge CMD="-- claude"`, or
-`node bridge/src/bridge.js [--port N] [--fps N] [--cols N] [--rows N] [--theme T] [--control N] [-v] -- <cmd> [args...]`.
+`node bridge/src/bridge.js [--port N | --serial DEV [--baud N]] [--host H] [--fps N] [--cols N] [--rows N] [--theme T] [--control N] [-v] -- <cmd> [args...]`.
 
 `--theme` sets the screen colour and the program's default colours: `dark`
 (default: light grey on black), `light` (black on white), `classic` (the C64's
@@ -198,6 +200,16 @@ node bridge/scripts/fake-c64.js 6464 $'echo hi\r'            # pretend C64: type
 node bridge/scripts/fake-c64.js --c128 6464 $'echo hi\r'     # same, as an 80-column C128
 node bridge/scripts/fake-c64.js --soft80 6464 $'echo hi\r'   # same, as the soft 80-column C64
 node bridge/scripts/fake-c64.js --hires 6464 $'echo hi\r'    # same, as the hi-res C64
+node bridge/scripts/fake-c64.js --serial /dev/ttys005 0 $'echo hi\r'  # to a bridge on --serial
+```
+
+To try the dial step in VICE, put a pretend WiFi modem between VICE and the
+bridge: it answers AT commands and dials `ATDT host:port` over TCP.
+
+```bash
+make bridge                                  # terminal 1, on 6464
+node bridge/scripts/fake-modem.js 6480       # terminal 2
+make vice PORT=6480 DIAL=127.0.0.1:6464      # terminal 3: VICE talks to the modem
 ```
 
 To see how colours and glyphs map, `cat colortest.ans` in a session (for
@@ -219,7 +231,9 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `c64/pettyhires.cfg` | linker config (program must end below `$2000`) |
 | `c128/main.s` | C128 client: the same, drawing on the VDC at 2 MHz |
 | `c128/petty128.cfg` | linker config (program must end below `$3800`) |
-| `bridge/src/bridge.js` | TCP server, pty, frame pacing |
+| `c64/dial.inc` | the dial step, included by all four clients |
+| `bridge/src/bridge.js` | TCP server or serial port, pty, frame pacing |
+| `bridge/src/serial.js` | opens a serial device, raw at the given baud rate |
 | `bridge/src/screen.js` | xterm buffer → screen codes/colours |
 | `bridge/src/soft80.js` | soft 80 columns: shared cell colours and sprite repaints |
 | `bridge/src/protocol.js` | encoder and reference decoder |
@@ -228,29 +242,58 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `bridge/src/extglyphs.js` / `glyphcache.js` | the extra glyphs for the hi-res C64 and the C128, and which are loaded |
 | `bridge/scripts/gen-glyphs.js` | writes `c64/glyphs.inc` and `c64/font4x8.inc` |
 | `bridge/scripts/fake-c64.js` | pretend client for testing without VICE |
+| `bridge/scripts/fake-modem.js` | pretend WiFi modem for testing the dial step |
+| `bridge/scripts/petty-ctl.js` | sends commands to the bridge's control port |
 | `bridge/scripts/mock-soft80.js` | renders a program's soft 80-column screen to an image |
 | `bridge/scripts/gen-colortest.js` | writes `colortest.ans` |
 
-Memory map: code `$0801–$0CB1`, receive ring `$3700`, character set `$3800–$3FFF`, screen `$0400`.
+Memory map: code `$0801–$0D50`, receive ring `$3700`, character set `$3800–$3FFF`, screen `$0400`.
 
-Soft 80 columns: code `$0801–$11E7`; the VIC uses its second bank, with glyph
+Soft 80 columns: code `$0801–$1286`; the VIC uses its second bank, with glyph
 tables `$4000–$4FFF` (built at startup), sprite data `$5000–$51FF`, colours
 `$5C00` (sprite pointers `$5FF8`) and the bitmap `$6000–$7F3F`; receive ring
 `$8000–$8FFF` (4 KB, because a bitmap scroll takes about 90 ms).
 
-Hi-res 40 columns: code `$0801–$0E90`; the VIC uses its second bank, with the
+Hi-res 40 columns: code `$0801–$0F2F`; the VIC uses its second bank, with the
 font `$4000–$47FF` (one page per pixel row), colours `$5C00` and the bitmap
 `$6000–$7F3F`; receive ring `$8000–$8FFF`.
 
-C128 (bank 15): code `$1C01–$2280`, font build buffer `$3800–$3BFF` (startup
+C128 (bank 15): code `$1C01–$231F`, font build buffer `$3800–$3BFF` (startup
 only), receive ring `$3F00`. VDC RAM: screen `$0000`, attributes `$0800`, font
 `$2000–$3FFF` (512 characters; 128–511 loaded by the bridge).
 
-## Real hardware notes
+## Real hardware
+
+Two ways to reach the bridge from a SwiftLink:
+
+- **Serial cable:** a USB-serial adapter on the host and a null-modem cable
+  to the SwiftLink. The bridge opens the device instead of listening on TCP,
+  and sets it to raw 8N1 with no flow control:
+
+  ```bash
+  make bridge CMD="--serial /dev/cu.usbserial-1420 -- claude"   # Linux: /dev/ttyUSB0
+  ```
+
+  `--baud` defaults to 38400: the SwiftLink's crystal doubles the 6551
+  rates, so the clients' "19200" setting gives 38400. If the adapter is
+  unplugged, or not there yet, the bridge keeps trying to open it. The
+  control port still listens on `--port` + 1.
+- **WiFi modem:** a SwiftLink-style WiFi modem, set to 38400 baud, dials the
+  bridge, which must listen beyond localhost. Build clients that dial:
+
+  ```bash
+  make DIAL=192.168.1.20:6464                            # the host's address
+  make bridge CMD="--host 0.0.0.0 -- claude"
+  ```
+
+  At startup, such a client sends `ATDT 192.168.1.20:6464` and waits for
+  `CONNECT`, dialling again every half minute until one comes. Then it
+  discards the rest of the modem's result line and says hello. A client
+  built without `DIAL` doesn't dial. Pass the same `DIAL` to every `make`
+  that builds the clients (`make vice DIAL=...` too): a different one,
+  or none, rebuilds them. If the call drops, run the client again to redial.
+
+Other notes:
 
 - The C128 client needs an 80-column monitor. It blanks the 40-column screen,
   because the VIC shows garbage at 2 MHz.
-- The SwiftLink's crystal doubles the 6551 rates, so the "19200" setting gives
-  38400 baud. Connect a USB-serial adapter and have the bridge open the serial
-  device instead of listening on TCP (not implemented yet).
-- A SwiftLink-style WiFi modem can dial the bridge directly (`ATDT <host-ip>:6464`), after the bridge is started with `--host 0.0.0.0`. The client would need a short dial step added first.

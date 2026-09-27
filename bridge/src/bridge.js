@@ -3,7 +3,7 @@
 // (40x25 C64 text or hi-res; 80x25 C128 VDC or C64 soft 80 columns; or
 // larger and panned),
 // emulates the terminal headlessly, and streams screen diffs to the client
-// over TCP (VICE's RS-232).
+// over TCP (VICE's RS-232, or a WiFi modem) or a serial device (--serial).
 
 import net from 'node:net';
 import { parseArgs } from 'node:util';
@@ -14,6 +14,7 @@ import { snapshot, paletteFor, cursorVisible } from './screen.js';
 import { THEME_NAMES, stepTheme, oscReply } from './colors.js';
 import { keyToBytes, MATRIX } from './keymap.js';
 import { GlyphCache } from './glyphcache.js';
+import { openSerial } from './serial.js';
 
 const { values: opt, positionals } = parseArgs({
   allowPositionals: true,
@@ -23,6 +24,8 @@ const { values: opt, positionals } = parseArgs({
     fps: { type: 'string', default: '20' },
     theme: { type: 'string', default: 'dark' },
     control: { type: 'string' },
+    serial: { type: 'string' },
+    baud: { type: 'string', default: '38400' },
     cols: { type: 'string' },
     rows: { type: 'string' },
     verbose: { type: 'boolean', short: 'v', default: false },
@@ -38,6 +41,7 @@ const [cmd, ...cmdArgs] = positionals.length ? positionals : [process.env.SHELL 
 const CONTROL_PORT = Number(opt.control ?? Number(opt.port) + 1);
 const FRAME_MS = 1000 / Number(opt.fps);
 const ACK_TIMEOUT_MS = 5000;
+const SERIAL_RETRY_MS = 2000;
 const SYNC_MAX_MS = 250; // don't wait forever on synchronized output
 
 // The client's screen, from its HELLO. Kept across reconnects, like the session.
@@ -131,7 +135,8 @@ class Connection {
     this.ackTimer = null;
     this.rx = [];
     this.bytesSent = 0;
-    sock.setNoDelay(true);
+    this.timeouts = 0; // in a row: a serial line has nobody on it until the C64 starts
+    sock.setNoDelay?.(true);
     sock.on('data', d => this.onData(d));
     sock.on('close', () => this.close('closed'));
     sock.on('error', e => this.close(e.message));
@@ -151,6 +156,7 @@ class Connection {
       if (type === MSG.ACK) {
         this.rx.shift();
         this.inFlight = false;
+        this.timeouts = 0;
         clearTimeout(this.ackTimer);
       } else if (type === MSG.HELLO || type === MSG.HELLO_ON) {
         if (type === MSG.HELLO_ON && this.rx.length < 2) return;
@@ -239,7 +245,7 @@ class Connection {
     debug(`frame ${bytes.length} bytes`);
     this.inFlight = true;
     this.ackTimer = setTimeout(() => {
-      log('ACK timeout - forcing full redraw');
+      (this.timeouts++ ? debug : log)('ACK timeout - forcing full redraw');
       this.state = null;
       this.inFlight = false;
       dirty = true;
@@ -258,17 +264,42 @@ function tick() {
   conn.sendFrame();
 }
 
-const server = net.createServer(sock => {
-  log(`client connected from ${sock.remoteAddress}:${sock.remotePort}`);
+function attach(sock) {
   if (conn) conn.sock.destroy();
   conn = new Connection(sock);
   dirty = true;
   if (!proc) spawn();
-});
+}
 
-server.listen(Number(opt.port), opt.host, () => {
-  log(`listening on ${opt.host}:${opt.port} - start VICE / the C64 client now`);
-});
+// A serial device is one connection for good: reopened if it goes away (a
+// USB adapter unplugged).
+let serialError = null;
+function openSerialPort() {
+  let sock;
+  try {
+    sock = openSerial(opt.serial, Number(opt.baud));
+  } catch (e) {
+    if (e.message !== serialError) log(`${e.message} - retrying until it opens`);
+    serialError = e.message;
+    setTimeout(openSerialPort, SERIAL_RETRY_MS);
+    return;
+  }
+  serialError = null;
+  log(`opened ${opt.serial} at ${opt.baud} baud - start the C64 client now`);
+  sock.on('close', () => setTimeout(openSerialPort, SERIAL_RETRY_MS));
+  attach(sock);
+}
+
+if (opt.serial) {
+  openSerialPort();
+} else {
+  net.createServer(sock => {
+    log(`client connected from ${sock.remoteAddress}:${sock.remotePort}`);
+    attach(sock);
+  }).listen(Number(opt.port), opt.host, () => {
+    log(`listening on ${opt.host}:${opt.port} - start VICE / the C64 client now`);
+  });
+}
 
 // --- control port: one command per line, one reply line each -------------
 

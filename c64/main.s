@@ -92,6 +92,7 @@ start:
         sta NMIVEC+1
         jsr init_acia
         cli
+        jsr dial                ; through a WiFi modem, if built with DIAL
         lda #MSG_HELLO
         jsr send
 
@@ -346,6 +347,8 @@ init_acia:
         sta ACIA_CMD
         lda ACIA_DATA           ; discard anything pending
         rts
+
+.include "dial.inc"
 
 ; --- keyboard ----------------------------------------------------------------
 
