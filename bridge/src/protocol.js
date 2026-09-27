@@ -20,6 +20,8 @@
 //                               pixels: 128-255 on the C64 hi-res screen (cells
 //                               already drawn keep their pixels), 128-511 on the
 //                               C128 (cells showing it change)
+//   0C on              UNDERLINE (C64 hi-res) underline what PUT and REPEAT
+//                               write from now on (0 = off)
 //
 // C64 -> host:
 //   01                 ACK      frame processed
@@ -32,7 +34,8 @@
 // pointer wraps at the end of the screen. `pair`: two neighbouring cells share
 // one colour (the bridge makes them equal). `hires`: every cell has its own
 // foreground and background, and there is no inverse half of the character
-// set. `reverse`: inverse video is an attribute (VDC.RVS), not a character.
+// set; a colour's bit 8 is underline, sent with UNDERLINE. `reverse`:
+// inverse video is an attribute (VDC.RVS), not a character.
 // `ext`: characters from 128 up are extended glyphs, loaded with GLYPH.
 
 export const DISPLAY = {
@@ -48,7 +51,7 @@ export const COLS = DISPLAY.C64.cols;
 export const ROWS = DISPLAY.C64.rows;
 export const CELLS = COLS * ROWS;
 
-export const OP = { GOTO: 1, COLOR: 2, PUT: 3, REPEAT: 4, SCROLL: 5, COLORS: 6, CLS: 7, FRAME: 8, SPRITE: 9, NOSPRITE: 10, GLYPH: 11 };
+export const OP = { GOTO: 1, COLOR: 2, PUT: 3, REPEAT: 4, SCROLL: 5, COLORS: 6, CLS: 7, FRAME: 8, SPRITE: 9, NOSPRITE: 10, GLYPH: 11, UNDERLINE: 12 };
 const SPRITES = 8;
 const spriteKey = s => s ? `${s.col},${s.row},${s.color},${s.data.join(',')}` : null;
 // VDC attribute bits beyond the colour.
@@ -58,12 +61,23 @@ export const MSG = { ACK: 1, KEY: 2, HELLO: 3, HELLO_ON: 4 };
 const SPACE = 32;
 const MAX_GAP = 3; // unchanged cells worth rewriting instead of a 3-byte GOTO
 const ATTRS = 0xF0; // colour bits beyond the colour itself (C128 attributes)
+export const HIRES_UNDERLINE = 0x100; // hi-res colour bit: sent with UNDERLINE, not COLOR
 
 // Do two cells with glyph g look the same in colours a and b? A space does in
 // any colour, unless an attribute such as underline shows on it, or (`hires`)
 // in any foreground on the same background.
 export const sameLook = (g, a, b, hires = false) => a === b || (g === SPACE &&
-  (hires ? a >= 0 && b >= 0 && (a & 15) === (b & 15) : ((a | b) & ATTRS) === 0));
+  (hires ? a >= 0 && b >= 0 && (a & 0x10F) === (b & 0x10F) : ((a | b) & ATTRS) === 0));
+
+// Commands that change the client's current colour from state.cur to c.
+function setColour(out, state, c) {
+  const cur = state.cur;
+  if (cur < 0 || (cur & 0xFF) !== (c & 0xFF)) out.push(OP.COLOR, c & 0xFF);
+  if (state.hires && (cur < 0 || (cur & HIRES_UNDERLINE) !== (c & HIRES_UNDERLINE))) {
+    out.push(OP.UNDERLINE, c & HIRES_UNDERLINE ? 1 : 0);
+  }
+  state.cur = c;
+}
 
 // Mirror of what the C64 is displaying, plus its write pointer and colour.
 export class ScreenState {
@@ -136,8 +150,7 @@ function encodeDiff(state, want, out) {
       const g = wg[k];
       if (!sameLook(g, wc[k], state.cur, state.hires)) {
         flush();
-        out.push(OP.COLOR, wc[k]);
-        state.cur = wc[k];
+        setColour(out, state, wc[k]);
       }
       seg.push(g);
       state.glyph[k] = g;
@@ -161,7 +174,8 @@ export function encodeFrame(state, want) {
     const s = state.clone();
     const out = [];
     if (n > 0) {
-      if (s.cur < 0) { out.push(OP.COLOR, 15); s.cur = 15; }
+      // A scroll clears with spaces, never underlined.
+      if (s.cur < 0 || s.cur & HIRES_UNDERLINE) setColour(out, s, s.cur < 0 ? 15 : s.cur & 0xFF);
       out.push(OP.SCROLL, 0, rows - 1, n);
       s.scrollUp(0, rows - 1, n);
     }
@@ -199,7 +213,9 @@ function rowMatches(state, want, fromRow, toRow) {
 // `want` may carry {cols, rows, hires}; otherwise it is a C64 screen.
 export function encodeReset(want, border = 0, bg = 0, color = 15) {
   const state = new ScreenState(want.cols ?? COLS, want.rows ?? ROWS, want.hires);
-  const out = [OP.COLORS, border, bg, OP.COLOR, color, OP.CLS];
+  const out = [OP.COLORS, border, bg];
+  setColour(out, state, color);
+  out.push(OP.CLS);
   state.glyph.fill(SPACE);
   state.color.fill(color);
   state.pos = 0;
@@ -214,7 +230,7 @@ export class Decoder {
     this.cols = cols;
     this.rows = rows;
     this.glyph = new Uint8Array(cols * rows).fill(SPACE);
-    this.color = new Uint8Array(cols * rows);
+    this.color = new Uint16Array(cols * rows);
     this.pos = 0;
     this.cur = 0;
     this.border = 0;
@@ -237,7 +253,8 @@ export class Decoder {
     while (i < bytes.length) {
       switch (next()) {
         case OP.GOTO: { const r = next(), c = next(); this.pos = r * cols + c; break; }
-        case OP.COLOR: this.cur = next(); break; // the C64 masks it to 0-15
+        case OP.COLOR: this.cur = (this.cur & HIRES_UNDERLINE) | next(); break; // the C64 masks it to 0-15
+        case OP.UNDERLINE: this.cur = (this.cur & 0xFF) | (next() ? HIRES_UNDERLINE : 0); break;
         case OP.PUT: { const n = next(); for (let k = 0; k < n; k++) this.put(next()); break; }
         case OP.REPEAT: { const n = next(), g = next(); for (let k = 0; k < n; k++) this.put(g); break; }
         case OP.SCROLL: {

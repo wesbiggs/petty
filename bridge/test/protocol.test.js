@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DISPLAY, OP, VDC, Decoder, encodeFrame, encodeReset, sameLook } from '../src/protocol.js';
+import { DISPLAY, OP, VDC, HIRES_UNDERLINE, Decoder, encodeFrame, encodeReset, sameLook } from '../src/protocol.js';
 import { toScreenCode, screenCodeToChar, INVERSE } from '../src/glyphs.js';
 import { keyToBytes, MATRIX, SHIFT, CTRL, CBM, ALT } from '../src/keymap.js';
 import { VIC, RGBI, palette, oscReply, THEME_NAMES } from '../src/colors.js';
@@ -405,4 +405,44 @@ test('C128: reverse attribute, and 383 glyph slots with the alternate set', asyn
   assert.deepEqual([...dec.glyph], [...want.glyph]);
   for (let i = 0; i < want.glyph.length; i++) assert.ok(sameLook(want.glyph[i], dec.color[i], want.color[i]), `cell ${i}`);
   for (const c of ext) assert.ok(dec.glyphs.has(c), `glyph ${c} loaded`);
+});
+
+test('hi-res: underline', async () => {
+  const term = new xterm.Terminal({ cols: 40, rows: 25, allowProposedApi: true });
+  await new Promise(r => term.write('\x1b[4mab c\x1b[0mde\r\n', r));
+  const snap = () => snapshot(term, 0, DISPLAY.C64_HIRES, 'dark');
+  let want = snap();
+  assert.ok(want.color[0] & HIRES_UNDERLINE && want.color[2] & HIRES_UNDERLINE, 'underlined, spaces too');
+  assert.ok(!(want.color[4] & HIRES_UNDERLINE));
+  assert.ok(!sameLook(SPACE, want.color[2], want.color[2] & 0xFF, true), 'an underlined space is not a space');
+
+  let { bytes, state } = encodeReset(want, 0, 0, 15 << 4);
+  assert.equal(bytes.filter((b, i) => b === OP.UNDERLINE && bytes[i + 1] === 1).length, 1, 'on once');
+  const dec = new Decoder(40, 25);
+  dec.feed(bytes);
+  for (let i = 0; i < 6; i++) assert.ok(sameLook(want.glyph[i], dec.color[i], want.color[i], true), `cell ${i}`);
+
+  // Scrolling while underline is on: the cleared rows must not be underlined.
+  const rows = n => {
+    const w = blank(DISPLAY.C64_HIRES);
+    w.hires = true;
+    for (let i = 0; i < w.glyph.length; i++) {
+      const r = Math.floor(i / 40) + n;
+      w.glyph[i] = r < 25 + n - 1 ? 1 + r % 26 : SPACE; // a-z by row; the last row blank
+      w.color[i] = 15 << 4 | HIRES_UNDERLINE;
+    }
+    return w;
+  };
+  ({ bytes, state } = encodeReset(rows(0), 0, 0, 15 << 4));
+  assert.ok(state.cur & HIRES_UNDERLINE, 'underline left on');
+  const scrolled = rows(1);
+  ({ bytes } = encodeFrame(state, scrolled));
+  const at = bytes.indexOf(OP.SCROLL);
+  assert.ok(at > 0 && bytes[at - 2] === OP.UNDERLINE && bytes[at - 1] === 0, 'underline off before the scroll');
+  const dec2 = new Decoder(40, 25);
+  dec2.feed(encodeReset(rows(0), 0, 0, 15 << 4).bytes.concat(bytes));
+  for (let i = 0; i < scrolled.glyph.length; i++) {
+    assert.equal(dec2.glyph[i], scrolled.glyph[i], `glyph ${i}`);
+    assert.ok(sameLook(scrolled.glyph[i], dec2.color[i], scrolled.color[i], true), `colour ${i}`);
+  }
 });

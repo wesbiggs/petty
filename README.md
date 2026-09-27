@@ -140,7 +140,8 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
   program's screen, sprites included, without an emulator.
 - **Hi-res 40 columns (C64):** the text client's screen drawn into the hi-res
   bitmap, where each 8×8 cell has its own foreground and background. So
-  backgrounds are real (black text on a white card, a red ♥ on it), and the
+  backgrounds are real (black text on a white card, a red ♥ on it),
+  underline is drawn on the bottom pixel row, and the
   character set needs no inverse half: codes 0–127 are the text client's, and
   the bridge loads 128–255 with glyphs the other clients only alias
   ([bridge/src/extglyphs.js](bridge/src/extglyphs.js)): heavy, double and dashed box
@@ -156,7 +157,8 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
 
 See [bridge/src/protocol.js](bridge/src/protocol.js). Host→C64 opcodes are GOTO,
 COLOR, PUT, REPEAT, SCROLL, COLORS, CLS and FRAME, plus SPRITE and NOSPRITE for
-the soft 80-column screen and GLYPH for the hi-res one and the C128. Every frame ends with FRAME and
+the soft 80-column screen, GLYPH for the hi-res one and the C128, and
+UNDERLINE for the hi-res one. Every frame ends with FRAME and
 the C64 answers ACK. The bridge keeps only one frame in flight, so fast output
 merges into fewer frames instead of overflowing the client's receive buffer (256
 bytes; 4 KB on the bitmap C64 clients).
@@ -166,7 +168,8 @@ both 80×25; 3 = C64 hi-res, 40×25), and the bridge
 resizes the program's terminal to match. For the C128, colours are VDC
 attribute bytes (bit 6 reverses the cell, bit 7 selects characters 256–511),
 and key codes go up to 87 with ALT as modifier bit 3. For
-the hi-res C64, a colour is foreground × 16 + background.
+the hi-res C64, a colour is foreground × 16 + background, and underline is
+switched with UNDERLINE.
 
 For each frame the encoder tries every full-screen scroll offset and picks the
 cheapest encoding. A spinner tick costs about 7 bytes, and a full redraw about
@@ -220,7 +223,7 @@ tables `$4000–$4FFF` (built at startup), sprite data `$5000–$51FF`, colours
 `$5C00` (sprite pointers `$5FF8`) and the bitmap `$6000–$7F3F`; receive ring
 `$8000–$8FFF` (4 KB, because a bitmap scroll takes about 90 ms).
 
-Hi-res 40 columns: code `$0801–$0E7D`; the VIC uses its second bank, with the
+Hi-res 40 columns: code `$0801–$0E90`; the VIC uses its second bank, with the
 font `$4000–$47FF` (one page per pixel row), colours `$5C00` and the bitmap
 `$6000–$7F3F`; receive ring `$8000–$8FFF`.
 

@@ -1,7 +1,7 @@
 // Convert the headless xterm's visible buffer into screen codes + colours
 // (C64 colour numbers, or VDC attributes on a C128).
 
-import { DISPLAY, VDC } from './protocol.js';
+import { DISPLAY, VDC, HIRES_UNDERLINE } from './protocol.js';
 import { toScreenCode, INVERSE, SPACE } from './glyphs.js';
 import { palette } from './colors.js';
 import { shareColours } from './soft80.js';
@@ -85,7 +85,7 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', 
       if (display.hires) {
         if (g < INVERSE_END && g & INVERSE) [g, fg, bg] = [g ^ INVERSE, bg ?? pal.screenBg, fg];
         glyph[i] = g;
-        color[i] = fg << 4 | (bg ?? pal.screenBg);
+        color[i] = fg << 4 | (bg ?? pal.screenBg) | (cell.isUnderline() ? HIRES_UNDERLINE : 0);
         continue;
       }
 

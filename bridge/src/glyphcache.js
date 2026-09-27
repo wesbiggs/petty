@@ -68,7 +68,7 @@ export class GlyphCache {
         if (code & INVERSE) {
           code ^= INVERSE;
           const c = color[i];
-          color[i] = this.display.hires ? (c & 15) << 4 | c >> 4 : c ^ VDC.RVS;
+          color[i] = this.display.hires ? (c & ~0xFF) | (c & 15) << 4 | (c >> 4 & 15) : c ^ VDC.RVS;
         }
       }
       glyph[i] = code & 0xff;

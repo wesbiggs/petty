@@ -5,7 +5,8 @@
 ; foreground and background (COLOR is foreground << 4 | background), so the
 ; character set needs no inverse half: screen codes 0-127 are the text
 ; client's (lowercase ROM plus the custom glyphs), and the bridge loads
-; 128-255 with GLYPH as it needs them.
+; 128-255 with GLYPH as it needs them. UNDERLINE sets the bottom pixel row
+; of what is written next.
 ;
 ; Memory (the VIC uses its second bank, $4000-$7FFF): font $4000-$47FF, cell
 ; colours $5C00, bitmap $6000-$7F3F, receive ring $8000-$8FFF (4K: a bitmap
@@ -53,7 +54,8 @@ OP_FRAME    = 8
 OP_SPRITE   = 9
 OP_NOSPRITE = 10
 OP_GLYPH    = 11
-NUM_OPS     = 12
+OP_UNDERLINE = 12
+NUM_OPS     = 13
 
 MSG_ACK     = 1
 MSG_KEY     = 2
@@ -87,6 +89,7 @@ row         = $26
 glyph       = $27
 tmp         = $29
 tmp2        = $2A
+uline       = $2B               ; $FF: underline what is written, else 0
 
 ; --- BASIC stub: 10 SYS2061 -------------------------------------------------
 .segment "LOADADDR"
@@ -138,7 +141,7 @@ cmdloop:
 optable:
         .word cmdloop-1, op_goto-1, op_color-1, op_put-1, op_repeat-1
         .word op_scroll-1, op_colors-1, op_cls-1, op_frame-1
-        .word op_sprite-1, op_nosprite-1, op_glyph-1
+        .word op_sprite-1, op_nosprite-1, op_glyph-1, op_underline-1
 
 op_goto:
         jsr rb_get
@@ -243,6 +246,13 @@ op_glyph:
         jsr rb_get
         sta FONT + r * 256,x
 .endrep
+        jmp cmdloop
+
+op_underline:
+        jsr rb_get
+        beq :+
+        lda #$FF
+:       sta uline
         jmp cmdloop
 
 ; SCROLL top bot n: rows top..bot move up n, vacated rows cleared. The write
@@ -363,11 +373,14 @@ op_scroll:
 putcell:
         tax
         ldy #0
-.repeat 8, r
+.repeat 7, r
         lda FONT + r * 256,x
         sta (bp),y
         iny
 .endrep
+        lda FONT + 7 * 256,x
+        ora uline
+        sta (bp),y
         ldy #0
         lda curcolor
         sta (cp),y
@@ -588,6 +601,8 @@ init_screen:
         sta BLNSW
         lda #$F0                ; light grey on black
         sta curcolor
+        lda #0
+        sta uline
         jsr clear_screen
         ldx #0
 :       lda banner,x
