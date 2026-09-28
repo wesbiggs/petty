@@ -226,6 +226,19 @@ test('a cell with both colours keeps the one covering most of it', async () => {
   assert.deepEqual([glyph[1], color[1]], [toScreenCode('a') ^ INVERSE, light.bg('palette', 2)], 'text becomes a green bar');
 });
 
+test('a two-colour block element fills its cell with one of them', async () => {
+  const term = new xterm.Terminal({ cols: 80, rows: 25, allowProposedApi: true });
+  // red on green: a lower half, an upper half, a lower left quadrant; then a
+  // lower half on the screen colour
+  await new Promise(done => term.write('\x1b[?25l\x1b[31;42m▄▀▖\x1b[49m▄\x1b[0m', done));
+  const solid = toScreenCode('█'), red = VIC.fg('palette', 1), green = VIC.bg('palette', 2);
+  const c64 = snapshot(term, 0, DISPLAY.C64);
+  assert.deepEqual([...c64.glyph.slice(0, 4)], [solid, solid, solid, toScreenCode('▄')]);
+  assert.deepEqual([...c64.color.slice(0, 4)], [red, red, green, red], 'a half keeps the foreground, a quadrant the background');
+  const c128 = snapshot(term, 0, DISPLAY.C128);
+  assert.deepEqual([c128.glyph[0], c128.color[0]], [toScreenCode(' '), RGBI.fg('palette', 1) | VDC.RVS], 'a reversed space on the VDC');
+});
+
 test('stepping through themes wraps around', () => {
   const last = THEME_NAMES.at(-1);
   assert.equal(stepTheme('dark', 1), THEME_NAMES[1]);
@@ -267,6 +280,8 @@ test('keymap', () => {
   assert.equal(keyToBytes(k('£'), 0), '\\');
   assert.deepEqual(keyToBytes(k('CRSR↔'), CBM), { pan: 1 });
   assert.deepEqual(keyToBytes(k('CRSR↔'), CBM | SHIFT), { pan: -1 });
+  assert.deepEqual(keyToBytes(k('CRSR↕'), CBM, { mouse: { tracking: 'none' } }), { scroll: 1 }, 'the bridge scales it by --scroll');
+  assert.deepEqual(keyToBytes(k('CRSR↕'), CBM | SHIFT, { mouse: { tracking: 'none' } }), { scroll: -1 });
   assert.deepEqual(keyToBytes(k('CRSR↕'), CTRL), { panY: 1 });
   assert.deepEqual(keyToBytes(k('CRSR↕'), CTRL | SHIFT), { panY: -1 });
   assert.deepEqual(keyToBytes(k('F1'), CBM), { theme: 1 });

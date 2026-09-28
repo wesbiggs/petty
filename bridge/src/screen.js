@@ -23,6 +23,12 @@ const cover = g => (g >= EXT ? EXT_COVER[g - EXT] : COVER[g]);
 // keep their own colour rather than the card's.
 const SUITS = new Set([...'♠♥♦♣'].map(toScreenCode));
 
+// Block elements (U+2580-259F) other than the shades ░▒▓.
+const isBlock = chars => {
+  const c = chars.codePointAt(0);
+  return chars.length === 1 && c >= 0x2580 && c <= 0x259f && (c < 0x2591 || c > 0x2593);
+};
+
 // The palette a display shows in theme `theme` (see colors.js).
 export const paletteFor = (display, theme = 'dark') => palette(KIND[display.id], theme);
 
@@ -94,10 +100,17 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', 
       // in the background colour (the text shows in the screen colour); a
       // glyph that covers most of its cell, like the blocks in Claude Code's
       // logo, keeps its own colour instead, and so does a suit (see SUITS).
+      // A block element in two colours (half-block pixel art) fills its cell
+      // with the colour covering more of it, the foreground if half: the
+      // other colour would show as a hole in the screen colour.
       // Some glyphs are inverse already: █ is an inverse space.
       let inv = g < INVERSE_END && (g & INVERSE) !== 0;
       if (inv) g ^= INVERSE;
-      if (bg !== null && bg !== pal.screenBg && (inv ? 1 - cover(g) : cover(g)) < 0.5 && !ownColour) {
+      const lit = inv ? 1 - cover(g) : cover(g);
+      if (bg !== null && bg !== pal.screenBg && fg !== pal.screenBg && isBlock(chars)) {
+        [g, inv] = [SPACE, true];
+        if (lit < 0.5) fg = bg;
+      } else if (bg !== null && bg !== pal.screenBg && lit < 0.5 && !ownColour) {
         inv = !inv;
         fg = bg;
       }

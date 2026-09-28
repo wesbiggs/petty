@@ -51,16 +51,17 @@ const SPECIAL = {
 
 // C=+CRSR does what a trackpad swipe does in iTerm2: a mouse wheel event at
 // mid-screen if the program tracks the mouse, arrows on the alternate screen,
-// and otherwise { scroll } for the bridge to scroll its own scrollback.
+// and otherwise { scroll: -1 | 1 } for the bridge to scroll its own
+// scrollback (by --scroll lines).
 // C=+CRSR→ returns { pan } to move the 40-column window over a wider terminal,
 // and CTRL+CRSR↓ { panY } to move the 25-row window over a taller one.
 // C=+F1 returns { theme } to switch to the next (SHIFT: previous) theme.
-const WHEEL_COL = 20, WHEEL_ROW = 12, WHEEL_LINES = 3;
+const WHEEL_COL = 20, WHEEL_ROW = 12;
 function wheel(up, mouse) {
   const button = up ? 64 : 65;
   if (!mouse || mouse.tracking === 'none') {
     if (mouse?.altScreen) return ESC + '[' + (up ? 'A' : 'B');
-    return { scroll: up ? -WHEEL_LINES : WHEEL_LINES };
+    return { scroll: up ? -1 : 1 };
   }
   if (mouse.encoding === 'SGR') return `${ESC}[<${button};${WHEEL_COL};${WHEEL_ROW}M`;
   return ESC + '[M' + String.fromCharCode(32 + button, 32 + WHEEL_COL, 32 + WHEEL_ROW);

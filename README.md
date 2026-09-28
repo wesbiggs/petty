@@ -43,7 +43,13 @@ make vicehires        # ...or the C64 with the 40-column hi-res screen
 
 Start the bridge first, because VICE connects when the client enables the ACIA.
 To run Claude Code directly: `make bridge CMD="-- claude"`, or
-`node bridge/src/bridge.js [--port N | --serial DEV [--baud N]] [--host H] [--fps N] [--cols N] [--rows N] [--theme T] [--control N] [-v] -- <cmd> [args...]`.
+`node bridge/src/bridge.js [--port N | --serial DEV [--baud N]] [--host H] [--fps N] [--cols N] [--rows N] [--scroll N] [--theme T] [--control N] [--title FILE] [-v] -- <cmd> [args...]`.
+
+When a client first connects, the bridge shows a start screen,
+[title.ans](title.ans), for four seconds before it starts the program; any key
+starts it sooner (and is not passed on). `--title FILE` shows another file,
+`--title none` skips it. It is plain ANSI, so `cat title.ans` shows it in any
+terminal too. Regenerate it with `node bridge/scripts/gen-title.js`.
 
 `--theme` sets the screen colour and the program's default colours: `dark`
 (default: light grey on black), `light` (black on white), `classic` (the C64's
@@ -76,6 +82,10 @@ left: `make bridge CMD="--cols 80 -- rogue"`.
 Likewise `--rows 28` runs the pty at 28 rows and shows 25 of them.
 CTRL+CRSR↓ moves the window down by up to half a screen, and
 CTRL+SHIFT+CRSR↓ moves it up. Typing moves it to show the cursor's row.
+
+C=+CRSR↓ and C=+CRSR↑ scroll the bridge's scrollback by one line per press;
+`--scroll 3` makes it three, like a mouse wheel notch. A program that tracks
+the mouse gets one wheel event per press instead, and decides how far to go.
 
 On the C128 and the soft 80-column C64 the program gets an 80×25 terminal, so
 it rarely needs `--cols`. Switching clients mid-session resizes the terminal.
@@ -246,6 +256,7 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `bridge/scripts/petty-ctl.js` | sends commands to the bridge's control port |
 | `bridge/scripts/mock-soft80.js` | renders a program's soft 80-column screen to an image |
 | `bridge/scripts/gen-colortest.js` | writes `colortest.ans` |
+| `bridge/scripts/gen-title.js` | writes `title.ans`, the start screen |
 
 Memory map: code `$0801–$0D50`, receive ring `$3700`, character set `$3800–$3FFF`, screen `$0400`.
 

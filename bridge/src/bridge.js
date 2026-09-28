@@ -6,6 +6,8 @@
 // over TCP (VICE's RS-232, or a WiFi modem) or a serial device (--serial).
 
 import net from 'node:net';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import pty from 'node-pty';
 import xterm from '@xterm/headless';
@@ -28,6 +30,8 @@ const { values: opt, positionals } = parseArgs({
     baud: { type: 'string', default: '38400' },
     cols: { type: 'string' },
     rows: { type: 'string' },
+    scroll: { type: 'string', default: '1' },
+    title: { type: 'string', default: fileURLToPath(new URL('../../title.ans', import.meta.url)) },
     verbose: { type: 'boolean', short: 'v', default: false },
   },
 });
@@ -37,12 +41,31 @@ if (!THEME_NAMES.includes(opt.theme)) {
   process.exit(1);
 }
 
+if (!(Number.isInteger(Number(opt.scroll)) && Number(opt.scroll) > 0)) {
+  console.error(`[bridge] --scroll ${opt.scroll}: use a whole number of lines, 1 or more`);
+  process.exit(1);
+}
+
 const [cmd, ...cmdArgs] = positionals.length ? positionals : [process.env.SHELL || '/bin/sh'];
 const CONTROL_PORT = Number(opt.control ?? Number(opt.port) + 1);
 const FRAME_MS = 1000 / Number(opt.fps);
+const SCROLL_LINES = Number(opt.scroll); // per C=+CRSR press, in the bridge's scrollback
 const ACK_TIMEOUT_MS = 5000;
 const SERIAL_RETRY_MS = 2000;
 const SYNC_MAX_MS = 250; // don't wait forever on synchronized output
+const TITLE_MS = 4000; // how long the start screen shows, unless a key is pressed
+const TITLE_COLS = 40;
+
+// The start screen (title.ans, from scripts/gen-title.js), shown when a client
+// first connects, before the program starts. --title none: no start screen.
+let title = null;
+if (opt.title && opt.title !== 'none') {
+  try {
+    title = readFileSync(opt.title, 'utf8') || null;
+  } catch (e) {
+    console.error(`[bridge] no start screen: ${e.message}`);
+  }
+}
 
 // The client's screen, from its HELLO. Kept across reconnects, like the session.
 let display = DISPLAY.C64;
@@ -67,11 +90,19 @@ const debug = (...a) => opt.verbose && log(...a);
 
 const term = new xterm.Terminal({ cols: termCols(), rows: termRows(), scrollback: 200, allowProposedApi: true });
 let proc = null;
+let started = false; // the program has been spawned at least once
+let holding = null; // timer while the start screen shows
 let dirty = true;
 let syncSince = 0;
 
 function spawn() {
+  clearTimeout(holding);
+  holding = null;
+  started = true;
+  // reset() leaves the cursor hidden if it was (by the start screen, or a
+  // program that exited without showing it).
   term.reset();
+  term.write('\x1b[?25h');
   proc = pty.spawn(cmd, cmdArgs, {
     name: 'xterm-256color',
     cols: termCols(),
@@ -86,6 +117,16 @@ function spawn() {
     term.write(`\r\n\x1b[0;33m[${cmd} exited - press RETURN to restart]\x1b[0m`);
   });
   log(`started ${cmd} ${cmdArgs.join(' ')}`);
+}
+
+// Draws the start screen, centred on a display wider than it.
+function showTitle() {
+  const pad = Math.max(0, Math.floor((display.cols - TITLE_COLS) / 2));
+  const indent = pad ? `\x1b[${pad}C` : '';
+  term.reset();
+  // Hide the cursor (spawn shows it again). Indent after the leading
+  // control sequences (clear the screen) and after every newline.
+  term.write('\x1b[?25l' + title.replace(/^(?:\x1b\[[\d;?]*[A-Za-z])*/, m => m + indent).replaceAll('\n', '\n' + indent));
 }
 
 function setDisplay(d) {
@@ -165,6 +206,7 @@ class Connection {
         if (!d) log(`unknown display ${id}, assuming C64`);
         log(`${(d ?? DISPLAY.C64).name} says hello`);
         setDisplay(d ?? DISPLAY.C64);
+        if (holding) showTitle();
         this.state = null;
         this.inFlight = false;
         clearTimeout(this.ackTimer);
@@ -207,8 +249,13 @@ class Connection {
       return;
     }
     if (bytes.scroll) {
-      term.scrollLines(bytes.scroll);
+      term.scrollLines(bytes.scroll * SCROLL_LINES);
       dirty = true;
+      return;
+    }
+    // Any other key ends the start screen, and is not passed on.
+    if (holding) {
+      spawn();
       return;
     }
     // Typing jumps back to the live screen, like iTerm2.
@@ -268,7 +315,10 @@ function attach(sock) {
   if (conn) conn.sock.destroy();
   conn = new Connection(sock);
   dirty = true;
-  if (!proc) spawn();
+  if (proc || holding) return;
+  if (started || !title) return spawn();
+  showTitle();
+  holding = setTimeout(spawn, TITLE_MS);
 }
 
 // A serial device is one connection for good: reopened if it goes away (a
