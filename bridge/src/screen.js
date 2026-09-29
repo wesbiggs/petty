@@ -3,7 +3,8 @@
 
 import { DISPLAY, VDC, HIRES_UNDERLINE } from './protocol.js';
 import { toScreenCode, INVERSE, SPACE } from './glyphs.js';
-import { palette } from './colors.js';
+import { palette, VIC_RGB } from './colors.js';
+import { IMAGE, imageCell, imageKey, imageShade } from './image.js';
 import { shareColours } from './soft80.js';
 import { FONT4 } from './font4x8.js';
 import { EXT, EXT_GLYPHS, extendedGlyph } from './extglyphs.js';
@@ -51,12 +52,13 @@ export function cursorVisible(term) {
 // terminal column and row shown, for terminals larger than the display.
 // On an `ext` display, glyphs from EXT up are extended glyphs (see
 // glyphcache.js). On a `hires` display, colours are foreground << 4 |
-// background. On a display with `pair` cells, the result also has `sprites`
-// (see soft80.js).
+// background, and inline images are glyphs from IMAGE up (image.js); other
+// displays show an image as blocks of its colours. On a display with `pair`
+// cells, the result also has `sprites` (see soft80.js).
 export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', panY = 0) {
   const { cols, rows } = display;
   const pal = paletteFor(display, theme);
-  const glyph = new Int16Array(cols * rows);
+  const glyph = new Int32Array(cols * rows);
   const color = new Int16Array(cols * rows);
   const buf = term.buffer.active;
   const cell = buf.getNullCell();
@@ -69,6 +71,20 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', 
     for (let x = 0; x < cols; x++) {
       const i = y * cols + x;
       if (!line || !line.getCell(panX + x, cell)) { glyph[i] = SPACE; color[i] = pal.defaultFg; continue; }
+
+      const key = imageKey(cell.getCode());
+      if (key >= 0) {
+        if (display.hires) {
+          glyph[i] = IMAGE + key;
+          color[i] = imageCell(key)[8];
+        } else {
+          // A block of the colour covering more of the cell: an inverse space.
+          const c = pal.bg('rgb', VIC_RGB[imageShade(key)]);
+          glyph[i] = c === null || display.reverse ? SPACE : SPACE | INVERSE;
+          color[i] = c === null ? pal.defaultFg : display.reverse ? c | VDC.RVS : c;
+        }
+        continue;
+      }
 
       const chars = cell.getWidth() === 0 || cell.isInvisible() ? '' : cell.getChars();
       let g = (display.ext && extendedGlyph(chars)) || toScreenCode(chars);

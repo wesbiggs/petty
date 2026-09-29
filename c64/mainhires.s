@@ -32,6 +32,7 @@ VIC_CR1     = $D011
 VIC_CR2     = $D016
 VIC_MEM     = $D018
 BORDER      = $D020
+VIC_BG      = $D021
 
 ; KERNAL
 NMIVEC      = $0318
@@ -55,7 +56,13 @@ OP_SPRITE   = 9
 OP_NOSPRITE = 10
 OP_GLYPH    = 11
 OP_UNDERLINE = 12
-NUM_OPS     = 13
+OP_BITS     = 13
+OP_VIEW     = 14
+OP_POKE     = 15
+NUM_OPS     = 16
+
+VIEW_TERMINAL = 0
+VIEW_LOAD   = 1
 
 MSG_ACK     = 1
 MSG_KEY     = 2
@@ -143,6 +150,7 @@ optable:
         .word cmdloop-1, op_goto-1, op_color-1, op_put-1, op_repeat-1
         .word op_scroll-1, op_colors-1, op_cls-1, op_frame-1
         .word op_sprite-1, op_nosprite-1, op_glyph-1, op_underline-1
+        .word op_bits-1, op_view-1, op_poke-1
 
 op_goto:
         jsr rb_get
@@ -254,6 +262,75 @@ op_underline:
         beq :+
         lda #$FF
 :       sta uline
+        jmp cmdloop
+
+; BITS n (d0..d7 colour)*n: n cells of an inline image, raw pixels and each
+; cell's colour, at the write position, advancing. rb_get clobbers Y, so X
+; counts the pixel rows.
+op_bits:
+        jsr rb_get
+        sta count
+        beq @done
+@cell:  ldx #0
+@row:   jsr rb_get
+        pha
+        txa
+        tay
+        pla
+        sta (bp),y
+        inx
+        cpx #8
+        bne @row
+        jsr rb_get
+        ldy #0
+        sta (cp),y
+        jsr advance
+        dec count
+        bne @cell
+@done:  jmp cmdloop
+
+; VIEW mode bg: a full-screen multicolour picture (loaded with POKE into the
+; bitmap, the cell colours and colour RAM). LOAD blanks the screen in colour
+; bg and switches to multicolour, SHOW shows the picture, TERMINAL goes back
+; to hi-res (the bridge then redraws the terminal).
+op_view:
+        jsr rb_get
+        sta tmp2
+        jsr rb_get
+        ldx tmp2
+        cpx #VIEW_LOAD
+        beq @load
+        lda #$3B                ; screen on: the picture, or the terminal
+        sta VIC_CR1
+        cpx #VIEW_TERMINAL
+        bne @done
+        lda #$C8                ; no multicolour
+        sta VIC_CR2
+@done:  jmp cmdloop
+@load:  sta BORDER
+        sta VIC_BG
+        lda #$2B                ; screen off (the border colour) while it loads
+        sta VIC_CR1
+        lda #$D8                ; multicolour
+        sta VIC_CR2
+        jmp cmdloop
+
+; POKE lo hi n d1..dn: n bytes (0 = 256) from lo + 256 * hi on.
+op_poke:
+        jsr rb_get
+        sta dst
+        jsr rb_get
+        sta dst+1
+        jsr rb_get
+        sta count
+@loop:  jsr rb_get
+        ldy #0
+        sta (dst),y
+        inc dst
+        bne :+
+        inc dst+1
+:       dec count
+        bne @loop
         jmp cmdloop
 
 ; SCROLL top bot n: rows top..bot move up n, vacated rows cleared. The write
@@ -385,6 +462,8 @@ putcell:
         ldy #0
         lda curcolor
         sta (cp),y
+; Move the write position to the next cell, wrapping at the end of the screen.
+advance:
         lda bp                  ; next cell
         clc
         adc #8

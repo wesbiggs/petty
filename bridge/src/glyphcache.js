@@ -12,6 +12,9 @@
 import { OP, VDC } from './protocol.js';
 import { EXT, EXT_GLYPHS } from './extglyphs.js';
 import { INVERSE } from './glyphs.js';
+import { IMAGE } from './image.js';
+
+const isExt = g => g >= EXT && g < IMAGE;
 
 const ALT_SPACE = 256 + 32; // looks like a space to the encoder: never used
 
@@ -33,7 +36,7 @@ export class GlyphCache {
   place(want, state) {
     const { glyph, color } = want;
     const needed = new Set();
-    for (const g of glyph) if (g >= EXT) needed.add(g);
+    for (const g of glyph) if (isExt(g)) needed.add(g);
     if (!needed.size) return [];
     this.frame++;
 
@@ -60,7 +63,7 @@ export class GlyphCache {
     const alt = this.display.reverse; // the C128: bit 8 is an attribute
     for (let i = 0; i < glyph.length; i++) {
       const g = glyph[i];
-      if (g < EXT) continue;
+      if (!isExt(g)) continue;
       let code = assigned.get(g);
       if (code === undefined) {
         // An inverse fallback (such as █) is its glyph in reverse.

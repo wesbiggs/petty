@@ -1,0 +1,50 @@
+#!/bin/sh
+# imgcat: show pictures as iTerm2 inline images (OSC 1337), for hosts
+# without iTerm2's own imgcat. The bridge puts this at the end of the PATH
+# of the program it runs, so a real imgcat comes first. It draws the files
+# in the hi-res C64's bitmap: PNG, or the C64's own Koala Painter, Doodle!
+# and Art Studio pictures. The options are a subset of iTerm2's imgcat.
+#
+# usage: imgcat [-W width] [-H height] [-s] [-t type] file...
+#   -W, -H  N (cells), Npx, N% or auto (default: the picture's own size,
+#           shrunk to fit the screen)
+#   -s      stretch to -W x -H instead of keeping the aspect ratio
+#   -t      a type hint: koala (or multicolour) shows the picture full screen
+#           in multicolour on the hi-res C64, until a key is pressed
+
+usage() {
+  echo "usage: imgcat [-W width] [-H height] [-s] [-t type] file..." >&2
+  exit 2
+}
+
+width=auto
+height=auto
+aspect=1
+type=
+while getopts W:H:st: opt; do
+  case $opt in
+    W) width=$OPTARG ;;
+    H) height=$OPTARG ;;
+    s) aspect=0 ;;
+    t) type=";type=$OPTARG" ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND - 1))
+[ $# -gt 0 ] || usage
+
+status=0
+for f in "$@"; do
+  if [ ! -r "$f" ]; then
+    echo "imgcat: $f: cannot read" >&2
+    status=1
+    continue
+  fi
+  name=$(printf '%s' "$(basename "$f")" | base64 | tr -d '\n')
+  size=$(wc -c < "$f" | tr -d ' ')
+  printf '\033]1337;File=name=%s;size=%s;width=%s;height=%s;preserveAspectRatio=%s%s;inline=1:' \
+    "$name" "$size" "$width" "$height" "$aspect" "$type"
+  base64 < "$f" | tr -d '\n'
+  printf '\a\n'
+done
+exit $status

@@ -22,6 +22,13 @@
 //                               C128 (cells showing it change)
 //   0C on              UNDERLINE (C64 hi-res) underline what PUT and REPEAT
 //                               write from now on (0 = off)
+//   0D n (d0..d7 color)*n  BITS (C64 hi-res) write n cells of raw pixels, each
+//                               8 bitmap bytes and its colour, advancing
+//   0E mode bg         VIEW     (C64 hi-res) 1: blank the screen in colour bg and
+//                               switch to multicolour, to load a picture; 2: show
+//                               it; 0: back to the hi-res terminal screen (the
+//                               host then redraws it)
+//   0F lo hi n d1..dn  POKE     (C64 hi-res) write n bytes (0 = 256) at lo + 256 * hi
 //
 // C64 -> host:
 //   01                 ACK      frame processed
@@ -37,6 +44,9 @@
 // set; a colour's bit 8 is underline, sent with UNDERLINE. `reverse`:
 // inverse video is an attribute (VDC.RVS), not a character.
 // `ext`: characters from 128 up are extended glyphs, loaded with GLYPH.
+// Glyphs from IMAGE up are cells of inline images (image.js), sent with BITS.
+
+import { IMAGE, imageCell } from './image.js';
 
 export const DISPLAY = {
   C64: { id: 0, name: 'C64', cols: 40, rows: 25 },
@@ -51,7 +61,8 @@ export const COLS = DISPLAY.C64.cols;
 export const ROWS = DISPLAY.C64.rows;
 export const CELLS = COLS * ROWS;
 
-export const OP = { GOTO: 1, COLOR: 2, PUT: 3, REPEAT: 4, SCROLL: 5, COLORS: 6, CLS: 7, FRAME: 8, SPRITE: 9, NOSPRITE: 10, GLYPH: 11, UNDERLINE: 12 };
+export const OP = { GOTO: 1, COLOR: 2, PUT: 3, REPEAT: 4, SCROLL: 5, COLORS: 6, CLS: 7, FRAME: 8, SPRITE: 9, NOSPRITE: 10, GLYPH: 11, UNDERLINE: 12, BITS: 13, VIEW: 14, POKE: 15 };
+export const VIEW = { TERMINAL: 0, LOAD: 1, SHOW: 2 };
 const SPRITES = 8;
 const spriteKey = s => s ? `${s.col},${s.row},${s.color},${s.data.join(',')}` : null;
 // VDC attribute bits beyond the colour.
@@ -85,7 +96,7 @@ export class ScreenState {
     this.cols = cols;
     this.rows = rows;
     this.hires = hires;
-    this.glyph = new Int16Array(cols * rows).fill(-1); // -1 = unknown
+    this.glyph = new Int32Array(cols * rows).fill(-1); // -1 = unknown
     this.color = new Int16Array(cols * rows).fill(-1);
     this.pos = -1;
     this.cur = -1;
@@ -118,13 +129,16 @@ export class ScreenState {
 }
 
 // Encode the changes that take `state` to `want` ({glyph, color} arrays of the
-// same size). Mutates `state` to match what the C64 will show.
-function encodeDiff(state, want, out) {
+// same size). Mutates `state` to match what the C64 will show. Stops once
+// `out` holds about `budget` bytes, and returns false if that left changes
+// for another frame.
+function encodeDiff(state, want, out, budget = Infinity) {
   const { glyph: wg, color: wc } = want;
   const { cols } = state, cells = state.glyph.length;
   let i = 0;
   while (i < cells) {
     if (state.matches(i, wg[i], wc[i])) { i++; continue; }
+    if (out.length >= budget) return false;
 
     // Extend the run while changes are no more than MAX_GAP cells apart.
     let last = i;
@@ -136,8 +150,9 @@ function encodeDiff(state, want, out) {
       out.push(OP.GOTO, Math.floor(i / cols), i % cols);
     }
 
-    // Split into segments of one colour; spaces take whatever colour is current.
-    let seg = [];
+    // Split into segments of one colour; spaces take whatever colour is
+    // current. Image cells go in their own segments, with their colours.
+    let seg = [], pix = [];
     const flush = () => {
       for (let k = 0; k < seg.length; k += 255) {
         const part = seg.slice(k, k + 255);
@@ -145,9 +160,21 @@ function encodeDiff(state, want, out) {
         else out.push(OP.PUT, part.length, ...part);
       }
       seg = [];
+      if (pix.length) out.push(OP.BITS, pix.length, ...pix.flatMap(g => [...imageCell(g - IMAGE)]));
+      pix = [];
     };
     for (let k = i; k <= last; k++) {
+      // Out of budget: the rest of the run waits for the next frame.
+      if (k > i && out.length + seg.length + pix.length * 9 >= budget) { last = k - 1; break; }
       const g = wg[k];
+      if (g >= IMAGE) {
+        if (seg.length || pix.length === 255) flush();
+        pix.push(g);
+        state.glyph[k] = g;
+        state.color[k] = wc[k];
+        continue;
+      }
+      if (pix.length) flush();
       if (!sameLook(g, wc[k], state.cur, state.hires)) {
         flush();
         setColour(out, state, wc[k]);
@@ -160,31 +187,42 @@ function encodeDiff(state, want, out) {
     state.pos = last + 1 === cells ? 0 : last + 1; // C64 wraps the pointer
     i = last + 1;
   }
+  return true;
 }
 
 // Build one frame. Tries every full-screen scroll amount and keeps the
-// cheapest encoding. Returns {bytes, state} without touching the input state.
-export function encodeFrame(state, want) {
+// cheapest encoding. Returns {bytes, state, partial} without touching the
+// input state. A frame that would be longer than `budget` bytes (an image)
+// stops short of it, and is `partial`: the next frame goes on from there.
+export function encodeFrame(state, want, budget = Infinity) {
   const { rows } = state;
   if (want.glyph.length !== state.glyph.length) throw new Error('frame size differs from screen state');
   let best = null;
   for (let n = 0; n < rows; n++) {
     // Only bother scrolling when the top row lines up with an old row.
     if (n > 0 && !rowMatches(state, want, n, 0)) continue;
-    const s = state.clone();
-    const out = [];
-    if (n > 0) {
-      // A scroll clears with spaces, never underlined.
-      if (s.cur < 0 || s.cur & HIRES_UNDERLINE) setColour(out, s, s.cur < 0 ? 15 : s.cur & 0xFF);
-      out.push(OP.SCROLL, 0, rows - 1, n);
-      s.scrollUp(0, rows - 1, n);
-    }
-    encodeDiff(s, want, out);
-    if (!best || out.length < best.bytes.length) best = { bytes: out, state: s };
+    const frame = encodeScrolled(state, want, n);
+    if (!best || frame.bytes.length < best.bytes.length) best = frame;
   }
+  if (best.bytes.length > budget) best = encodeScrolled(state, want, best.n, budget);
   if (want.sprites) encodeSprites(best.state, want.sprites, best.bytes);
   best.bytes.push(OP.FRAME);
   return best;
+}
+
+// The frame that scrolls by `n` rows, then draws what changed.
+function encodeScrolled(state, want, n, budget) {
+  const { rows } = state;
+  const s = state.clone();
+  const out = [];
+  if (n > 0) {
+    // A scroll clears with spaces, never underlined.
+    if (s.cur < 0 || s.cur & HIRES_UNDERLINE) setColour(out, s, s.cur < 0 ? 15 : s.cur & 0xFF);
+    out.push(OP.SCROLL, 0, rows - 1, n);
+    s.scrollUp(0, rows - 1, n);
+  }
+  const partial = !encodeDiff(s, want, out, budget);
+  return { bytes: out, state: s, n, partial };
 }
 
 // Sprites whose position, colour or pixels changed, after the cells so a
@@ -211,7 +249,7 @@ function rowMatches(state, want, fromRow, toRow) {
 
 // Full reset: colours, clear screen, then everything that isn't a space.
 // `want` may carry {cols, rows, hires}; otherwise it is a C64 screen.
-export function encodeReset(want, border = 0, bg = 0, color = 15) {
+export function encodeReset(want, border = 0, bg = 0, color = 15, budget = Infinity) {
   const state = new ScreenState(want.cols ?? COLS, want.rows ?? ROWS, want.hires);
   const out = [OP.COLORS, border, bg];
   setColour(out, state, color);
@@ -220,8 +258,35 @@ export function encodeReset(want, border = 0, bg = 0, color = 15) {
   state.color.fill(color);
   state.pos = 0;
   state.cur = color;
-  const frame = encodeFrame(state, want);
-  return { bytes: out.concat(frame.bytes), state: frame.state };
+  const frame = encodeFrame(state, want, budget);
+  return { bytes: out.concat(frame.bytes), state: frame.state, partial: frame.partial };
+}
+
+// Where the C64 hi-res client keeps a picture shown with VIEW: the bitmap
+// and colours of its terminal screen, and the VIC's colour RAM.
+const PICTURE = { bitmap: 0x6000, screen: 0x5C00, colram: 0xD800 };
+
+// Frames of at most about `budget` bytes that show a Koala Painter picture
+// ({bitmap, screen, colram, bg}, see image.js) full screen on the C64 hi-res
+// client: blank the screen, load it, show it. The terminal comes back with
+// VIEW TERMINAL and a reset.
+export function encodePicture(pic, budget = Infinity) {
+  const cmds = [[OP.VIEW, VIEW.LOAD, pic.bg]];
+  for (const part of ['bitmap', 'screen', 'colram']) {
+    const data = pic[part];
+    for (let k = 0; k < data.length; k += 256) {
+      const addr = PICTURE[part] + k, chunk = data.subarray(k, k + 256);
+      cmds.push([OP.POKE, addr & 0xFF, addr >> 8, chunk.length & 0xFF, ...chunk]);
+    }
+  }
+  cmds.push([OP.VIEW, VIEW.SHOW, pic.bg]);
+  const frames = [[]];
+  for (const cmd of cmds) {
+    if (frames.at(-1).length && frames.at(-1).length + cmd.length > budget) frames.push([]);
+    frames.at(-1).push(...cmd);
+  }
+  for (const f of frames) f.push(OP.FRAME);
+  return frames;
 }
 
 // Reference implementation of the C64 decoder, used by tests and preview.
@@ -238,11 +303,15 @@ export class Decoder {
     this.frames = 0;
     this.sprites = new Array(SPRITES).fill(null);
     this.glyphs = new Map(); // GLYPH definitions: code -> 8 bytes
+    this.bits = new Array(cols * rows).fill(null); // cells drawn by BITS: 8 bytes
+    this.view = VIEW.TERMINAL;
+    this.mem = new Uint8Array(0x10000); // what POKE wrote
   }
 
-  put(g) {
+  put(g, bits = null, color = this.cur) {
     this.glyph[this.pos] = g;
-    this.color[this.pos] = this.cur;
+    this.color[this.pos] = color;
+    this.bits[this.pos] = bits;
     this.pos = (this.pos + 1) % this.glyph.length;
   }
 
@@ -262,13 +331,15 @@ export class Decoder {
           const from = (top + n) * cols, to = (bot + 1) * cols;
           this.glyph.copyWithin(top * cols, from, to);
           this.color.copyWithin(top * cols, from, to);
+          this.bits.copyWithin(top * cols, from, to);
           const clear = Math.max(top, bot - n + 1) * cols;
           this.glyph.fill(SPACE, clear, to);
           this.color.fill(this.cur, clear, to);
+          this.bits.fill(null, clear, to);
           break;
         }
         case OP.COLORS: this.border = next(); this.bg = next(); break;
-        case OP.CLS: this.glyph.fill(SPACE); this.color.fill(this.cur); this.pos = 0; break;
+        case OP.CLS: this.glyph.fill(SPACE); this.color.fill(this.cur); this.bits.fill(null); this.pos = 0; break;
         case OP.FRAME: this.frames++; break;
         case OP.SPRITE: {
           const n = next(), col = next(), row = next(), color = next();
@@ -277,6 +348,21 @@ export class Decoder {
         }
         case OP.NOSPRITE: this.sprites[next()] = null; break;
         case OP.GLYPH: { const code = next() | next() << 8; this.glyphs.set(code, Uint8Array.from({ length: 8 }, next)); break; }
+        case OP.VIEW: this.view = next(); if (this.view === VIEW.LOAD) this.border = this.bg = next(); else next(); break;
+        case OP.POKE: {
+          let addr = next() | next() << 8;
+          const n = next() || 256;
+          for (let k = 0; k < n; k++) this.mem[addr++ & 0xFFFF] = next();
+          break;
+        }
+        case OP.BITS: {
+          const n = next();
+          for (let k = 0; k < n; k++) {
+            const bits = Uint8Array.from({ length: 8 }, next);
+            this.put(SPACE, bits, next());
+          }
+          break;
+        }
         default: throw new Error(`bad opcode at ${i - 1}`);
       }
     }

@@ -38,6 +38,7 @@ sock.on('data', d => {
 // with an attribute instead.
 const byPixels = new Map(EXT_GLYPHS.map(g => [g.data.join(), g.ch]));
 function charAt(i) {
+  if (dec.bits[i]) return '▒'; // image cell (BITS)
   let code = dec.glyph[i];
   if (display === DISPLAY.C128 && dec.color[i] & VDC.ALT) code += 256;
   if (display.ext && code >= 128) return byPixels.get(dec.glyphs.get(code)?.join()) ?? '?';

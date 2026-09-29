@@ -11,12 +11,13 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import pty from 'node-pty';
 import xterm from '@xterm/headless';
-import { DISPLAY, MSG, displayById, encodeFrame, encodeReset } from './protocol.js';
+import { DISPLAY, MSG, OP, VIEW, displayById, encodeFrame, encodeReset, encodePicture } from './protocol.js';
 import { snapshot, paletteFor, cursorVisible } from './screen.js';
 import { THEME_NAMES, stepTheme, oscReply } from './colors.js';
 import { keyToBytes, MATRIX } from './keymap.js';
 import { GlyphCache } from './glyphcache.js';
 import { openSerial } from './serial.js';
+import { InlineImages, multicolourPicture } from './image.js';
 
 const { values: opt, positionals } = parseArgs({
   allowPositionals: true,
@@ -55,6 +56,8 @@ const SERIAL_RETRY_MS = 2000;
 const SYNC_MAX_MS = 250; // don't wait forever on synchronized output
 const TITLE_MS = 4000; // how long the start screen shows, unless a key is pressed
 const TITLE_COLS = 40;
+const IMAGE_FRAME_BYTES = 2048; // hi-res frames split up past this (images), so keys stay responsive
+const BIN = fileURLToPath(new URL('../bin', import.meta.url)); // imgcat, a fallback at the end of the program's PATH
 
 // The start screen (title.ans, from scripts/gen-title.js), shown when a client
 // first connects, before the program starts. --title none: no start screen.
@@ -108,7 +111,7 @@ function spawn() {
     cols: termCols(),
     rows: termRows(),
     cwd: process.cwd(),
-    env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
+    env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', PATH: `${process.env.PATH}:${BIN}` },
   });
   proc.onData(d => term.write(d));
   proc.onExit(({ exitCode }) => {
@@ -164,6 +167,20 @@ for (const code of [4, 10, 11]) {
 }
 term.onWriteParsed(() => { dirty = true; });
 
+// Inline images (imgcat): drawn on the hi-res screen, as blocks
+// on the others. Transparency shows the theme's screen colour. On the
+// hi-res screen, a Koala picture (or any, with imgcat -t koala) shows full
+// screen, in multicolour, until a key is pressed.
+const images = new InlineImages(term, () => {
+  const vic = paletteFor(DISPLAY.C64_HIRES, theme);
+  return { maxCols: display.cols, maxRows: display.rows, bg: vic.rgb[vic.screenBg] };
+}, log, (file, args) => {
+  const pic = display.hires && conn && multicolourPicture(file, args);
+  if (pic) conn.showPicture(pic);
+  return !!pic;
+});
+term.parser.registerOscHandler(1337, data => images.osc(data));
+
 // --- C64 connection ----------------------------------------------------------
 
 let conn = null;
@@ -177,6 +194,8 @@ class Connection {
     this.rx = [];
     this.bytesSent = 0;
     this.timeouts = 0; // in a row: a serial line has nobody on it until the C64 starts
+    this.picture = null; // frames of a full-screen picture still to send, while it shows
+    this.restore = false; // back from a picture: switch to the terminal screen
     sock.setNoDelay?.(true);
     sock.on('data', d => this.onData(d));
     sock.on('close', () => this.close('closed'));
@@ -208,6 +227,8 @@ class Connection {
         setDisplay(d ?? DISPLAY.C64);
         if (holding) showTitle();
         this.state = null;
+        this.picture = null;
+        this.restore = false;
         this.inFlight = false;
         clearTimeout(this.ackTimer);
         dirty = true;
@@ -223,6 +244,11 @@ class Connection {
   }
 
   onKey(code, mods) {
+    // Any key ends a full-screen picture, and is not passed on.
+    if (this.picture) {
+      this.endPicture();
+      return;
+    }
     const bytes = keyToBytes(code, mods, {
       appCursor: term.modes.applicationCursorKeysMode,
       // encoding isn't in the public API ('DEFAULT' | 'SGR' | 'SGR_PIXELS')
@@ -281,18 +307,47 @@ class Connection {
     if (!this.state) this.glyphs = display.ext ? new GlyphCache(display) : null;
     const glyphs = this.glyphs?.place(want, this.state) ?? [];
     const colour = display.hires ? pal.defaultFg << 4 | pal.screenBg : pal.defaultFg;
-    let { bytes, state } = this.state
-      ? encodeFrame(this.state, want)
-      : encodeReset(want, pal.border, pal.screenBg, colour);
+    const budget = display.hires ? IMAGE_FRAME_BYTES : Infinity;
+    let { bytes, state, partial } = this.state
+      ? encodeFrame(this.state, want, budget)
+      : encodeReset(want, pal.border, pal.screenBg, colour, budget);
     this.state = state;
+    if (partial) dirty = true; // the rest goes in the next frame
     if (bytes.length === 1) return; // only FRAME marker: nothing changed
     bytes = glyphs.concat(bytes);
+    if (this.restore) bytes.unshift(OP.VIEW, VIEW.TERMINAL, 0);
+    this.restore = false;
+    this.send(bytes);
+  }
+
+  // A Koala picture ({bitmap, screen, colram, bg}), full screen until a key
+  // is pressed. The terminal carries on meanwhile, unseen.
+  showPicture(pic) {
+    this.picture = encodePicture(pic, IMAGE_FRAME_BYTES);
+  }
+
+  // Sends the picture's next frame, if any are left.
+  sendPicture() {
+    const frame = this.picture.shift();
+    if (frame) this.send(frame);
+  }
+
+  // Back to the terminal, redrawn in full (the picture overwrote it).
+  endPicture() {
+    this.picture = null;
+    this.restore = true;
+    this.state = null;
+    dirty = true;
+  }
+
+  send(bytes) {
     this.sock.write(Buffer.from(bytes));
     this.bytesSent += bytes.length;
     debug(`frame ${bytes.length} bytes`);
     this.inFlight = true;
     this.ackTimer = setTimeout(() => {
       (this.timeouts++ ? debug : log)('ACK timeout - forcing full redraw');
+      if (this.picture) this.endPicture();
       this.state = null;
       this.inFlight = false;
       dirty = true;
@@ -301,7 +356,9 @@ class Connection {
 }
 
 function tick() {
-  if (!conn || conn.inFlight || !dirty) return;
+  if (!conn || conn.inFlight) return;
+  if (conn.picture) return conn.sendPicture();
+  if (!dirty) return;
   if (term.modes.synchronizedOutputMode) {
     syncSince ||= Date.now();
     if (Date.now() - syncSince < SYNC_MAX_MS) return;

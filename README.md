@@ -179,13 +179,58 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
   whole bitmap, which takes about 90 ms, as on the soft 80-column screen.
 
   ![ttysolitaire on the text client (left) and the hi-res client (right)](docs/solitaire.png)
+- **Pictures (hi-res C64):** inline images in iTerm2's format (OSC 1337, as
+  sent by `imgcat`) are drawn in the bitmap. iTerm2's own `imgcat` works;
+  where there is none, the bridge puts a small one
+  ([bridge/bin/imgcat](bridge/bin/imgcat)) at the end of the program's PATH:
+
+  ```bash
+  imgcat photo.png           # its own size, shrunk to fit 40×25 cells
+  imgcat -W 20 logo.png      # 20 cells wide (also Npx, N%; -H for height)
+  imgcat picture.dd          # Doodle! or Art Studio (.art): hi-res, pixel for pixel
+  imgcat picture.koa         # Koala Painter: full screen, in multicolour
+  imgcat -t koala photo.png  # any picture, converted to multicolour, full screen
+  ```
+
+  The bridge reads PNG and the C64's own picture formats, known by their file
+  sizes. It picks the two colours for each 8×8 cell whose dithered mixes come
+  closest, and dithers between them, so a hi-res picture (Doodle, Art Studio)
+  comes out pixel for pixel. A Koala picture is multicolour, which the text
+  can't share the screen with: the client blanks the screen, switches to
+  multicolour, loads the picture (about 10 KB) and shows it until a key is
+  pressed. The key isn't passed on, and the bridge then redraws the
+  terminal, which carried on meanwhile. `-t koala` (or `multicolour`), a type
+  hint that iTerm2's imgcat passes on as it is, converts any picture this
+  way: scaled to fill the screen in pixels twice as wide as they are tall,
+  on one background colour for the whole picture (the best of those most of
+  it is nearest to), with the three colours in each 4×8 cell whose dithered
+  mixes come closest. Like
+  iTerm2, the picture starts at the cursor, and the cursor ends up after its
+  last row. The terminal holds a private-use placeholder character for each
+  of the picture's cells, so it scrolls, clears and is overwritten like text,
+  and a redraw (a theme switch, a reconnect) draws it again. A whole
+  screen is about 9 KB, sent 2 KB per frame: about 2.5 s at 38400 baud.
+  The other clients show a picture as blocks of colour, one per cell
+  ([bridge/src/image.js](bridge/src/image.js)).
+
+  Many pictures are released as programs that unpack and show themselves
+  (`…_exe.prg`). `prg2pic.js` runs one in VICE until a bitmap has been on
+  screen for 2 s, then saves it from memory, where the VIC's registers say it
+  is: multicolour as Koala, hi-res as Doodle. Raster tricks such as FLI or
+  sprites laid over the bitmap are lost.
+
+  ```bash
+  node bridge/scripts/prg2pic.js picture_exe.prg      # writes picture_exe.koa (or .dd)
+  ```
 
 ## Protocol
 
 See [bridge/src/protocol.js](bridge/src/protocol.js). Host→C64 opcodes are GOTO,
 COLOR, PUT, REPEAT, SCROLL, COLORS, CLS and FRAME, plus SPRITE and NOSPRITE for
 the soft 80-column screen, GLYPH for the hi-res one and the C128, and
-UNDERLINE for the hi-res one. Every frame ends with FRAME and
+UNDERLINE, BITS (cells of a picture, as raw pixels), VIEW (full-screen
+multicolour pictures) and POKE (to load them) for the hi-res one.
+Every frame ends with FRAME and
 the C64 answers ACK. The bridge keeps only one frame in flight, so fast output
 merges into fewer frames instead of overflowing the client's receive buffer (256
 bytes; 4 KB on the bitmap C64 clients).
@@ -250,6 +295,9 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `bridge/src/glyphs.js` / `colors.js` / `keymap.js` | character, colour, key mappings |
 | `bridge/src/font4x8.js` | 4×8 font for the soft 80-column screen |
 | `bridge/src/extglyphs.js` / `glyphcache.js` | the extra glyphs for the hi-res C64 and the C128, and which are loaded |
+| `bridge/src/image.js` | inline images: OSC 1337, PNG and C64 pictures, hi-res conversion |
+| `bridge/bin/imgcat` | sends pictures as inline images, where iTerm2's imgcat isn't installed |
+| `bridge/scripts/prg2pic.js` | saves the picture a self-showing `.prg` displays, as Koala or Doodle |
 | `bridge/scripts/gen-glyphs.js` | writes `c64/glyphs.inc` and `c64/font4x8.inc` |
 | `bridge/scripts/fake-c64.js` | pretend client for testing without VICE |
 | `bridge/scripts/fake-modem.js` | pretend WiFi modem for testing the dial step |
@@ -265,7 +313,7 @@ tables `$4000–$4FFF` (built at startup), sprite data `$5000–$51FF`, colours
 `$5C00` (sprite pointers `$5FF8`) and the bitmap `$6000–$7F3F`; receive ring
 `$8000–$8FFF` (4 KB, because a bitmap scroll takes about 90 ms).
 
-Hi-res 40 columns: code `$0801–$0F2F`; the VIC uses its second bank, with the
+Hi-res 40 columns: code `$0801–$0FB2`; the VIC uses its second bank, with the
 font `$4000–$47FF` (one page per pixel row), colours `$5C00` and the bitmap
 `$6000–$7F3F`; receive ring `$8000–$8FFF`.
 

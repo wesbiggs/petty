@@ -82,7 +82,7 @@ function makePalette({
 }
 
 // C64 (Colodore approximation), index = C64 colour number.
-const VIC_RGB = [
+export const VIC_RGB = [
   0x000000, 0xffffff, 0x813338, 0x75cec8, 0x8e3c97, 0x56ac4d, 0x2e2c9b, 0xedf171,
   0x8e5029, 0x553800, 0xc46c71, 0x4a4a4a, 0x7b7b7b, 0xa9ff9f, 0x706deb, 0xb2b2b2,
 ];
