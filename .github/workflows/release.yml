@@ -1,0 +1,58 @@
+name: Release
+
+# Push a tag matching bridge/package.json's version, e.g. v0.9.0.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: ci
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches the bridge version
+        run: |
+          want="v$(node -p "require('./bridge/package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "$want" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match bridge/package.json ($want)"
+            exit 1
+          fi
+
+      - name: Install cc65 and c1541
+        run: sudo apt-get update && sudo apt-get install -y cc65 vice
+
+      - name: Build clients
+        run: make
+
+      - name: Package
+        run: |
+          v="${GITHUB_REF_NAME}"
+          mkdir -p dist
+          cp build/*.prg dist/
+          c1541 -format "petty ${v#v},pt" d64 "dist/petty-$v.d64" \
+            -write build/petty.prg petty \
+            -write build/pettyhires.prg pettyhires \
+            -write build/petty80.prg petty80 \
+            -write build/petty128.prg petty128
+          (cd dist && zip "petty-$v-prg.zip" *.prg)
+          # The bridge, without node_modules: node-pty is built by npm ci
+          # on the host that runs it.
+          b="petty-bridge-$v"
+          mkdir -p "$b"
+          cp -R bridge/src bridge/bin bridge/scripts bridge/test \
+            bridge/package.json bridge/package-lock.json bridge/title.ans \
+            README.md LICENSE "$b/"
+          tar -czf "dist/$b.tar.gz" "$b"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "PETTY $GITHUB_REF_NAME" --generate-notes --verify-tag

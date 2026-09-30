@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bridge/package-lock.json
+
+      - name: Install cc65
+        run: sudo apt-get update && sudo apt-get install -y cc65
+
+      - name: Install bridge dependencies
+        run: npm ci
+        working-directory: bridge
+
+      - name: Test
+        run: make test
+
+      - name: Build clients
+        run: make
+
+      - name: Generated files are up to date
+        run: |
+          node bridge/scripts/gen-glyphs.js
+          node bridge/scripts/gen-title.js
+          git diff --exit-code -- c64/glyphs.inc c64/font4x8.inc bridge/title.ans
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prg
+          path: build/*.prg

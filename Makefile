@@ -11,7 +11,7 @@ DIAL    ?=
 VICE_FLAGS := -acia1 -acia1mode 1 -acia1base 0xDE00 -acia1irq 1 \
               -myaciadev 0 -rsdev1 127.0.0.1:$(PORT) +rsdev1ip232 -rsdev1baud 38400
 
-.PHONY: all clean bridge theme vice vice128 vice80 vicehires run test
+.PHONY: all clean bridge theme title vice vice128 vice80 vicehires run test
 
 all: $(PRG) $(PRG128) $(PRG80) $(PRGHI)
 
@@ -56,6 +56,11 @@ $(PRGHI): $(BUILD)/mainhires.o c64/pettyhires.cfg
 
 $(BUILD):
 	mkdir -p $@
+
+# The start screen, with the version from bridge/package.json (or
+# make title VERSION=1.2.3)
+title:
+	$(if $(VERSION),VERSION=$(VERSION) )node bridge/scripts/gen-title.js
 
 bridge/node_modules:
 	cd bridge && npm install

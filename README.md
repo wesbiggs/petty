@@ -46,10 +46,11 @@ To run Claude Code directly: `make bridge CMD="-- claude"`, or
 `node bridge/src/bridge.js [--port N | --serial DEV [--baud N]] [--host H] [--fps N] [--cols N] [--rows N] [--scroll N] [--theme T] [--control N] [--title FILE] [-v] -- <cmd> [args...]`.
 
 When a client first connects, the bridge shows a start screen,
-[title.ans](title.ans), for four seconds before it starts the program; any key
-starts it sooner (and is not passed on). `--title FILE` shows another file,
-`--title none` skips it. It is plain ANSI, so `cat title.ans` shows it in any
-terminal too. Regenerate it with `node bridge/scripts/gen-title.js`.
+[bridge/title.ans](bridge/title.ans), for four seconds before it starts the
+program; any key starts it sooner (and is not passed on). `--title FILE` shows
+another file, `--title none` skips it. It is plain ANSI, so
+`cat bridge/title.ans` shows it in any terminal too. Regenerate it with `make title`, which takes the version from
+`bridge/package.json` (`make title VERSION=1.2.3` overrides it).
 
 `--theme` sets the screen colour and the program's default colours: `dark`
 (default: light grey on black), `light` (black on white), `classic` (the C64's
@@ -316,7 +317,7 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `bridge/scripts/petty-ctl.js` | sends commands to the bridge's control port |
 | `bridge/scripts/mock-soft80.js` | renders a program's soft 80-column screen to an image |
 | `bridge/scripts/gen-colortest.js` | writes `colortest.ans` |
-| `bridge/scripts/gen-title.js` | writes `title.ans`, the start screen |
+| `bridge/scripts/gen-title.js` | writes `bridge/title.ans`, the start screen |
 
 Memory map: code `$0801–$0D50`, receive ring `$3700`, character set `$3800–$3FFF`, screen `$0400`.
 
@@ -368,3 +369,21 @@ Other notes:
 
 - The C128 client needs an 80-column monitor. It blanks the 40-column screen,
   because the VIC shows garbage at 2 MHz.
+
+## Releases
+
+The version is `bridge/package.json`'s, and the start screen shows it. To
+release one:
+
+```bash
+cd bridge && npm version --no-git-tag-version 1.0.0 && cd ..
+make title
+git commit -am "Version 1.0.0" && git tag v1.0.0 && git push origin main v1.0.0
+```
+
+CI (`.github/workflows/ci.yml`) runs the tests, builds the four clients and
+checks that `bridge/title.ans` and the generated includes are up to date. A `v*` tag
+runs it again, then `release.yml` checks the tag against the version and
+publishes a GitHub release with the `.prg` files, a zip of them, a `.d64`
+disk image holding all four, and the bridge as `petty-bridge-<tag>.tar.gz`
+(without `node_modules`: unpack it, `npm ci`, then `node src/bridge.js`).

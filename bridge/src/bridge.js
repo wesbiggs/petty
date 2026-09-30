@@ -32,7 +32,7 @@ const { values: opt, positionals } = parseArgs({
     cols: { type: 'string' },
     rows: { type: 'string' },
     scroll: { type: 'string', default: '1' },
-    title: { type: 'string', default: fileURLToPath(new URL('../../title.ans', import.meta.url)) },
+    title: { type: 'string', default: fileURLToPath(new URL('../title.ans', import.meta.url)) },
     verbose: { type: 'boolean', short: 'v', default: false },
   },
 });
@@ -59,7 +59,7 @@ const TITLE_COLS = 40;
 const IMAGE_FRAME_BYTES = 2048; // hi-res frames split up past this (images), so keys stay responsive
 const BIN = fileURLToPath(new URL('../bin', import.meta.url)); // imgcat, a fallback at the end of the program's PATH
 
-// The start screen (title.ans, from scripts/gen-title.js), shown when a client
+// The start screen (bridge/title.ans, from scripts/gen-title.js), shown when a client
 // first connects, before the program starts. --title none: no start screen.
 let title = null;
 if (opt.title && opt.title !== 'none') {

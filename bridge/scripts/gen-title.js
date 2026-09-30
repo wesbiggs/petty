@@ -1,11 +1,14 @@
-// Writes title.ans: the start screen the bridge shows when a client first
+// Writes bridge/title.ans: the start screen the bridge shows when a client first
 // connects, before the program starts. 3-D block letters drawn in quadrant
 // pixels (2x2 per cell), extruded down and to the right, so every cell holds
 // one colour on the screen colour and looks the same on every client.
 
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 
-const out = new URL('../../title.ans', import.meta.url);
+const out = new URL('../title.ans', import.meta.url);
+// The version shown: $VERSION (a release tag, say v1.0.0), or the bridge's.
+const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+const VERSION = (process.env.VERSION || pkg.version).replace(/^v/, '');
 const COLS = 40, ROWS = 25;
 const W = COLS * 2, H = ROWS * 2;
 
@@ -169,7 +172,7 @@ function cell(cx, cy) {
 
 // Text rows: [row, [[text, colour], ...]], centred.
 const TEXT = [
-  [21, [['Commodore 64 Terminal', C.lgreen], [' v0.9.0', C.green]]],
+  [21, [['Commodore 64 Terminal', C.lgreen], [` v${VERSION}`, C.green]]],
   [22, [['(C) 2026 Wes Biggs', C.grey], [' <github@wbig.gs>', C.lgrey]]],
   [24, [['press any key', C.grey]]],
 ];
