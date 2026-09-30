@@ -241,13 +241,50 @@ function resample({ width, height, rgba }, w, h, cw, ch, bg, ox = 0, oy = 0) {
   return out;
 }
 
-// --- hi-res conversion ------------------------------------------------------------
+// --- colour matching ----------------------------------------------------------------
+//
+// Colours are compared in CIELAB, with the picture's chroma scaled down: the
+// VIC's colours are muted, so a vivid red should find the VIC's red by its
+// hue, not a brown by its lightness. A picture's colour that is exactly one
+// of the VIC's matches it outright, so the C64's own pictures convert pixel
+// for pixel.
+//
+// Flat art (no more than FLAT_COLOURS colours) isn't dithered: each colour
+// maps to one VIC colour across the whole picture, and a cell that needs
+// more colours than it can have gives its least-used ones their next best
+// match. Anything else, such as a photograph, is ordered-dithered where a
+// mix of two colours comes clearly closer than either.
 
-// Distances weighted roughly like the "redmean" match in colors.js.
-const WEIGHT = [Math.sqrt(2.5), 2, Math.sqrt(2.5)];
-const weighted = rgb => [(rgb >> 16) * WEIGHT[0], (rgb >> 8 & 255) * WEIGHT[1], (rgb & 255) * WEIGHT[2]];
-const PAL = VIC_RGB.map(weighted);
-const MIX_COST = 0.25; // how much a dithered mix of two colours is worse than a flat colour
+const CHROMA = 0.65; // the picture's chroma, against the palette's
+
+function lab(rgb, chroma = 1) {
+  const lin = v => (v /= 255) > 0.04045 ? ((v + 0.055) / 1.055) ** 2.4 : v / 12.92;
+  const [r, g, b] = [rgb >> 16, rgb >> 8 & 255, rgb & 255].map(lin);
+  const f = t => t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
+  const x = f((0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047);
+  const y = f(0.2126 * r + 0.7152 * g + 0.0722 * b);
+  const z = f((0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883);
+  return [116 * y - 16, 500 * (x - y) * chroma, 200 * (y - z) * chroma];
+}
+
+const PAL_LAB = VIC_RGB.map(c => lab(c));
+const VIC_INDEX = new Map(VIC_RGB.map((c, i) => [c, i]));
+
+// A picture's colour (0xRRGGBB) as a point to compare with PAL_LAB.
+const toLab = rgb => (VIC_INDEX.has(rgb) ? PAL_LAB[VIC_INDEX.get(rgb)] : lab(rgb, CHROMA));
+const dist2 = (p, q) => (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2;
+const rgbAt = (rgb, o) => Math.round(rgb[o]) << 16 | Math.round(rgb[o + 1]) << 8 | Math.round(rgb[o + 2]);
+
+const FLAT_COLOURS = 32; // pictures with no more colours than this are flat art
+const MERGE_COST = 1; // merging two different colours, against mapping each to a worse match
+const MERGE_COLOURS = 64; // past this many (flat forced on a photo), colours just take their nearest
+
+// Dithering: a mix of two colours is scored by its distance from the pixel
+// plus a share of its own spread (1 would make a mix never better than a
+// flat colour). Multicolour's pixels are twice as wide, so its patterns show
+// more, and must do more good.
+const MIX_HIRES = 0.25;
+const MIX_MULTICOLOUR = 0.5;
 
 // 8x8 ordered dither thresholds, 0-1.
 const BAYER = (() => {
@@ -267,61 +304,197 @@ const BAYER = (() => {
   return m.map(v => (v + 0.5) / 64);
 })();
 
-// One 8x8 cell of weighted pixels (64 * 3) as 9 bytes: the pair of colours
-// whose dithered mixes come closest, then the pixels ordered-dithered
-// between them. A picture already in two colours per cell comes out exact.
-function convertCell(p) {
-  let best = Infinity, bi = 0, bj = 0;
-  for (let i = 0; i < 16; i++) {
-    const [ar, ag, ab] = PAL[i];
-    for (let j = i; j < 16; j++) {
-      const dr = PAL[j][0] - ar, dg = PAL[j][1] - ag, db = PAL[j][2] - ab;
-      const len = dr * dr + dg * dg + db * db;
-      let err = 0;
-      for (let k = 0; k < 192 && err < best; k += 3) {
-        const pr = p[k] - ar, pg = p[k + 1] - ag, pb = p[k + 2] - ab;
-        let t = len ? (pr * dr + pg * dg + pb * db) / len : 0;
-        t = t < 0 ? 0 : t > 1 ? 1 : t;
-        const er = pr - t * dr, eg = pg - t * dg, eb = pb - t * db;
-        err += er * er + eg * eg + eb * eb + MIX_COST * t * (1 - t) * len;
+// `imgcat -t` values that say whether to dither (else: flat art isn't).
+const DITHER = { flat: false, dither: true };
+
+// The picture's distinct colours (0xRRGGBB, opaque pixels only), or null if
+// there are more than `max`.
+function colours(img, max) {
+  const seen = new Set();
+  for (let o = 0; o < img.rgba.length; o += 4) {
+    if (img.rgba[o + 3] < 128) continue;
+    seen.add(img.rgba[o] << 16 | img.rgba[o + 1] << 8 | img.rgba[o + 2]);
+    if (seen.size > max) return null;
+  }
+  return [...seen];
+}
+
+// The colours of flat art `img` shrunk (or grown) to w x h at (ox, oy) on a
+// cw x ch screen: each pixel's index in `list`, the colour most of its area
+// has (no blending at the edges). Pixels around the picture, and clear
+// ones, are `clear`. `order(x, y)` gives each pixel's place in the result.
+function flatPixels(img, list, w, h, cw, ch, ox, oy, order, clear) {
+  const index = new Map(list.map((c, i) => [c, i]));
+  const px = new Int16Array(cw * ch).fill(clear);
+  for (let y = 0; y < h; y++) {
+    const y0 = Math.floor(y * img.height / h), y1 = Math.max(y0 + 1, Math.floor((y + 1) * img.height / h));
+    for (let x = 0; x < w; x++) {
+      const x0 = Math.floor(x * img.width / w), x1 = Math.max(x0 + 1, Math.floor((x + 1) * img.width / w));
+      const votes = new Map();
+      for (let sy = y0; sy < y1; sy++) {
+        for (let sx = x0; sx < x1; sx++) {
+          const o = (sy * img.width + sx) * 4;
+          const s = img.rgba[o + 3] < 128 ? clear : index.get(img.rgba[o] << 16 | img.rgba[o + 1] << 8 | img.rgba[o + 2]);
+          votes.set(s, (votes.get(s) ?? 0) + 1);
+        }
       }
-      if (err < best) { best = err; bi = i; bj = j; }
+      let best = clear, most = 0;
+      for (const [s, v] of votes) if (v > most) { most = v; best = s; }
+      px[order(x + ox, y + oy)] = best;
     }
   }
-  const out = new Uint8Array(CELL_BYTES);
-  const [ar, ag, ab] = PAL[bi];
-  const dr = PAL[bj][0] - ar, dg = PAL[bj][1] - ag, db = PAL[bj][2] - ab;
-  const len = dr * dr + dg * dg + db * db;
-  for (let y = 0; y < 8; y++) {
-    let byte = 0;
-    for (let x = 0; x < 8; x++) {
-      const k = (y * 8 + x) * 3;
-      const t = len ? ((p[k] - ar) * dr + (p[k + 1] - ag) * dg + (p[k + 2] - ab) * db) / len : 0;
-      byte = byte << 1 | (t > BAYER[y * 8 + x] ? 1 : 0);
+  return px;
+}
+
+// What each VIC colour c costs for picture colour s, cost[s * 16 + c], with
+// one VIC colour for each picture colour chosen for the whole picture at no
+// cost: the nearest, unless that merges picture colours that look
+// different (the bands of a sunset all finding the same orange), weighed by
+// how different they are and how much of the smaller one there is. `px`:
+// the picture's pixels (indexes into list; negative: none).
+function flatCosts(list, px) {
+  const n = list.length;
+  const labs = list.map(toLab);
+  const cost = new Float64Array(n * 16);
+  labs.forEach((q, s) => PAL_LAB.forEach((p, c) => { cost[s * 16 + c] = dist2(q, p); }));
+  const total = new Float64Array(n);
+  for (const s of px) if (s >= 0) total[s]++;
+  const assign = list.map((_, s) => [...Array(16).keys()].reduce((a, b) => (cost[s * 16 + b] < cost[s * 16 + a] ? b : a)));
+  const merged = (s, c) => {
+    let e = 0;
+    for (let t = 0; t < n; t++) if (t !== s && assign[t] === c) e += MERGE_COST * Math.min(total[s], total[t]) * dist2(labs[s], labs[t]);
+    return e;
+  };
+  for (let pass = 0, changed = n <= MERGE_COLOURS; changed && pass < 20; pass++) {
+    changed = false;
+    for (let s = 0; s < n; s++) {
+      const score = c => total[s] * cost[s * 16 + c] + merged(s, c);
+      let best = assign[s];
+      for (let c = 0; c < 16; c++) if (score(c) < score(best)) best = c;
+      if (best !== assign[s]) { assign[s] = best; changed = true; }
     }
-    out[y] = byte;
   }
-  out[8] = bj << 4 | bi;
+  assign.forEach((c, s) => { cost[s * 16 + c] = 0; });
+  return cost;
+}
+
+// Flat art's cells: `fixed` colours (the background, or none) plus `free`
+// more for each cell of `size` pixels in `px`, chosen from each colour's
+// three best: {err, colours} per cell.
+function flatCells(px, cost, cells, size, fixed, free) {
+  const n = cost.length / 16;
+  const top = Array.from({ length: n }, (_, s) => [...Array(16).keys()].sort((a, b) => cost[s * 16 + a] - cost[s * 16 + b]).slice(0, 3));
+  const out = [];
+  for (let i = 0; i < cells; i++) {
+    const counts = new Map();
+    for (let k = i * size; k < (i + 1) * size; k++) if (px[k] >= 0) counts.set(px[k], (counts.get(px[k]) ?? 0) + 1);
+    const want = [...new Set([...counts.keys()].flatMap(s => top[s]))].filter(c => !fixed.includes(c));
+    for (let c = 0; want.length < free; c++) if (!fixed.includes(c) && !want.includes(c)) want.push(c);
+    let best = { err: Infinity };
+    for (const pick of choose(want, free)) {
+      const set = [...fixed, ...pick];
+      let err = 0;
+      for (const [s, count] of counts) {
+        let min = Infinity;
+        for (const c of set) min = Math.min(min, cost[s * 16 + c]);
+        err += count * min;
+      }
+      if (err < best.err) best = { err, colours: set };
+    }
+    out.push(best);
+  }
   return out;
 }
 
-// The image as `cols` x `rows` hi-res cells: {cols, rows, keys}.
+// Every way to choose k of `items`, in order.
+function* choose(items, k, from = 0) {
+  if (!k) { yield []; return; }
+  for (let i = from; i <= items.length - k; i++) for (const rest of choose(items, k - 1, i + 1)) yield [items[i], ...rest];
+}
+
+// The place in `set` of flat art pixel s's best colour.
+function nearestIn(cost, s, set) {
+  let best = 0;
+  for (let j = 1; j < set.length; j++) if (cost[s * 16 + set[j]] < cost[s * 16 + set[best]]) best = j;
+  return best;
+}
+
+// How far point p[k..k+2] is from the dithered mixes of VIC colours i and j,
+// scoring a mix `spread` times its own spread, and where on the way it is
+// (t: 0 = i, 1 = j).
+function mix(p, k, i, j, spread) {
+  const [ar, ag, ab] = PAL_LAB[i];
+  const dr = PAL_LAB[j][0] - ar, dg = PAL_LAB[j][1] - ag, db = PAL_LAB[j][2] - ab;
+  const len = dr * dr + dg * dg + db * db;
+  const pr = p[k] - ar, pg = p[k + 1] - ag, pb = p[k + 2] - ab;
+  let t = len ? (pr * dr + pg * dg + pb * db) / len : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const er = pr - t * dr, eg = pg - t * dg, eb = pb - t * db;
+  return { err: er * er + eg * eg + eb * eb + spread * t * (1 - t) * len, t };
+}
+
+// --- hi-res conversion ------------------------------------------------------------
+
+// Pixel (x, y) of a hi-res picture `cols` cells wide, cell by cell: cell i
+// holds pixels i * 64 ...
+const hiresOrder = cols => (x, y) => ((y >> 3) * cols + (x >> 3)) * 64 + (y & 7) * 8 + (x & 7);
+
+// A hi-res cell: 8 bitmap bytes (bit set: colours[1]), then colours[1] << 4 |
+// colours[0], from `slot(k)`, each pixel's 0 or 1.
+function hiresCell(colours, slot) {
+  const out = new Uint8Array(CELL_BYTES);
+  for (let y = 0; y < 8; y++) {
+    let byte = 0;
+    for (let x = 0; x < 8; x++) byte = byte << 1 | slot(y * 8 + x);
+    out[y] = byte;
+  }
+  out[8] = colours[1] << 4 | colours[0];
+  return out;
+}
+
+// One 8x8 cell of points (64 * 3) as 9 bytes: the pair of colours whose
+// dithered mixes come closest, then the pixels ordered-dithered between them.
+function ditheredCell(p) {
+  let best = Infinity, bi = 0, bj = 0;
+  for (let i = 0; i < 16; i++) {
+    for (let j = i; j < 16; j++) {
+      let err = 0;
+      for (let k = 0; k < 192 && err < best; k += 3) err += mix(p, k, i, j, MIX_HIRES).err;
+      if (err < best) { best = err; bi = i; bj = j; }
+    }
+  }
+  return hiresCell([bi, bj], k => (mix(p, k * 3, bi, bj, MIX_HIRES).t > BAYER[k] ? 1 : 0));
+}
+
+// The image as `cols` x `rows` hi-res cells: {cols, rows, keys}. What's
+// left of the cells around it, and clear pixels, are `bg` (0xRRGGBB, a VIC
+// colour). args.type: flat or dither (see DITHER), else flat art isn't.
 export function toCells(img, args, maxCols, maxRows, bg) {
   const { w, h } = fitSize(img.width, img.height, args, Math.min(maxCols, MAX_COLS), Math.min(maxRows, MAX_ROWS));
   const cols = Math.ceil(w / 8), rows = Math.ceil(h / 8);
-  const cw = cols * 8;
-  const rgb = resample(img, w, h, cw, rows * 8, bg);
-  const keys = new Uint32Array(cols * rows);
+  const cw = cols * 8, ch = rows * 8, n = cols * rows;
+  const keys = new Uint32Array(n);
+  const dither = DITHER[args.type?.toLowerCase()];
+  const list = dither ? null : colours(img, dither === false ? Infinity : FLAT_COLOURS);
+
+  if (list) {
+    if (!list.includes(bg)) list.push(bg);
+    const px = flatPixels(img, list, w, h, cw, ch, 0, 0, hiresOrder(cols), list.indexOf(bg));
+    const cost = flatCosts(list, px);
+    flatCells(px, cost, n, 64, [], 2).forEach(({ colours: set }, i) => {
+      keys[i] = addCell(hiresCell(set, k => nearestIn(cost, px[i * 64 + k], set)));
+    });
+    return { cols, rows, keys };
+  }
+
+  const rgb = resample(img, w, h, cw, ch, bg);
   const p = new Float32Array(192);
   for (let cy = 0; cy < rows; cy++) {
     for (let cx = 0; cx < cols; cx++) {
       for (let y = 0; y < 8; y++) {
-        for (let x = 0; x < 8; x++) {
-          const o = ((cy * 8 + y) * cw + cx * 8 + x) * 3, k = (y * 8 + x) * 3;
-          p[k] = rgb[o] * WEIGHT[0]; p[k + 1] = rgb[o + 1] * WEIGHT[1]; p[k + 2] = rgb[o + 2] * WEIGHT[2];
-        }
+        for (let x = 0; x < 8; x++) p.set(toLab(rgbAt(rgb, ((cy * 8 + y) * cw + cx * 8 + x) * 3)), (y * 8 + x) * 3);
       }
-      keys[cy * cols + cx] = addCell(convertCell(p));
+      keys[cy * cols + cx] = addCell(ditheredCell(p));
     }
   }
   return { cols, rows, keys };
@@ -329,42 +502,72 @@ export function toCells(img, args, maxCols, maxRows, bg) {
 
 // --- multicolour conversion ------------------------------------------------------
 
-// How far weighted pixel p[k..k+2] is from the dithered mixes of colours i
-// and j (the same measure as convertCell's), and where on the way it is (t:
-// 0 = i, 1 = j).
-function mix(p, k, i, j) {
-  const [ar, ag, ab] = PAL[i];
-  const dr = PAL[j][0] - ar, dg = PAL[j][1] - ag, db = PAL[j][2] - ab;
-  const len = dr * dr + dg * dg + db * db;
-  const pr = p[k] - ar, pg = p[k + 1] - ag, pb = p[k + 2] - ab;
-  let t = len ? (pr * dr + pg * dg + pb * db) / len : 0;
-  t = t < 0 ? 0 : t > 1 ? 1 : t;
-  const er = pr - t * dr, eg = pg - t * dg, eb = pb - t * db;
-  return { err: er * er + eg * eg + eb * eb + MIX_COST * t * (1 - t) * len, t };
+const CELL_PX = 32; // a multicolour cell: 4 double-width pixels by 8
+const CANDIDATES = 7; // colours per cell worth trying in threes (dithering)
+
+// The picture's size in 160x200 double-width pixels, filling as much of
+// the screen as it can, and where it goes: {w, h, ox, oy}.
+function koalaFit(img) {
+  const s = Math.min(320 / img.width, 200 / img.height);
+  const w = Math.max(1, Math.min(160, Math.round(img.width * s / 2)));
+  const h = Math.max(1, Math.min(200, Math.round(img.height * s)));
+  return { w, h, ox: (160 - w) >> 1, oy: (200 - h) >> 1 };
 }
 
-// The closest mix of two of `colours` for pixel k: {err, t, i, j} (indexes
-// into colours).
-function bestMix(p, k, colours) {
+// Index of pixel (x, y) of the 160x200 screen, cell by cell: cell i holds
+// pixels i * 32 ...
+const cellOrder = (x, y) => ((y >> 3) * 40 + (x >> 2)) * CELL_PX + (y & 7) * 4 + (x & 3);
+
+// Koala Painter data from each pixel's slot (0 = background, 1-3 = the
+// cell's colours) and each cell's colours [bg, c1, c2, c3].
+function encodeKoala(slots, cells, bg) {
+  const bitmap = new Uint8Array(8000), screen = new Uint8Array(1000), colram = new Uint8Array(1000);
+  for (let i = 0; i < 1000; i++) {
+    for (let y = 0; y < 8; y++) {
+      let byte = 0;
+      for (let x = 0; x < 4; x++) byte = byte << 2 | slots[i * CELL_PX + y * 4 + x];
+      bitmap[i * 8 + y] = byte;
+    }
+    screen[i] = cells[i][1] << 4 | cells[i][2];
+    colram[i] = cells[i][3];
+  }
+  return { bitmap, screen, colram, bg };
+}
+
+// Flat art: pixels around the picture, and clear ones, are the background,
+// which is whichever VIC colour does best.
+function flatKoala(img, list) {
+  const { w, h, ox, oy } = koalaFit(img);
+  const px = flatPixels(img, list, w, h, 160, 200, ox, oy, cellOrder, -1);
+  const cost = flatCosts(list, px);
+  let pick = null;
+  for (let bg = 0; bg < 16; bg++) {
+    const cells = flatCells(px, cost, 1000, CELL_PX, [bg], 3);
+    const err = cells.reduce((e, c) => e + c.err, 0);
+    if (!pick || err < pick.err) pick = { err, bg, cells: cells.map(c => c.colours) };
+  }
+  const slots = px.map((s, k) => (s < 0 ? 0 : nearestIn(cost, s, pick.cells[Math.floor(k / CELL_PX)])));
+  return encodeKoala(slots, pick.cells, pick.bg);
+}
+
+// The closest mix of two of `set` for pixel k: {err, t, i, j} (indexes into set).
+function bestMix(p, k, set) {
   let best = { err: Infinity };
-  for (let i = 0; i < colours.length; i++) {
-    for (let j = i + 1; j < colours.length; j++) {
-      const m = mix(p, k, colours[i], colours[j]);
+  for (let i = 0; i < set.length; i++) {
+    for (let j = i + 1; j < set.length; j++) {
+      const m = mix(p, k, set[i], set[j], MIX_MULTICOLOUR);
       if (m.err < best.err) best = { ...m, i, j };
     }
   }
   return best;
 }
 
-const CELL_PX = 32; // a multicolour cell: 4 double-width pixels by 8
-const CANDIDATES = 7; // colours per cell worth trying in threes
-
 // The colours worth trying in a cell (the two nearest to each pixel, most
 // often first), other than the background.
 function candidates(p, base, bg) {
   const count = new Array(16).fill(0);
   for (let k = base; k < base + CELL_PX * 3; k += 3) {
-    const d = PAL.map(([r, g, b], c) => ((p[k] - r) ** 2 + (p[k + 1] - g) ** 2 + (p[k + 2] - b) ** 2));
+    const d = PAL_LAB.map(q => (p[k] - q[0]) ** 2 + (p[k + 1] - q[1]) ** 2 + (p[k + 2] - q[2]) ** 2);
     const order = [...d.keys()].sort((a, b) => d[a] - d[b]);
     count[order[0]] += 2;
     count[order[1]]++;
@@ -378,52 +581,42 @@ function candidates(p, base, bg) {
 function cellColours(p, base, bg) {
   const cand = candidates(p, base, bg);
   let best = { err: Infinity, colours: null };
-  for (let a = 0; a < cand.length; a++) {
-    for (let b = a + 1; b < cand.length; b++) {
-      for (let c = b + 1; c < cand.length; c++) {
-        const colours = [bg, cand[a], cand[b], cand[c]];
-        let err = 0;
-        for (let k = base; k < base + CELL_PX * 3 && err < best.err; k += 3) err += bestMix(p, k, colours).err;
-        if (err < best.err) best = { err, colours };
-      }
-    }
+  for (const three of choose(cand, 3)) {
+    const colours = [bg, ...three];
+    let err = 0;
+    for (let k = base; k < base + CELL_PX * 3 && err < best.err; k += 3) err += bestMix(p, k, colours).err;
+    if (err < best.err) best = { err, colours };
   }
   return best;
 }
 
-// A picture as Koala Painter data ({bitmap, screen, colram, bg}, see
-// koala()), filling as much of the screen as it can: 160x200 pixels, each
-// twice as wide as it is tall, in four colours per 4x8 cell, one of them
-// the background of the whole picture. The background is the best of the
-// colours most pixels are nearest to; then each cell takes the three
-// colours whose dithered mixes come closest, ordered-dithered as on the
-// hi-res screen.
-export function toKoala(img) {
-  const s = Math.min(320 / img.width, 200 / img.height);
-  const w = Math.max(1, Math.round(img.width * s / 2)), h = Math.max(1, Math.round(img.height * s));
-  const ox = (160 - w) >> 1, oy = (200 - h) >> 1;
+// Photographs: the background is the best of the colours most pixels are
+// nearest to; then each cell takes the three colours whose dithered mixes
+// come closest, ordered-dithered.
+function ditheredKoala(img) {
+  const { w, h, ox, oy } = koalaFit(img);
   const rgb = resample(img, w, h, 160, 200, 0, ox, oy);
 
-  // Weighted pixels, cell by cell: cell i is p[i * 96 ..]. Pixels around
-  // the picture (it doesn't fill the screen) are the background colour.
+  // Pixels as points, cell by cell. Pixels around the picture are the
+  // background colour, whichever it is.
   const p = new Float32Array(160 * 200 * 3);
   const around = [];
   for (let y = 0; y < 200; y++) {
     for (let x = 0; x < 160; x++) {
-      const o = (y * 160 + x) * 3, k = (((y >> 3) * 40 + (x >> 2)) * CELL_PX + (y & 7) * 4 + (x & 3)) * 3;
-      for (let c = 0; c < 3; c++) p[k + c] = rgb[o + c] * WEIGHT[c];
+      const k = cellOrder(x, y) * 3;
+      p.set(toLab(rgbAt(rgb, (y * 160 + x) * 3)), k);
       if (x < ox || x >= ox + w || y < oy || y >= oy + h) around.push(k);
     }
   }
-  const surround = bg => { for (const k of around) p.set(PAL[bg], k); };
+  const surround = bg => { for (const k of around) p.set(PAL_LAB[bg], k); };
 
   const nearest = new Array(16).fill(0);
   const outside = new Set(around);
   for (let k = 0; k < p.length; k += 3) {
     if (outside.has(k)) continue;
     let best = 0, bd = Infinity;
-    PAL.forEach(([r, g, b], c) => {
-      const d = (p[k] - r) ** 2 + (p[k + 1] - g) ** 2 + (p[k + 2] - b) ** 2;
+    PAL_LAB.forEach((q, c) => {
+      const d = (p[k] - q[0]) ** 2 + (p[k + 1] - q[1]) ** 2 + (p[k + 2] - q[2]) ** 2;
       if (d < bd) { bd = d; best = c; }
     });
     nearest[best]++;
@@ -442,32 +635,41 @@ export function toKoala(img) {
   }
 
   surround(pick.bg);
-  const bitmap = new Uint8Array(8000), screen = new Uint8Array(1000), colram = new Uint8Array(1000);
+  const slots = new Uint8Array(160 * 200);
   for (let i = 0; i < 1000; i++) {
-    const colours = pick.cells[i], base = i * CELL_PX * 3;
     for (let y = 0; y < 8; y++) {
-      let byte = 0;
       for (let x = 0; x < 4; x++) {
-        const m = bestMix(p, base + (y * 4 + x) * 3, colours);
-        const bits = m.t > BAYER[y * 8 + ((i % 40) * 4 + x & 7)] ? m.j : m.i;
-        byte = byte << 2 | bits;
+        const k = i * CELL_PX + y * 4 + x;
+        const m = bestMix(p, k * 3, pick.cells[i]);
+        slots[k] = m.t > BAYER[y * 8 + ((i % 40) * 4 + x & 7)] ? m.j : m.i;
       }
-      bitmap[i * 8 + y] = byte;
     }
-    screen[i] = colours[1] << 4 | colours[2];
-    colram[i] = colours[3];
   }
-  return { bitmap, screen, colram, bg: pick.bg };
+  return encodeKoala(slots, pick.cells, pick.bg);
 }
 
-// The types (imgcat -t) that ask for a picture in multicolour, full screen.
+// A picture as Koala Painter data ({bitmap, screen, colram, bg}, see
+// koala()), filling as much of the screen as it can: 160x200 pixels, each
+// twice as wide as it is tall, in four colours per 4x8 cell, one of them the
+// background of the whole picture. `dither`: true or false, or undefined to
+// dither only pictures with more than FLAT_COLOURS colours.
+export function toKoala(img, dither) {
+  const list = dither ? null : colours(img, dither === false ? Infinity : FLAT_COLOURS);
+  return list ? flatKoala(img, list) : ditheredKoala(img);
+}
+
+// The types (imgcat -t) that ask for a picture in multicolour, full screen,
+// and after a colon, how: flat (no dithering) or dither.
 const MULTICOLOUR = new Set(['koala', 'multicolour', 'multicolor']);
 
 // What to show full screen in multicolour, instead of in the terminal: a
-// Koala picture, or any picture sent with -t koala (or multicolour). Koala
-// Painter data (see koala()), or null.
+// Koala picture, or any picture sent with -t koala (or multicolour, either
+// with :flat or :dither). Koala Painter data (see koala()), or null.
 export function multicolourPicture(file, args = {}) {
-  return koala(file) ?? (MULTICOLOUR.has(args.type?.toLowerCase()) ? toKoala(decodeImage(file)) : null);
+  const pic = koala(file);
+  if (pic) return pic;
+  const [kind, how] = (args.type ?? '').toLowerCase().split(':');
+  return MULTICOLOUR.has(kind) ? toKoala(decodeImage(file), DITHER[how]) : null;
 }
 
 // --- the terminal side -------------------------------------------------------------

@@ -187,26 +187,39 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
   ```bash
   imgcat photo.png           # its own size, shrunk to fit 40×25 cells
   imgcat -W 20 logo.png      # 20 cells wide (also Npx, N%; -H for height)
+  imgcat -t flat art.png     # never dither (-t dither: always)
   imgcat picture.dd          # Doodle! or Art Studio (.art): hi-res, pixel for pixel
   imgcat picture.koa         # Koala Painter: full screen, in multicolour
   imgcat -t koala photo.png  # any picture, converted to multicolour, full screen
+  imgcat -t koala:flat x.png # ...never dithered (koala:dither: always)
   ```
 
   The bridge reads PNG and the C64's own picture formats, known by their file
-  sizes. It picks the two colours for each 8×8 cell whose dithered mixes come
-  closest, and dithers between them, so a hi-res picture (Doodle, Art Studio)
-  comes out pixel for pixel. A Koala picture is multicolour, which the text
-  can't share the screen with: the client blanks the screen, switches to
-  multicolour, loads the picture (about 10 KB) and shows it until a key is
-  pressed. The key isn't passed on, and the bridge then redraws the
-  terminal, which carried on meanwhile. `-t koala` (or `multicolour`), a type
-  hint that iTerm2's imgcat passes on as it is, converts any picture this
-  way: scaled to fill the screen in pixels twice as wide as they are tall,
-  on one background colour for the whole picture (the best of those most of
-  it is nearest to), with the three colours in each 4×8 cell whose dithered
-  mixes come closest. Like
-  iTerm2, the picture starts at the cursor, and the cursor ends up after its
-  last row. The terminal holds a private-use placeholder character for each
+  sizes. On the hi-res screen each 8×8 cell has two colours; a picture in
+  the terminal gets the two that suit each cell best. Colours are matched in
+  CIELAB with the picture's chroma scaled down, so vivid colours find the
+  VIC's muted ones by hue, and a VIC colour matches itself: a hi-res
+  picture (Doodle, Art Studio) comes out pixel for pixel. Flat art (32
+  colours or fewer) isn't dithered: each colour maps to one VIC colour
+  across the whole picture, keeping colours that look different apart where
+  it can (the bands of a sunset), and a cell that needs more colours than it
+  can have gives its least-used ones their next best match. Anything else,
+  such as a photograph, is ordered-dithered where a mix of two colours comes
+  closer than either. `-t flat` or `-t dither`, a type hint that iTerm2's
+  imgcat passes on as it is, forces one or the other.
+
+  A Koala picture is multicolour, which the text can't share the screen
+  with: the client blanks the screen, switches to multicolour, loads the
+  picture (about 10 KB) and shows it until a key is pressed. The key isn't
+  passed on, and the bridge then redraws the terminal, which carried on
+  meanwhile. `-t koala` (or `multicolour`) converts any picture this way,
+  scaled to fill the screen in pixels twice as wide as they are tall, with
+  four colours per 4×8 cell, one of them the background of the whole
+  picture; `-t koala:flat` or `koala:dither` as above. Dithering has to do
+  more good here, since patterns of double-width pixels show more.
+
+  In the terminal, as in iTerm2, a picture starts at the cursor, and the
+  cursor ends up after its last row. The terminal holds a private-use placeholder character for each
   of the picture's cells, so it scrolls, clears and is overwritten like text,
   and a redraw (a theme switch, a reconnect) draws it again. A whole
   screen is about 9 KB, sent 2 KB per frame: about 2.5 s at 38400 baud.

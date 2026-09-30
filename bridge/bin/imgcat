@@ -10,7 +10,9 @@
 #           shrunk to fit the screen)
 #   -s      stretch to -W x -H instead of keeping the aspect ratio
 #   -t      a type hint: koala (or multicolour) shows the picture full screen
-#           in multicolour on the hi-res C64, until a key is pressed
+#           in multicolour on the hi-res C64, until a key is pressed;
+#           koala:flat or koala:dither says whether to dither it, and flat or
+#           dither alone does for a picture shown in the terminal
 
 usage() {
   echo "usage: imgcat [-W width] [-H height] [-s] [-t type] file..." >&2

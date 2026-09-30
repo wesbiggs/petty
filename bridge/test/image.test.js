@@ -192,6 +192,46 @@ test('multicolour conversion: a Koala picture comes back pixel for pixel', () =>
   assert.ok(Buffer.from(back.rgba).equals(Buffer.from(img.rgba)));
 });
 
+const koalaRGBA = k => decodeImage(Buffer.concat([Buffer.from([0, 0x60]), k.bitmap, k.screen, k.colram, Buffer.from([k.bg])])).rgba;
+const rgbAt = (rgba, x, y) => rgba[(y * 320 + x) * 4] << 16 | rgba[(y * 320 + x) * 4 + 1] << 8 | rgba[(y * 320 + x) * 4 + 2];
+
+test('flat art: each colour solid, and different colours kept apart', () => {
+  // Red and orange halves, neither a VIC colour: both nearest to the same brown.
+  const px = [0xe3, 0x22, 0x10], px2 = [0xf0, 0x81, 0x1a];
+  const img = { width: 64, height: 40, rgba: new Uint8Array(64 * 40 * 4) };
+  for (let y = 0; y < 40; y++) for (let x = 0; x < 64; x++) img.rgba.set([...(x < 32 ? px : px2), 255], (y * 64 + x) * 4);
+  const rgba = koalaRGBA(toKoala(img));
+  const left = new Set(), right = new Set();
+  for (let y = 0; y < 200; y++) for (let x = 0; x < 320; x++) (x < 160 ? left : right).add(rgbAt(rgba, x, y));
+  assert.equal(left.size, 1, 'no dithering on the left');
+  assert.equal(right.size, 1, 'no dithering on the right');
+  assert.notEqual([...left][0], [...right][0], 'two colours stay two');
+});
+
+test('hi-res flat art: each colour solid and kept apart; -t dither dithers it', () => {
+  const img = { width: 64, height: 16, rgba: new Uint8Array(64 * 16 * 4) };
+  for (let y = 0; y < 16; y++) for (let x = 0; x < 64; x++) img.rgba.set([...(x < 32 ? [0xe3, 0x22, 0x10] : [0xf0, 0x81, 0x1a]), 255], (y * 64 + x) * 4);
+  const look = type => {
+    const { cols, keys } = toCells(img, { type }, 40, 25, 0);
+    const half = i => ((i % cols) < cols / 2 ? 0 : 1);
+    const seen = [new Set(), new Set()];
+    keys.forEach((key, i) => cellPixels(imageCell(key)).forEach(c => seen[half(i)].add(c)));
+    return seen.map(s => [...s]);
+  };
+  const [left, right] = look();
+  assert.equal(left.length, 1, `left: ${left}`);
+  assert.equal(right.length, 1, `right: ${right}`);
+  assert.notEqual(left[0], right[0]);
+  assert.ok(look('dither').some(s => s.length > 1), 'dithered');
+});
+
+test('imgcat -t koala:flat and koala:dither pick the conversion', () => {
+  const file = png(8, 8, 2, 8, Array.from({ length: 8 }, (_, y) => Array.from({ length: 24 }, (_, k) => (k % 3 === 0 ? y * 32 : 90))));
+  for (const type of ['koala:flat', 'multicolour:dither', 'KOALA']) {
+    assert.equal(multicolourPicture(file, { type }).bitmap.length, 8000, type);
+  }
+});
+
 test('imgcat -t koala shows any picture in multicolour; otherwise only Koala files', () => {
   const file = png(16, 8, 2, 8, Array.from({ length: 8 }, () => Array(48).fill(255)));
   assert.equal(multicolourPicture(file, {}), null);
