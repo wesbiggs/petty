@@ -225,6 +225,19 @@ test('hi-res flat art: each colour solid and kept apart; -t dither dithers it', 
   assert.ok(look('dither').some(s => s.length > 1), 'dithered');
 });
 
+test('a blue close to the VIC blue stays blue, not purple', () => {
+  // A logo: blue ring, yellow star, clear around them.
+  const img = { width: 16, height: 16, rgba: new Uint8Array(16 * 16 * 4) };
+  for (let i = 0; i < 256; i++) img.rgba.set(i < 96 ? [0x2f, 0x45, 0x9b, 255] : i < 160 ? [0xf7, 0xb9, 0x14, 255] : [0, 0, 0, 0], i * 4);
+  const seen = new Set();
+  for (const key of toCells(img, {}, 40, 25, 0).keys) cellPixels(imageCell(key)).forEach(c => seen.add(c));
+  assert.deepEqual([...seen].sort((a, b) => a - b), [0, 6, 7], 'black, blue, yellow');
+  const rgba = koalaRGBA(toKoala(img));
+  const shown = new Set();
+  for (let o = 0; o < rgba.length; o += 4) shown.add(VIC_RGB.indexOf(rgba[o] << 16 | rgba[o + 1] << 8 | rgba[o + 2]));
+  assert.ok(shown.has(6) && !shown.has(4), `blue, no purple: ${[...shown]}`);
+});
+
 test('imgcat -t koala:flat and koala:dither pick the conversion', () => {
   const file = png(8, 8, 2, 8, Array.from({ length: 8 }, (_, y) => Array.from({ length: 24 }, (_, k) => (k % 3 === 0 ? y * 32 : 90))));
   for (const type of ['koala:flat', 'multicolour:dither', 'KOALA']) {

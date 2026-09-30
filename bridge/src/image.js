@@ -243,11 +243,11 @@ function resample({ width, height, rgba }, w, h, cw, ch, bg, ox = 0, oy = 0) {
 
 // --- colour matching ----------------------------------------------------------------
 //
-// Colours are compared in CIELAB, with the picture's chroma scaled down: the
-// VIC's colours are muted, so a vivid red should find the VIC's red by its
-// hue, not a brown by its lightness. A picture's colour that is exactly one
-// of the VIC's matches it outright, so the C64's own pictures convert pixel
-// for pixel.
+// Colours are compared in CIELAB, where distances follow what the eye sees
+// better than in RGB. (Scaling the picture's chroma down, to find vivid
+// colours' matches by hue, turned blues purple: the VIC's blue is more
+// saturated than its purple.) A VIC colour is its own nearest, so the C64's
+// own pictures convert pixel for pixel.
 //
 // Flat art (no more than FLAT_COLOURS colours) isn't dithered: each colour
 // maps to one VIC colour across the whole picture, and a cell that needs
@@ -255,23 +255,18 @@ function resample({ width, height, rgba }, w, h, cw, ch, bg, ox = 0, oy = 0) {
 // match. Anything else, such as a photograph, is ordered-dithered where a
 // mix of two colours comes clearly closer than either.
 
-const CHROMA = 0.65; // the picture's chroma, against the palette's
-
-function lab(rgb, chroma = 1) {
+// A colour (0xRRGGBB) as a CIELAB point.
+function lab(rgb) {
   const lin = v => (v /= 255) > 0.04045 ? ((v + 0.055) / 1.055) ** 2.4 : v / 12.92;
   const [r, g, b] = [rgb >> 16, rgb >> 8 & 255, rgb & 255].map(lin);
   const f = t => t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
   const x = f((0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047);
   const y = f(0.2126 * r + 0.7152 * g + 0.0722 * b);
   const z = f((0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883);
-  return [116 * y - 16, 500 * (x - y) * chroma, 200 * (y - z) * chroma];
+  return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
 }
 
-const PAL_LAB = VIC_RGB.map(c => lab(c));
-const VIC_INDEX = new Map(VIC_RGB.map((c, i) => [c, i]));
-
-// A picture's colour (0xRRGGBB) as a point to compare with PAL_LAB.
-const toLab = rgb => (VIC_INDEX.has(rgb) ? PAL_LAB[VIC_INDEX.get(rgb)] : lab(rgb, CHROMA));
+const PAL_LAB = VIC_RGB.map(lab);
 const dist2 = (p, q) => (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2;
 const rgbAt = (rgb, o) => Math.round(rgb[o]) << 16 | Math.round(rgb[o + 1]) << 8 | Math.round(rgb[o + 2]);
 
@@ -354,7 +349,7 @@ function flatPixels(img, list, w, h, cw, ch, ox, oy, order, clear) {
 // the picture's pixels (indexes into list; negative: none).
 function flatCosts(list, px) {
   const n = list.length;
-  const labs = list.map(toLab);
+  const labs = list.map(lab);
   const cost = new Float64Array(n * 16);
   labs.forEach((q, s) => PAL_LAB.forEach((p, c) => { cost[s * 16 + c] = dist2(q, p); }));
   const total = new Float64Array(n);
@@ -492,7 +487,7 @@ export function toCells(img, args, maxCols, maxRows, bg) {
   for (let cy = 0; cy < rows; cy++) {
     for (let cx = 0; cx < cols; cx++) {
       for (let y = 0; y < 8; y++) {
-        for (let x = 0; x < 8; x++) p.set(toLab(rgbAt(rgb, ((cy * 8 + y) * cw + cx * 8 + x) * 3)), (y * 8 + x) * 3);
+        for (let x = 0; x < 8; x++) p.set(lab(rgbAt(rgb, ((cy * 8 + y) * cw + cx * 8 + x) * 3)), (y * 8 + x) * 3);
       }
       keys[cy * cols + cx] = addCell(ditheredCell(p));
     }
@@ -604,7 +599,7 @@ function ditheredKoala(img) {
   for (let y = 0; y < 200; y++) {
     for (let x = 0; x < 160; x++) {
       const k = cellOrder(x, y) * 3;
-      p.set(toLab(rgbAt(rgb, (y * 160 + x) * 3)), k);
+      p.set(lab(rgbAt(rgb, (y * 160 + x) * 3)), k);
       if (x < ox || x >= ox + w || y < oy || y >= oy + h) around.push(k);
     }
   }

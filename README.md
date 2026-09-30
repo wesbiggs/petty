@@ -197,9 +197,8 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
   The bridge reads PNG and the C64's own picture formats, known by their file
   sizes. On the hi-res screen each 8×8 cell has two colours; a picture in
   the terminal gets the two that suit each cell best. Colours are matched in
-  CIELAB with the picture's chroma scaled down, so vivid colours find the
-  VIC's muted ones by hue, and a VIC colour matches itself: a hi-res
-  picture (Doodle, Art Studio) comes out pixel for pixel. Flat art (32
+  CIELAB, and a VIC colour matches itself: a hi-res picture (Doodle, Art
+  Studio) comes out pixel for pixel. Flat art (32
   colours or fewer) isn't dithered: each colour maps to one VIC colour
   across the whole picture, keeping colours that look different apart where
   it can (the bands of a sunset), and a cell that needs more colours than it
