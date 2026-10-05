@@ -29,6 +29,17 @@ export function say(text, voice) {
   }
 }
 
+const commandExists = name => spawnSync('sh', ['-c', `command -v ${name}`], { stdio: 'ignore' }).status === 0;
+
+// With no --tts: macOS `say`, else espeak-ng or espeak where the host has one (Linux), else an error that says
+// what to do. `has` finds a command (a parameter for the tests).
+export function speakDefault(text, voice, has = commandExists) {
+  if (has('say')) return say(text, voice);
+  const espeak = ['espeak-ng', 'espeak'].find(has);
+  if (espeak) return speakWith(`${espeak} ${voice ? `-v '${String(voice).replaceAll("'", '')}' ` : ''}--stdin --stdout`, text);
+  throw new Error("no speech program here: macOS `say` is not available, so use --tts 'COMMAND' (a program that reads text on its standard input and writes a WAV to {out}, like `piper -m voice.onnx -f {out}`), or install espeak-ng");
+}
+
 // Speak `text` with any program that makes a WAV: `command` runs in a shell with the
 // text on its standard input. Where it has `{out}`, that is replaced by the path
 // the program should write the WAV to; with none, the WAV is read from its

@@ -7,14 +7,14 @@ import { Worker } from 'node:worker_threads';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadAudio, prepare, say, speakWith } from './speech.js';
+import { loadAudio, prepare, speakDefault, speakWith } from './speech.js';
 
 // job: { text, voice } | { path } | { data: Buffer }; options: { rate, lut, tts, voice, dsp }
 // -> Float32Array at `rate` Hz.
 export function prepareJob(job, { rate, lut = 'sid6581', tts = null, voice = null, dsp = {} }) {
   let audio;
   if (job.text !== undefined) {
-    audio = tts ? speakWith(tts, job.text) : say(job.text, job.voice ?? voice);
+    audio = tts ? speakWith(tts, job.text) : speakDefault(job.text, job.voice ?? voice);
   } else if (job.path !== undefined) {
     audio = loadAudio(job.path);
   } else if (job.data) {

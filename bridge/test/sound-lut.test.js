@@ -45,3 +45,23 @@ test('calibrate recovers the levels from a noisy AC-coupled recording of the sta
   for (let v = 0; v < 16; v++) assert.ok(Math.abs(r.levels[v] - truth[v]) < 0.03, `level ${v}: ${r.levels[v]} against ${truth[v]}`);
   assert.ok(r.spread < 0.3, `spread ${r.spread}`);
 });
+
+test('speakDefault: say, then espeak-ng, then a message that names --tts', async () => {
+  const { speakDefault } = await import('../src/sound/speech.js');
+  const { writeWav } = await import('../src/sound/wav.js');
+  const { chmodSync } = await import('node:fs');
+  const dir = mkdtempSync(join(tmpdir(), 'espeak-'));
+  const wav = join(dir, 'x.wav');
+  writeFileSync(wav, Buffer.from(writeWav(Float32Array.from({ length: 2205 }, (_, i) => Math.sin(i / 5) * 0.5), 22050)));
+  const fake = join(dir, 'espeak-ng');
+  writeFileSync(fake, `#!/bin/sh\ncat '${wav}'\n`);
+  chmodSync(fake, 0o755);
+  const old = process.env.PATH;
+  process.env.PATH = `${dir}:${old}`;
+  try {
+    const a = speakDefault('hello', null, name => name === 'espeak-ng');
+    assert.equal(a.rate, 22050);
+    assert.ok(a.pcm.length > 2000);
+    assert.throws(() => speakDefault('hello', null, () => false), /--tts/);
+  } finally { process.env.PATH = old; }
+});

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Speech without macOS `say`: falls back to `espeak-ng` or `espeak`, and otherwise says to use `--tts`.
 - `--sound-lut FILE`: a measured output table for the bridge, as well as `sid6581` and `sid8580`.
 - `staircase.prg` (`make build/staircase.prg`, in the release): a standalone program that plays the SID volume staircase, and
   `bridge/scripts/sound-calibrate.js`, which measures a line-in recording of it into a table for `--sound-lut`.

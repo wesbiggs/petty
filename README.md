@@ -251,8 +251,9 @@ They ask the bridge with an escape sequence, **OSC 8347**, so they work over ssh
 `ESC ] 8347 ; say ; <base64 text> [; voice=NAME] BEL`, `play ; <base64 path>` (a file on the bridge's host),
 `data ; <base64 file contents>` (a file sent inline), and `stop` (drops what is queued). A program that cannot run a
 script can print the sequence itself. [bridge/src/sound/manager.js](bridge/src/sound/manager.js) reads them and queues
-the sounds. The speech is made by macOS `say`, or by `--tts 'piper -m voice.onnx -f {out}'` (any program
-that reads text on its standard input and writes a WAV to `{out}`); files are decoded with ffmpeg, in a worker thread, so the terminal carries on meanwhile.
+the sounds. The speech is made by `--tts 'piper -m voice.onnx -f {out}'` (any program
+that reads text on its standard input and writes a WAV to `{out}`, or to its standard output if there is no `{out}`); without `--tts`, by macOS `say`, or on a host
+without it by `espeak-ng` or `espeak` if installed (`say -v NAME` passes the voice to either), and otherwise `say` reports an error that names `--tts`; files are decoded with ffmpeg, in a worker thread, so the terminal carries on meanwhile.
 
 It plays **modally**: the client's screen stays on, still, while the sound plays, and whatever the program prints meanwhile is held in the
 bridge and drawn when the sound ends. RUN/STOP on the C64 stops the sound and drops the queue (stop means stop; the bridge cannot stop a sound that has started,
