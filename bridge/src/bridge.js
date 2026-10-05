@@ -238,9 +238,9 @@ class Connection {
   }
 
   close(why) {
+    clearTimeout(this.ackTimer); // also for a connection that a newer one replaced
     if (conn !== this) return;
     log(`client disconnected (${why})`);
-    clearTimeout(this.ackTimer);
     this.sound?.end?.('closed');
     for (const w of this.ackWaiters.splice(0)) w.reject(new Error('C64 disconnected'));
     conn = null;
@@ -414,6 +414,7 @@ class Connection {
     this.bytesSent += bytes.length;
     debug(`frame ${bytes.length} bytes`);
     this.inFlight = true;
+    clearTimeout(this.ackTimer); // an earlier frame's timer must not fire later
     this.ackTimer = setTimeout(() => {
       (this.timeouts++ ? debug : log)('ACK timeout - forcing full redraw');
       if (this.picture) this.endPicture();

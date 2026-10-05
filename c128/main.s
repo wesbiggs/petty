@@ -19,6 +19,7 @@ MMU_CR      = $FF00             ; $00 = bank 15 with I/O, $01 = character ROM at
 SPEED       = $D030             ; bit 0: 2 MHz
 VIC_CR1     = $D011             ; bit 4: 40-column display on
 VIC_IRR     = $D019
+BORDER      = $D020             ; (sound.inc flashes it while playing)
 CIA1_ICR    = $DC0D
 
 ACIA_DATA   = $DE00
@@ -75,7 +76,8 @@ OP_COLORS   = 6
 OP_CLS      = 7
 OP_FRAME    = 8
 OP_GLYPH    = 11
-NUM_OPS     = 12
+NUM_OPS     = 18                ; 16 and 17 (SOUND, PROBE) are in sound.inc
+SOUND_C128  = 1
 
 MSG_ACK     = 1
 MSG_KEY     = 2
@@ -124,6 +126,7 @@ start:
         jsr init_vdc
         jsr init_font
         jsr init_screen
+        jsr sound_init
         lda #0
         sta rptr
         sta wptr
@@ -170,6 +173,8 @@ optable:
         .word cmdloop-1, op_goto-1, op_color-1, op_put-1, op_repeat-1
         .word op_scroll-1, op_colors-1, op_cls-1, op_frame-1
         .word cmdloop-1, cmdloop-1, op_glyph-1    ; no SPRITE, NOSPRITE here
+        .word cmdloop-1, cmdloop-1, cmdloop-1, op_poke-1
+        .word op_sound-1, op_probe-1
 
 op_goto:
         jsr rb_get
@@ -255,6 +260,24 @@ op_cls:
 op_frame:
         lda #MSG_ACK
         jsr send
+        jmp cmdloop
+
+; POKE lo hi n d1..dn: n bytes (0 = 256) from lo + 256 * hi on (sound's tables).
+op_poke:
+        jsr rb_get
+        sta dst
+        jsr rb_get
+        sta dst+1
+        jsr rb_get
+        sta count
+@loop:  jsr rb_get
+        ldy #0
+        sta (dst),y
+        inc dst
+        bne :+
+        inc dst+1
+:       dec count
+        bne @loop
         jmp cmdloop
 
 ; GLYPH lo hi d0..d7: the first 8 of character lo + 256 * hi's 16 bytes.
@@ -787,4 +810,10 @@ rowhi:
         .byte >(i * COLS)
 .endrep
 
+.macro RX_PENDING target
+        lda rptr
+        cmp wptr
+        bne target
+.endmacro
+.include "sound.inc"
 .include "glyphs.inc"

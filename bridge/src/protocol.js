@@ -64,9 +64,9 @@
 import { IMAGE, imageCell } from './image.js';
 
 export const DISPLAY = {
-  C64: { id: 0, name: 'C64', cols: 40, rows: 25 },
-  C128: { id: 1, name: 'C128 VDC', cols: 80, rows: 25, reverse: true, ext: true },
-  C64_80: { id: 2, name: 'C64 soft-80', cols: 80, rows: 25, pair: true },
+  C64: { id: 0, name: 'C64', cols: 40, rows: 25, sound: true },
+  C128: { id: 1, name: 'C128 VDC', cols: 80, rows: 25, reverse: true, ext: true, sound: true },
+  C64_80: { id: 2, name: 'C64 soft-80', cols: 80, rows: 25, pair: true, sound: true },
   C64_HIRES: { id: 3, name: 'C64 hi-res', cols: 40, rows: 25, hires: true, ext: true, sound: true },
 };
 export const displayById = id => Object.values(DISPLAY).find(d => d.id === id);

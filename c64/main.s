@@ -38,7 +38,7 @@ OP_SCROLL   = 5
 OP_COLORS   = 6
 OP_CLS      = 7
 OP_FRAME    = 8
-NUM_OPS     = 9
+NUM_OPS     = 18                ; 16 and 17 (SOUND, PROBE) are in sound.inc
 
 MSG_ACK     = 1
 MSG_KEY     = 2
@@ -81,6 +81,7 @@ start:
         sei
         jsr init_charset
         jsr init_screen
+        jsr sound_init
         lda #0
         sta rptr
         sta wptr
@@ -113,6 +114,9 @@ cmdloop:
 optable:
         .word cmdloop-1, op_goto-1, op_color-1, op_put-1, op_repeat-1
         .word op_scroll-1, op_colors-1, op_cls-1, op_frame-1
+        .word cmdloop-1, cmdloop-1, cmdloop-1, cmdloop-1
+        .word cmdloop-1, cmdloop-1, op_poke-1
+        .word op_sound-1, op_probe-1
 
 op_goto:
         jsr rb_get
@@ -180,6 +184,24 @@ op_cls:
 op_frame:
         lda #MSG_ACK
         jsr send
+        jmp cmdloop
+
+; POKE lo hi n d1..dn: n bytes (0 = 256) from lo + 256 * hi on (sound's tables).
+op_poke:
+        jsr rb_get
+        sta dst
+        jsr rb_get
+        sta dst+1
+        jsr rb_get
+        sta count
+@loop:  jsr rb_get
+        ldy #0
+        sta (dst),y
+        inc dst
+        bne :+
+        inc dst+1
+:       dec count
+        bne @loop
         jmp cmdloop
 
 ; SCROLL top bot n: rows top..bot move up n, vacated rows cleared.
@@ -493,4 +515,10 @@ rowhi:
         .byte >(SCREEN + i * 40)
 .endrep
 
+.macro RX_PENDING target
+        lda rptr
+        cmp wptr
+        bne target
+.endmacro
+.include "sound.inc"
 .include "glyphs.inc"

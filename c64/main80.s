@@ -62,7 +62,7 @@ OP_CLS      = 7
 OP_FRAME    = 8
 OP_SPRITE   = 9
 OP_NOSPRITE = 10
-NUM_OPS     = 11
+NUM_OPS     = 18                ; 16 and 17 (SOUND, PROBE) are in sound.inc
 
 MSG_ACK     = 1
 MSG_KEY     = 2
@@ -119,6 +119,7 @@ start:
         sei
         jsr init_tables
         jsr init_screen
+        jsr sound_init
         lda #<RBUF
         sta rp
         sta wp
@@ -156,7 +157,9 @@ cmdloop:
 optable:
         .word cmdloop-1, op_goto-1, op_color-1, op_put-1, op_repeat-1
         .word op_scroll-1, op_colors-1, op_cls-1, op_frame-1
-        .word op_sprite-1, op_nosprite-1
+        .word op_sprite-1, op_nosprite-1, cmdloop-1, cmdloop-1
+        .word cmdloop-1, cmdloop-1, op_poke-1
+        .word op_sound-1, op_probe-1
 
 op_goto:
         jsr rb_get
@@ -329,6 +332,24 @@ op_nosprite:
 
 bitmask: .byte $01, $02, $04, $08, $10, $20, $40, $80
 notbit: .byte $FE, $FD, $FB, $F7, $EF, $DF, $BF, $7F
+
+; POKE lo hi n d1..dn: n bytes (0 = 256) from lo + 256 * hi on (sound's tables).
+op_poke:
+        jsr rb_get
+        sta dst
+        jsr rb_get
+        sta dst+1
+        jsr rb_get
+        sta count
+@loop:  jsr rb_get
+        ldy #0
+        sta (dst),y
+        inc dst
+        bne :+
+        inc dst+1
+:       dec count
+        bne @loop
+        jmp cmdloop
 
 ; SCROLL top bot n: rows top..bot move up n, vacated rows cleared. The write
 ; position is unchanged.
@@ -811,4 +832,13 @@ o40hi:
         .byte >(i * 40)
 .endrep
 
+.macro RX_PENDING target
+        lda rp
+        cmp wp
+        bne target
+        lda rp+1
+        cmp wp+1
+        bne target
+.endmacro
+.include "sound.inc"
 .include "font4x8.inc"

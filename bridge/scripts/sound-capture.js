@@ -47,8 +47,9 @@ async function once(delay) {
   });
   await new Promise(r => setTimeout(r, 800));
   rmSync(recording, { force: true });
-  const vice = spawn('x64sc', [
-    '-model', opt.model, '-acia1', '-acia1mode', '1', '-acia1base', '0xDE00', '-acia1irq', '1', '-myaciadev', '0',
+  const c128 = /128/.test(opt.prg); // the C128 client: VICE's x128 with the VDC (80 columns)
+  const vice = spawn(c128 ? 'x128' : 'x64sc', [
+    ...(c128 ? ['-80col'] : ['-model', opt.model]), '-acia1', '-acia1mode', '1', '-acia1base', '0xDE00', '-acia1irq', '1', '-myaciadev', '0',
     '-rsdev1', `127.0.0.1:${opt.port}`, '+rsdev1ip232', '-rsdev1baud', '38400', '-sidmodel', opt.sid,
     '-soundrecdev', 'wav', '-soundrecarg', recording, '+warp', '-autostart', opt.prg,
   ], { stdio: 'ignore' });

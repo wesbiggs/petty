@@ -21,7 +21,12 @@
 ; client has thrown away what the bridge still had in flight); otherwise it
 ; ends with MSG_DONE. MSG_CREDIT: one byte of codes taken from the buffer.
 ;
-; Needs from the client: send, rb_get, rp/wp and the 16-bit receive ring.
+; The C128 client (c128/main.s, SOUND_C128 defined) plays at 1 MHz with every ROM out (the
+; buffer and tables are at $CD00-$CFFF, under the editor ROM), and with its VIC
+; display already blank there are no badlines to lock to: the raster slide is skipped.
+;
+; Needs from the client: send, rb_get, cmdloop, ACIA_*, BORDER, and a macro RX_PENDING
+; (branch to its argument if the receive ring is not empty), defined before this is included.
 
 OP_SOUND    = 16
 OP_PROBE    = 17
@@ -39,6 +44,7 @@ OUTTAB      = $CD00
 SID         = $D400
 SID_VOL     = $D418
 VIC_RASTER  = $D012
+VIC_SPRITES = $D015
 CIA1_KBD    = $DC00
 CIA1_KBDIN  = $DC01
 CIA1_TBLO   = $DC06             ; (PROBE counts frames with CIA 1's timer B)
@@ -72,6 +78,7 @@ slc         = $3F               ; 0: 63-cycle lines, 1: 65
 sborder     = $40               ; the border colour, put back after
 stmp        = $41
 tbprev      = $42               ; the last count of timer B
+sspr        = $43               ; the sprites that were on
 
 ; --- start-up -----------------------------------------------------------------
 
@@ -100,7 +107,19 @@ sound_init:
         tax
         cpx #21
         bne :-
+.ifdef SOUND_C128
+        lda #<snd_rti           ; with the ROMs out an NMI (RESTORE) would read its vector from RAM
+        sta $FFFA
+        sta $FFFE
+        lda #>snd_rti
+        sta $FFFB
+        sta $FFFF
+.endif
         rts
+.ifdef SOUND_C128
+snd_rti:
+        rti
+.endif
 
 ; --- PROBE --------------------------------------------------------------------
 
@@ -108,6 +127,10 @@ sound_init:
 ; raster line: about 19656 on PAL, 17095 on NTSC, 20280 on PAL-N.
 op_probe:
         sei
+.ifdef SOUND_C128
+        lda #0                  ; 1 MHz
+        sta SPEED
+.endif
         lda #$FF                ; timer B counts down from $FFFF
         sta CIA1_TBLO
         sta CIA1_TBHI
@@ -135,6 +158,10 @@ op_probe:
         eor #$FF
         tax
         cli
+.ifdef SOUND_C128
+        lda #1
+        sta SPEED
+.endif
         lda #MSG_PROBE
         jsr send
         txa
@@ -189,12 +216,7 @@ op_sound:
         sbc arp
         cmp need
         bcs @go
-        lda rp
-        cmp wp
-        bne @ring
-        lda rp+1
-        cmp wp+1
-        bne @ring
+        RX_PENDING @ring        ; the client's macro: branch if its receive ring holds a byte
         lda ACIA_STATUS
         and #$08
         beq @fill
@@ -223,25 +245,6 @@ op_sound:
         lda #MSG_ABORT
         jsr send
         jmp cmdloop
-
-; What the client's NMI does with a byte, for a byte the ACIA holds while its
-; interrupt is off. Clobbers A, Y.
-rx_to_ring:
-        lda ACIA_STATUS
-        and #$08
-        beq @out
-        lda ACIA_DATA
-        ldy #0
-        sta (wp),y
-        inc wp
-        bne @out
-        inc wp+1
-        lda wp+1
-        cmp #>RBUF_END
-        bne @out
-        lda #>RBUF
-        sta wp+1
-@out:   rts
 
 ; After a stop: wait for RUN/STOP to be let go (or it would reach the program
 ; as a keypress), then throw away what the bridge had in flight until the line
@@ -282,10 +285,20 @@ sound_timers_off:
 ; stopped with RUN/STOP.
 sound_play:
         sei
+.ifdef SOUND_C128
+        lda #0                  ; 1 MHz
+        sta SPEED
+        lda #$3E                ; I/O, but RAM instead of every ROM
+        sta MMU_CR
+.endif
         lda BORDER
         sta sborder
         lda #5
         sta BORDER
+        lda VIC_SPRITES         ; sprite DMA would steal cycles from the loop
+        sta sspr
+        lda #0
+        sta VIC_SPRITES
         lda #8                  ; the middle level, so the first sample is no big step
         sta SID_VOL
         lda #$7F                ; CIA 2 raises no NMIs (the ACIA's line)
@@ -303,6 +316,7 @@ sound_play:
 :       lda VIC_RASTER          ; line $F9: below the display, no badline
         cmp #$F9
         bne :-
+.ifndef SOUND_C128
         lda slc
         bne :+
         jsr slide63
@@ -312,7 +326,9 @@ sound_play:
         beq :++
 :       dex
         bne :-
-:       lda #%01010001          ; timer B, counting A's underflows; force load, start
+:
+.endif
+        lda #%01010001          ; timer B, counting A's underflows; force load, start
         sta CIA2_CRB
         lda #%00010001          ; and timer A: this write is the phase of every sample
         sta CIA2_CRA
@@ -492,6 +508,14 @@ sound_stream:
         jsr sound_timers_off
         lda sborder
         sta BORDER
+        lda sspr
+        sta VIC_SPRITES
+.ifdef SOUND_C128
+        lda #0                  ; the ROMs back, and 2 MHz
+        sta MMU_CR
+        lda #1
+        sta SPEED
+.endif
         cli
         pla
         rts

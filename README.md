@@ -236,7 +236,7 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
   node bridge/scripts/prg2pic.js picture_exe.prg      # writes picture_exe.koa (or .dd)
   ```
 
-## Sound (hi-res C64)
+## Sound (the C64 and C128 clients)
 
 A program in the terminal can speak, or play music, through the C64's SID, with `say` and `play`. The bridge
 puts [bridge/bin/sound](bridge/bin/sound) first in the program's PATH (`--sound off` leaves it out), so inside PETTY these are the commands you get:
@@ -264,8 +264,13 @@ and streams them at about 2 KB/s of the link's 3.8; the C64 plays them by writin
 (a sample every two raster lines), polling the serial link in the same loop. A flow-control byte
 for each byte taken keeps the C64's 256-byte buffer from overflowing, as a SwiftLink has no handshake. Three SID voices are held at a DC level so the volume steps have
 something to scale. The bridge asks the client what machine it is when it says hello (PAL or NTSC, from the length of a video frame) and times the samples to match.
-The client's code is [c64/sound.inc](c64/sound.inc): it is in the hi-res client only for now (the others ignore SOUND, and the bridge
-does not send it to them).
+The client's code is [c64/sound.inc](c64/sound.inc), included by all four clients: text, soft 80-column, hi-res and C128 (each
+supplies `RX_PENDING`, a macro that tests its receive ring, and POKE, which loads the tables). Each plays modally, and
+scored 9-10 dB speech-band SNR against the speech in VICE (old CIA, PAL). The text, soft 80 and hi-res clients keep the
+display on and lock the samples to the raster. The C128 client has nothing to lock to (its 40-column VIC is blank, the VDC
+shows the screen), so it drops to 1 MHz, swaps every ROM for RAM so the buffer and tables can sit at $CD00-$CFFF,
+puts an `rti` in the NMI and IRQ vectors for the while, and goes back to 2 MHz after. Its SID is usually an 8580:
+`--sound-lut sid8580`. Sprites are switched off while a sound plays (their DMA would steal cycles).
 
 Things the port taught, which are in the code:
 - **The tick is a counter, not a flag.** CIA 2's timer A sets the sample period and its timer B counts A's underflows; a sample starts when B changes.
@@ -289,7 +294,7 @@ See [bridge/src/protocol.js](bridge/src/protocol.js). Host→C64 opcodes are GOT
 COLOR, PUT, REPEAT, SCROLL, COLORS, CLS and FRAME, plus SPRITE and NOSPRITE for
 the soft 80-column screen, GLYPH for the hi-res one and the C128, and
 UNDERLINE, BITS (cells of a picture, as raw pixels), VIEW (full-screen
-multicolour pictures), POKE (to load them), and SOUND and PROBE (see [Sound](#sound-hi-res-c64)) for the hi-res one.
+multicolour pictures), POKE (to load them), and SOUND and PROBE (see [Sound](#sound-the-c64-and-c128-clients)), which every client has.
 Every frame ends with FRAME and
 the C64 answers ACK. The bridge keeps only one frame in flight, so fast output
 merges into fewer frames instead of overflowing the client's receive buffer (256
@@ -344,7 +349,7 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `c64/petty80.cfg` | linker config (program must end below `$2000`) |
 | `c64/mainhires.s` | hi-res 40-column C64 client |
 | `c64/pettyhires.cfg` | linker config (program must end below `$2000`) |
-| `c64/sound.inc` | sound for the hi-res client: SOUND and PROBE, the 2-bit decoder and the playback loop |
+| `c64/sound.inc` | sound for all the clients: SOUND and PROBE, the 2-bit decoder and the playback loop |
 | `c128/main.s` | C128 client: the same, drawing on the VDC at 2 MHz |
 | `c128/petty128.cfg` | linker config (program must end below `$3800`) |
 | `c64/dial.inc` | the dial step, included by all four clients |

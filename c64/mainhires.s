@@ -781,5 +781,13 @@ o40hi:
         .byte >(i * 40)
 .endrep
 
+.macro RX_PENDING target
+        lda rp
+        cmp wp
+        bne target
+        lda rp+1
+        cmp wp+1
+        bne target
+.endmacro
 .include "sound.inc"
 .include "glyphs.inc"
