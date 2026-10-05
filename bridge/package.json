@@ -1,6 +1,6 @@
 {
   "name": "petty-bridge",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Host-side bridge for the PETTY C64 terminal",
   "directories": {
     "test": "test"

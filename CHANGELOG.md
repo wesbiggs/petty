@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.1
 
 - Speech without macOS `say`: falls back to `espeak-ng` or `espeak`, and otherwise says to use `--tts`.
 - `--sound-lut FILE`: a measured output table for the bridge, as well as `sid6581` and `sid8580`.
