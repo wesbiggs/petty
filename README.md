@@ -274,6 +274,18 @@ puts an `rti` in the NMI and IRQ vectors for the while, and goes back to 2 MHz a
 
 The measurements and what was tried and dropped are in [docs/sound.md](docs/sound.md).
 
+**Calibrating a real SID.** Chips differ, and the output tables are measured from VICE's. `make build/staircase.prg`
+(also in the release) is a standalone program, not a client, that steps the volume through 0-15 and back for two seconds. Run it, record
+the C64's audio output with a line-in (a microphone hears the room, and many recorders compress), and measure the recording:
+
+```bash
+node bridge/scripts/sound-calibrate.js recording.wav --json my-sid.json     # --ntsc on an NTSC machine
+node bridge/src/bridge.js --sound-lut my-sid.json
+```
+
+The recording's gain does not matter, but a compressor or a clipped recording would. It prints how far its four measurements of each
+step differ (a few percent when clean). The table is used only by the bridge: the C64 needs nothing new.
+
 Things the port taught, which are in the code:
 - **The tick is a counter, not a flag.** CIA 2's timer A sets the sample period and its timer B counts A's underflows; a sample starts when B changes.
   Polling the interrupt flag register (as petty-d418's first version did) loses ticks on the old 6526 CIA that breadbin C64s have, which VICE's
@@ -287,7 +299,7 @@ Measured in VICE (`node bridge/scripts/sound-capture.js`, which plays a sentence
 9.5 dB against the speech itself (the 2-bit code and the noise weight cost the rest), on PAL and NTSC machines, with the old and the new CIA. Not tested: RUN/STOP, a real SwiftLink, a real machine,
 and the soft 80-column and text clients (they have no sound).
 
-Options: `--tts`, `--voice`, `--sound-weight`, `--sound-lut` (the SID's output table: `sid6581`, `sid8580`), `--sound-delay`, `--sound-out FILE` (write what it played, to compare), `--sound off`.
+Options: `--tts`, `--voice`, `--sound-weight`, `--sound-lut` (the SID's output table: `sid6581`, `sid8580`, or a JSON file measured from your machine, below), `--sound-delay`, `--sound-out FILE` (write what it played, to compare), `--sound off`.
 The control port takes `say TEXT` and `play FILE` (`node bridge/scripts/petty-ctl.js say hello`).
 
 ## Protocol
@@ -351,6 +363,7 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `c64/petty80.cfg` | linker config (program must end below `$2000`) |
 | `c64/mainhires.s` | hi-res 40-column C64 client |
 | `c64/pettyhires.cfg` | linker config (program must end below `$2000`) |
+| `c64/staircase.s` | standalone program for calibrating a real SID (`make build/staircase.prg`) |
 | `c64/sound.inc` | sound for all the clients: SOUND and PROBE, the 2-bit decoder and the playback loop |
 | `c128/main.s` | C128 client: the same, drawing on the VDC at 2 MHz |
 | `c128/petty128.cfg` | linker config (program must end below `$3800`) |
@@ -443,5 +456,5 @@ CI (`.github/workflows/ci.yml`) runs the tests, builds the four clients and
 checks that `bridge/title.ans` and the generated includes are up to date. A `v*` tag
 runs it again, then `release.yml` checks the tag against the version and
 publishes a GitHub release with the `.prg` files, a zip of them, a `.d64`
-disk image holding all four, and the bridge as `petty-bridge-<tag>.tar.gz`
+disk image holding all four and `staircase`, and the bridge as `petty-bridge-<tag>.tar.gz`
 (without `node_modules`: unpack it, `npm ci`, then `node src/bridge.js`).

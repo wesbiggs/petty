@@ -14,7 +14,6 @@
 // plays.
 
 import { statSync, writeFileSync } from 'node:fs';
-import { LUTS } from './dsp.js';
 import { lineTimer } from './timing.js';
 import { prepareInWorker } from './prepare.js';
 import { MAX_SOUND_BYTES, playOnC64, previewOf } from './session.js';
@@ -101,7 +100,7 @@ export class SoundManager {
     const region = conn.region;
     if (region.lineCycles !== 63 && region.lineCycles !== 65) throw new Error(`${region.name} machines (${region.lineCycles}-cycle raster lines) are not supported`);
     const { latch, rate } = lineTimer(2, region.lineCycles, region.cpuHz);
-    const lut = LUTS[this.o.lut];
+    const lut = this.o.lut; // the 16 levels (lut.js)
     // The slow part (a TTS program, ffmpeg, resampling) while the terminal carries on.
     const signal = await prepareInWorker(job, { rate, lut: this.o.lut, tts: this.o.tts, voice: this.o.voice });
     if (signal.length < 4) throw new Error('nothing to play');

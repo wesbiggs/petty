@@ -12,6 +12,7 @@ import { parseArgs } from 'node:util';
 import pty from 'node-pty';
 import xterm from '@xterm/headless';
 import { DISPLAY, MSG, OP, VIEW, displayById, encodeFrame, encodeReset, encodePicture } from './protocol.js';
+import { loadLut } from './sound/lut.js';
 import { SoundManager } from './sound/manager.js';
 import { classifyRegion } from './sound/probe.js';
 import { snapshot, paletteFor, cursorVisible } from './screen.js';
@@ -95,6 +96,8 @@ let panX = 0, panY = 0;
 // Changed by C=+F1 or the control port (scripts/petty-ctl.js).
 let theme = opt.theme;
 
+let soundLut;
+try { soundLut = loadLut(opt['sound-lut']); } catch (e) { console.error(`[bridge] ${e.message}`); process.exit(1); }
 const soundOn = opt.sound !== 'off';
 if (!['on', 'off'].includes(opt.sound)) { console.error('[bridge] --sound on or off'); process.exit(1); }
 
@@ -204,7 +207,7 @@ const sound = new SoundManager({
   log, debug, enabled: soundOn,
   tts: opt.tts, voice: opt.voice,
   weight: opt['sound-weight'].split(',').filter(Boolean).map(Number),
-  lut: opt['sound-lut'], out: opt['sound-out'],
+  lut: soundLut, out: opt['sound-out'],
   delay: opt['sound-delay'] === undefined ? undefined : Number(opt['sound-delay']),
   getConn: () => conn,
   redraw: () => { dirty = true; },

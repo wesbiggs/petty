@@ -30,7 +30,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y cc65 vice
 
       - name: Build clients
-        run: make
+        run: make && make build/staircase.prg
 
       - name: Package
         run: |
@@ -41,7 +41,8 @@ jobs:
             -write build/petty.prg petty \
             -write build/pettyhires.prg pettyhires \
             -write build/petty80.prg petty80 \
-            -write build/petty128.prg petty128
+            -write build/petty128.prg petty128 \
+            -write build/staircase.prg staircase
           (cd dist && zip "petty-$v-prg.zip" *.prg)
           # The bridge, without node_modules: node-pty is built by npm ci
           # on the host that runs it.

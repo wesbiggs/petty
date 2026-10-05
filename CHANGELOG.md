@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- `--sound-lut FILE`: a measured output table for the bridge, as well as `sid6581` and `sid8580`.
+- `staircase.prg` (`make build/staircase.prg`, in the release): a standalone program that plays the SID volume staircase, and
+  `bridge/scripts/sound-calibrate.js`, which measures a line-in recording of it into a table for `--sound-lut`.
+- `docs/sound.md`: the measurements and dead ends behind the sound.
+
 ## 0.10.0
 
 Sound: programs in the terminal can speak and play music through the SID.

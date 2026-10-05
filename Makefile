@@ -54,6 +54,12 @@ $(BUILD)/mainhires.o: c64/mainhires.s c64/glyphs.inc c64/sound.inc c64/dial.inc 
 $(PRGHI): $(BUILD)/mainhires.o c64/pettyhires.cfg
 	ld65 -C c64/pettyhires.cfg -m $(BUILD)/pettyhires.map -o $@ $(BUILD)/mainhires.o
 
+# A standalone program, not one of the clients: plays the staircase for
+# bridge/scripts/sound-calibrate.js (make build/staircase.prg).
+$(BUILD)/staircase.prg: c64/staircase.s c64/staircase.cfg | $(BUILD)
+	ca65 -l $(BUILD)/staircase.lst -o $(BUILD)/staircase.o c64/staircase.s
+	ld65 -C c64/staircase.cfg -m $(BUILD)/staircase.map -o $@ $(BUILD)/staircase.o
+
 $(BUILD):
 	mkdir -p $@
 

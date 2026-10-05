@@ -90,7 +90,7 @@ export function prepare({ rate: srcRate, pcm }, rate, options = {}) {
   let x = resample(pcm, srcRate, rate, o.bandwidth * rate);
   if (o.emphasis) x = preEmphasis(x, o.emphasis);
   x = compress(x, rate, { amount: o.compress });
-  const lut = LUTS[o.lut];
+  const lut = Array.isArray(o.lut) ? o.lut : LUTS[o.lut];
   if (!lut) throw new Error(`unknown lut ${o.lut}`);
   const nibbles = quantize4(x, { lut, shape: o.shape, dither: o.dither });
   return { nibbles, preview: reconstruct(nibbles, lut), target: x };
