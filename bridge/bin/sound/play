@@ -1,0 +1,43 @@
+#!/bin/sh
+# play: play audio files on the C64. PETTY's bridge puts this directory first in
+# the PATH of the program it runs. It asks the bridge with OSC 8347. By default
+# it sends the file's path, which the bridge reads on its own host; over ssh (or
+# with -i) it sends the file's contents instead, which any bridge can play.
+# Anything ffmpeg reads works: mp3, wav, m4a, flac...
+#
+# usage: play [-i] file...
+#        play --stop        drop what is queued (the current one: RUN/STOP on the C64)
+
+usage() {
+  echo "usage: play [-i] file..." >&2
+  exit 2
+}
+
+emit() { { printf '%s' "$1" > /dev/tty; } 2>/dev/null || printf '%s' "$1"; }
+
+inline=
+[ -n "$SSH_CONNECTION$SSH_TTY" ] && inline=1
+case ${1-} in
+  --stop) emit "$(printf '\033]8347;stop\007')"; exit 0 ;;
+  -i) inline=1; shift ;;
+  -*) usage ;;
+esac
+[ $# -gt 0 ] || usage
+
+status=0
+for f in "$@"; do
+  if [ ! -r "$f" ]; then
+    echo "play: cannot read $f" >&2
+    status=1
+    continue
+  fi
+  if [ -n "$inline" ]; then
+    b64=$(base64 < "$f" | tr -d '\n')
+    emit "$(printf '\033]8347;data;%s\007' "$b64")"
+  else
+    case $f in /*) path=$f ;; *) path=$PWD/$f ;; esac
+    b64=$(printf '%s' "$path" | base64 | tr -d '\n')
+    emit "$(printf '\033]8347;play;%s\007' "$b64")"
+  fi
+done
+exit $status

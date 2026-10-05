@@ -3,6 +3,7 @@
 // bridge's --port + 1) and prints the reply.
 //   node bridge/scripts/petty-ctl.js theme            current theme and the choices
 //   node bridge/scripts/petty-ctl.js theme amber      switch theme (or next / prev)
+//   node bridge/scripts/petty-ctl.js say hello world  speak on the C64 (hi-res client); play FILE plays a file
 
 import net from 'node:net';
 import { parseArgs } from 'node:util';

@@ -48,7 +48,7 @@ $(BUILD)/main80.o: c64/main80.s c64/font4x8.inc c64/dial.inc $(DIALSTR) | $(BUIL
 $(PRG80): $(BUILD)/main80.o c64/petty80.cfg
 	ld65 -C c64/petty80.cfg -m $(BUILD)/petty80.map -o $@ $(BUILD)/main80.o
 
-$(BUILD)/mainhires.o: c64/mainhires.s c64/glyphs.inc c64/dial.inc $(DIALSTR) | $(BUILD)
+$(BUILD)/mainhires.o: c64/mainhires.s c64/glyphs.inc c64/sound.inc c64/dial.inc $(DIALSTR) | $(BUILD)
 	ca65 -I c64 -I $(BUILD) -l $(BUILD)/mainhires.lst -o $@ c64/mainhires.s
 
 $(PRGHI): $(BUILD)/mainhires.o c64/pettyhires.cfg

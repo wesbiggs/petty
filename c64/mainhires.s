@@ -10,7 +10,7 @@
 ;
 ; Memory (the VIC uses its second bank, $4000-$7FFF): font $4000-$47FF, cell
 ; colours $5C00, bitmap $6000-$7F3F, receive ring $8000-$8FFF (4K: a bitmap
-; scroll takes ~90 ms).
+; scroll takes ~90 ms). Sound (sound.inc) keeps its buffer and tables at $CD00-$CFFF.
 
 ; --- hardware ---------------------------------------------------------------
 FONT        = $4000             ; 8 pages: row r of screen code c at FONT + r*256 + c
@@ -59,7 +59,7 @@ OP_UNDERLINE = 12
 OP_BITS     = 13
 OP_VIEW     = 14
 OP_POKE     = 15
-NUM_OPS     = 16
+NUM_OPS     = 18                ; 16 and 17 (SOUND, PROBE) are in sound.inc
 
 VIEW_TERMINAL = 0
 VIEW_LOAD   = 1
@@ -112,6 +112,7 @@ start:
         sei
         jsr init_font
         jsr init_screen
+        jsr sound_init
         lda #<RBUF
         sta rp
         sta wp
@@ -151,6 +152,7 @@ optable:
         .word op_scroll-1, op_colors-1, op_cls-1, op_frame-1
         .word op_sprite-1, op_nosprite-1, op_glyph-1, op_underline-1
         .word op_bits-1, op_view-1, op_poke-1
+        .word op_sound-1, op_probe-1
 
 op_goto:
         jsr rb_get
@@ -779,4 +781,5 @@ o40hi:
         .byte >(i * 40)
 .endrep
 
+.include "sound.inc"
 .include "glyphs.inc"

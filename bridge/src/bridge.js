@@ -12,6 +12,8 @@ import { parseArgs } from 'node:util';
 import pty from 'node-pty';
 import xterm from '@xterm/headless';
 import { DISPLAY, MSG, OP, VIEW, displayById, encodeFrame, encodeReset, encodePicture } from './protocol.js';
+import { SoundManager } from './sound/manager.js';
+import { classifyRegion } from './sound/probe.js';
 import { snapshot, paletteFor, cursorVisible } from './screen.js';
 import { THEME_NAMES, stepTheme, oscReply } from './colors.js';
 import { keyToBytes, MATRIX } from './keymap.js';
@@ -33,6 +35,13 @@ const { values: opt, positionals } = parseArgs({
     rows: { type: 'string' },
     scroll: { type: 'string', default: '1' },
     title: { type: 'string', default: fileURLToPath(new URL('../title.ans', import.meta.url)) },
+    sound: { type: 'string', default: 'on' },
+    tts: { type: 'string' },
+    voice: { type: 'string' },
+    'sound-weight': { type: 'string', default: '-0.6' },
+    'sound-lut': { type: 'string', default: 'sid6581' },
+    'sound-delay': { type: 'string' },
+    'sound-out': { type: 'string' },
     verbose: { type: 'boolean', short: 'v', default: false },
   },
 });
@@ -58,6 +67,7 @@ const TITLE_MS = 4000; // how long the start screen shows, unless a key is press
 const TITLE_COLS = 40;
 const IMAGE_FRAME_BYTES = 2048; // hi-res frames split up past this (images), so keys stay responsive
 const BIN = fileURLToPath(new URL('../bin', import.meta.url)); // imgcat, a fallback at the end of the program's PATH
+const SOUND_BIN = fileURLToPath(new URL('../bin/sound', import.meta.url)); // say and play, which come first: they speak on the C64
 
 // The start screen (bridge/title.ans, from scripts/gen-title.js), shown when a client
 // first connects, before the program starts. --title none: no start screen.
@@ -85,6 +95,9 @@ let panX = 0, panY = 0;
 // Changed by C=+F1 or the control port (scripts/petty-ctl.js).
 let theme = opt.theme;
 
+const soundOn = opt.sound !== 'off';
+if (!['on', 'off'].includes(opt.sound)) { console.error('[bridge] --sound on or off'); process.exit(1); }
+
 const clamp = (n, max) => Math.min(max, Math.max(0, n));
 const log = (...a) => console.error('[bridge]', ...a);
 const debug = (...a) => opt.verbose && log(...a);
@@ -111,7 +124,11 @@ function spawn() {
     cols: termCols(),
     rows: termRows(),
     cwd: process.cwd(),
-    env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', PATH: `${process.env.PATH}:${BIN}` },
+    env: {
+      ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor',
+      PATH: `${soundOn ? `${SOUND_BIN}:` : ''}${process.env.PATH}:${BIN}`,
+      ...(soundOn ? { PETTY_SOUND: '1' } : {}),
+    },
   });
   proc.onData(d => term.write(d));
   proc.onExit(({ exitCode }) => {
@@ -181,6 +198,19 @@ const images = new InlineImages(term, () => {
 });
 term.parser.registerOscHandler(1337, data => images.osc(data));
 
+// Sound: say and play (bridge/bin/sound) ask for it with OSC 8347; see sound/manager.js. The C64 plays
+// it modally, the screen still, and whatever the program prints meanwhile is drawn after.
+const sound = new SoundManager({
+  log, debug, enabled: soundOn,
+  tts: opt.tts, voice: opt.voice,
+  weight: opt['sound-weight'].split(',').filter(Boolean).map(Number),
+  lut: opt['sound-lut'], out: opt['sound-out'],
+  delay: opt['sound-delay'] === undefined ? undefined : Number(opt['sound-delay']),
+  getConn: () => conn,
+  redraw: () => { dirty = true; },
+});
+term.parser.registerOscHandler(8347, data => sound.osc(data));
+
 // --- C64 connection ----------------------------------------------------------
 
 let conn = null;
@@ -196,6 +226,11 @@ class Connection {
     this.timeouts = 0; // in a row: a serial line has nobody on it until the C64 starts
     this.picture = null; // frames of a full-screen picture still to send, while it shows
     this.restore = false; // back from a picture: switch to the terminal screen
+    this.since = Date.now();
+    this.hasSound = false; // the client can play sound (its display says so)
+    this.region = null; // PAL or NTSC, from PROBE
+    this.sound = null; // while a sound plays: { credits, onCredit, end }; the screen waits
+    this.ackWaiters = []; // callbacks for the next ACK (sendAndWait)
     sock.setNoDelay?.(true);
     sock.on('data', d => this.onData(d));
     sock.on('close', () => this.close('closed'));
@@ -206,6 +241,8 @@ class Connection {
     if (conn !== this) return;
     log(`client disconnected (${why})`);
     clearTimeout(this.ackTimer);
+    this.sound?.end?.('closed');
+    for (const w of this.ackWaiters.splice(0)) w.reject(new Error('C64 disconnected'));
     conn = null;
   }
 
@@ -218,6 +255,19 @@ class Connection {
         this.inFlight = false;
         this.timeouts = 0;
         clearTimeout(this.ackTimer);
+        for (const w of this.ackWaiters.splice(0)) w.resolve();
+      } else if (type === MSG.CREDIT) {
+        this.rx.shift(); // thousands a second while a sound plays: no log
+        if (this.sound) { this.sound.credits++; this.sound.onCredit?.(); }
+      } else if (type === MSG.DONE || type === MSG.ABORT) {
+        this.rx.shift();
+        debug(type === MSG.DONE ? 'sound done' : 'sound stopped on the C64');
+        this.sound?.end?.(type === MSG.DONE ? 'done' : 'abort');
+      } else if (type === MSG.PROBE) {
+        if (this.rx.length < 3) return;
+        const [, lo, hi] = this.rx.splice(0, 3);
+        this.region = classifyRegion(lo | hi << 8);
+        log(`C64 is ${this.region.name} (${lo | hi << 8} cycles a frame)`);
       } else if (type === MSG.HELLO || type === MSG.HELLO_ON) {
         if (type === MSG.HELLO_ON && this.rx.length < 2) return;
         const [, id = DISPLAY.C64.id] = this.rx.splice(0, type === MSG.HELLO ? 1 : 2);
@@ -225,6 +275,11 @@ class Connection {
         if (!d) log(`unknown display ${id}, assuming C64`);
         log(`${(d ?? DISPLAY.C64).name} says hello`);
         setDisplay(d ?? DISPLAY.C64);
+        this.sound?.end?.('closed'); // the client restarted
+        this.hasSound = soundOn && !!display.sound;
+        this.region = null;
+        this.since = Date.now();
+        if (this.hasSound) this.sock.write(Buffer.from([OP.PROBE]));
         if (holding) showTitle();
         this.state = null;
         this.picture = null;
@@ -340,6 +395,20 @@ class Connection {
     dirty = true;
   }
 
+  // A frame, and resolves on its ACK. (Rejects if the C64 goes away; if the ACK does not come, the
+  // timeout below asks for a full redraw and this carries on: the C64 is not stuck on that.)
+  sendAndWait(bytes) {
+    return new Promise((resolve, reject) => {
+      this.ackWaiters.push({ resolve, reject });
+      this.send(bytes);
+    });
+  }
+
+  // Resolves when no frame is in flight.
+  async idle() {
+    while (this.inFlight) await new Promise(r => setTimeout(r, 10));
+  }
+
   send(bytes) {
     this.sock.write(Buffer.from(bytes));
     this.bytesSent += bytes.length;
@@ -351,12 +420,13 @@ class Connection {
       this.state = null;
       this.inFlight = false;
       dirty = true;
+      for (const w of this.ackWaiters.splice(0)) w.resolve();
     }, ACK_TIMEOUT_MS);
   }
 }
 
 function tick() {
-  if (!conn || conn.inFlight) return;
+  if (!conn || conn.inFlight || conn.sound) return; // a sound holds the screen
   if (conn.picture) return conn.sendPicture();
   if (!dirty) return;
   if (term.modes.synchronizedOutputMode) {
@@ -411,7 +481,10 @@ if (opt.serial) {
 // --- control port: one command per line, one reply line each -------------
 
 function control(line) {
-  const [cmd, arg] = line.trim().split(/\s+/);
+  const [cmd, ...words] = line.trim().split(/\s+/);
+  const arg = words[0];
+  if (cmd === 'say') return sound.add({ text: words.join(' ') }), 'queued';
+  if (cmd === 'play') return sound.add({ path: words.join(' ') }), 'queued';
   if (cmd === 'theme') {
     if (!arg) return `${theme} (${THEME_NAMES.join(', ')})`;
     const name = arg === 'next' ? stepTheme(theme, 1) : arg === 'prev' ? stepTheme(theme, -1) : arg;
@@ -419,7 +492,7 @@ function control(line) {
     setTheme(name);
     return theme;
   }
-  return `error: unknown command ${cmd}: use theme [name|next|prev]`;
+  return `error: unknown command ${cmd}: use theme [name|next|prev], say TEXT or play FILE`;
 }
 
 net.createServer(sock => {

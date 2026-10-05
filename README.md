@@ -236,18 +236,65 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
   node bridge/scripts/prg2pic.js picture_exe.prg      # writes picture_exe.koa (or .dd)
   ```
 
+## Sound (hi-res C64)
+
+A program in the terminal can speak, or play music, through the C64's SID, with `say` and `play`. The bridge
+puts [bridge/bin/sound](bridge/bin/sound) first in the program's PATH (`--sound off` leaves it out), so inside PETTY these are the commands you get:
+
+```bash
+say "Build finished"             # speaks it; also: echo text | say, say -f notes.txt, say -v Fred hello
+play song.mp3 other.wav          # any file ffmpeg reads
+play -i song.mp3                 # sends the file itself, for a program on another host (over ssh this is automatic)
+```
+
+They ask the bridge with an escape sequence, **OSC 8347**, so they work over ssh too:
+`ESC ] 8347 ; say ; <base64 text> [; voice=NAME] BEL`, `play ; <base64 path>` (a file on the bridge's host),
+`data ; <base64 file contents>` (a file sent inline), and `stop` (drops what is queued). A program that cannot run a
+script can print the sequence itself. [bridge/src/sound/manager.js](bridge/src/sound/manager.js) reads them and queues
+the sounds. The speech is made by macOS `say`, or by `--tts 'piper -m voice.onnx -f {out}'` (any program
+that reads text on its standard input and writes a WAV to `{out}`); files are decoded with ffmpeg, in a worker thread, so the terminal carries on meanwhile.
+
+It plays **modally**: the client's screen stays on, still, while the sound plays, and whatever the program prints meanwhile is held in the
+bridge and drawn when the sound ends. RUN/STOP on the C64 stops the sound and drops the queue (stop means stop; the bridge cannot stop a sound that has started,
+because the C64 is not listening for commands while it plays).
+
+How it works is in [petty-d418](https://github.com/wesbiggs/petty-d418), which this is a port of. The bridge turns the audio into 2-bit codes
+(an adaptive delta code found by a Viterbi search, with the noise pushed down in frequency under the signal: `--sound-weight -0.6`),
+and streams them at about 2 KB/s of the link's 3.8; the C64 plays them by writing the SID's volume register 7.8 thousand times a second
+(a sample every two raster lines), polling the serial link in the same loop. A flow-control byte
+for each byte taken keeps the C64's 256-byte buffer from overflowing, as a SwiftLink has no handshake. Three SID voices are held at a DC level so the volume steps have
+something to scale. The bridge asks the client what machine it is when it says hello (PAL or NTSC, from the length of a video frame) and times the samples to match.
+The client's code is [c64/sound.inc](c64/sound.inc): it is in the hi-res client only for now (the others ignore SOUND, and the bridge
+does not send it to them).
+
+Things the port taught, which are in the code:
+- **The tick is a counter, not a flag.** CIA 2's timer A sets the sample period and its timer B counts A's underflows; a sample starts when B changes.
+  Polling the interrupt flag register (as petty-d418's first version did) loses ticks on the old 6526 CIA that breadbin C64s have, which VICE's
+  `-model c64` emulates and its default `c64c` does not: the stream ran at a third of its speed.
+- **The KERNAL's 60 Hz interrupt must be masked while the C64 polls the receiver** (it takes over a millisecond, and a byte comes every 260 µs): with it
+  on, bytes were lost from the start of a sound.
+- The timer is locked to the raster (the writes are a fixed distance from a raster line's start), so that with the display on a badline does not
+  delay them. `--sound-delay N` moves it; the measurement is flat from 0 to 12 on VICE.
+
+Measured in VICE (`node bridge/scripts/sound-capture.js`, which plays a sentence through the whole path and scores the recording): 15 dB speech-band SNR against what the encoder planned, and
+9.5 dB against the speech itself (the 2-bit code and the noise weight cost the rest), on PAL and NTSC machines, with the old and the new CIA. Not tested: RUN/STOP, a real SwiftLink, a real machine,
+and the soft 80-column and text clients (they have no sound).
+
+Options: `--tts`, `--voice`, `--sound-weight`, `--sound-lut` (the SID's output table: `sid6581`, `sid8580`), `--sound-delay`, `--sound-out FILE` (write what it played, to compare), `--sound off`.
+The control port takes `say TEXT` and `play FILE` (`node bridge/scripts/petty-ctl.js say hello`).
+
 ## Protocol
 
 See [bridge/src/protocol.js](bridge/src/protocol.js). Host→C64 opcodes are GOTO,
 COLOR, PUT, REPEAT, SCROLL, COLORS, CLS and FRAME, plus SPRITE and NOSPRITE for
 the soft 80-column screen, GLYPH for the hi-res one and the C128, and
 UNDERLINE, BITS (cells of a picture, as raw pixels), VIEW (full-screen
-multicolour pictures) and POKE (to load them) for the hi-res one.
+multicolour pictures), POKE (to load them), and SOUND and PROBE (see [Sound](#sound-hi-res-c64)) for the hi-res one.
 Every frame ends with FRAME and
 the C64 answers ACK. The bridge keeps only one frame in flight, so fast output
 merges into fewer frames instead of overflowing the client's receive buffer (256
 bytes; 4 KB on the bitmap C64 clients).
-C64→host messages are ACK, `KEY code mods` and HELLO. A client on another
+C64→host messages are ACK, `KEY code mods` and HELLO (and, for sound, CREDIT, DONE, ABORT and PROBE). A client on another
 display sends `HELLO_ON id` instead (1 = C128 VDC, 2 = C64 soft 80 columns,
 both 80×25; 3 = C64 hi-res, 40×25), and the bridge
 resizes the program's terminal to match. For the C128, colours are VDC
@@ -297,6 +344,7 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `c64/petty80.cfg` | linker config (program must end below `$2000`) |
 | `c64/mainhires.s` | hi-res 40-column C64 client |
 | `c64/pettyhires.cfg` | linker config (program must end below `$2000`) |
+| `c64/sound.inc` | sound for the hi-res client: SOUND and PROBE, the 2-bit decoder and the playback loop |
 | `c128/main.s` | C128 client: the same, drawing on the VDC at 2 MHz |
 | `c128/petty128.cfg` | linker config (program must end below `$3800`) |
 | `c64/dial.inc` | the dial step, included by all four clients |
@@ -310,6 +358,9 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `bridge/src/extglyphs.js` / `glyphcache.js` | the extra glyphs for the hi-res C64 and the C128, and which are loaded |
 | `bridge/src/image.js` | inline images: OSC 1337, PNG and C64 pictures, hi-res conversion |
 | `bridge/bin/imgcat` | sends pictures as inline images, where iTerm2's imgcat isn't installed |
+| `bridge/bin/sound/say`, `play` | speak and play on the C64, by OSC 8347 (first in the program's PATH) |
+| `bridge/src/sound/` | sound: the OSC and queue (`manager.js`), the playback session, the codec, DSP, TTS and file loading |
+| `bridge/scripts/sound-capture.js` | plays a sound in VICE through the whole path and scores the recording |
 | `bridge/scripts/prg2pic.js` | saves the picture a self-showing `.prg` displays, as Koala or Doodle |
 | `bridge/scripts/gen-glyphs.js` | writes `c64/glyphs.inc` and `c64/font4x8.inc` |
 | `bridge/scripts/fake-c64.js` | pretend client for testing without VICE |

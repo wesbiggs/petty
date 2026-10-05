@@ -29,12 +29,27 @@
 //                               it; 0: back to the hi-res terminal screen (the
 //                               host then redraws it)
 //   0F lo hi n d1..dn  POKE     (C64 hi-res) write n bytes (0 = 256) at lo + 256 * hi
+//   10 var delay lat_lo lat_hi n_lo n_hi n_ex
+//                      SOUND    (C64 hi-res) play n bytes of 2-bit codes (4 samples each; see
+//                               sound/codec.js) that follow the command as raw bytes: modally,
+//                               the screen on and still. var 0: 63-cycle raster lines (PAL),
+//                               1: 65 (NTSC); delay: where in a raster line the sample timer
+//                               starts, in 5 cycles; latch: the CIA timer's, a whole number of
+//                               lines. The bridge sends 128 bytes and one more for each CREDIT,
+//                               and loads the code's tables first, with POKE at DTAB, NIDX and
+//                               OUTTAB (sound/session.js). No FRAME follows: it would be data.
+//   11                 PROBE    measure the machine: the C64 answers PROBE
 //
 // C64 -> host:
 //   01                 ACK      frame processed
 //   02 key mods        KEY      matrix code 0-63, mods bit0 shift, bit1 C=, bit2 ctrl
 //   03                 HELLO    C64 client (re)started; host sends a full redraw
 //   04 display         HELLO_ON same, from a client on another display (DISPLAY ids)
+//   05                 DONE     SOUND finished
+//   06                 CREDIT   SOUND: one byte of codes taken from the C64's buffer
+//   07 c_lo c_hi       PROBE    the cycles in a video frame: 19656 PAL, 17095 NTSC
+//   08                 ABORT    SOUND stopped by RUN/STOP; the C64 has thrown away what
+//                               was in flight, so the bridge may carry on at once
 //
 // Rows and columns are those of the client's display: 40x25 on the C64, 80x25
 // on the C128's VDC and on the C64's soft 80-column bitmap screen. The write
@@ -52,7 +67,7 @@ export const DISPLAY = {
   C64: { id: 0, name: 'C64', cols: 40, rows: 25 },
   C128: { id: 1, name: 'C128 VDC', cols: 80, rows: 25, reverse: true, ext: true },
   C64_80: { id: 2, name: 'C64 soft-80', cols: 80, rows: 25, pair: true },
-  C64_HIRES: { id: 3, name: 'C64 hi-res', cols: 40, rows: 25, hires: true, ext: true },
+  C64_HIRES: { id: 3, name: 'C64 hi-res', cols: 40, rows: 25, hires: true, ext: true, sound: true },
 };
 export const displayById = id => Object.values(DISPLAY).find(d => d.id === id);
 
@@ -61,13 +76,21 @@ export const COLS = DISPLAY.C64.cols;
 export const ROWS = DISPLAY.C64.rows;
 export const CELLS = COLS * ROWS;
 
-export const OP = { GOTO: 1, COLOR: 2, PUT: 3, REPEAT: 4, SCROLL: 5, COLORS: 6, CLS: 7, FRAME: 8, SPRITE: 9, NOSPRITE: 10, GLYPH: 11, UNDERLINE: 12, BITS: 13, VIEW: 14, POKE: 15 };
+export const OP = { GOTO: 1, COLOR: 2, PUT: 3, REPEAT: 4, SCROLL: 5, COLORS: 6, CLS: 7, FRAME: 8, SPRITE: 9, NOSPRITE: 10, GLYPH: 11, UNDERLINE: 12, BITS: 13, VIEW: 14, POKE: 15, SOUND: 16, PROBE: 17 };
 export const VIEW = { TERMINAL: 0, LOAD: 1, SHOW: 2 };
+// Where SOUND's tables go in the C64 (c64/sound.inc).
+export const SOUND_ADDR = { OUTTAB: 0xCD00, DTAB: 0xCE00, NIDX: 0xCE40 };
+export const SOUND_WINDOW = 128; // bytes of codes the C64 holds, which the bridge keeps in flight
+export const encodeSound = (variant, delay, latch, n) => {
+  if (!(n >= 1 && n <= 0xFFFFFF)) throw new Error('a sound is 1 to 16777215 bytes of codes');
+  return [OP.SOUND, variant, delay, latch & 0xFF, latch >> 8, n & 0xFF, (n >> 8) & 0xFF, n >> 16];
+};
+export const encodePoke = (addr, data) => [OP.POKE, addr & 0xFF, addr >> 8, data.length & 0xFF, ...data];
 const SPRITES = 8;
 const spriteKey = s => s ? `${s.col},${s.row},${s.color},${s.data.join(',')}` : null;
 // VDC attribute bits beyond the colour.
 export const VDC = { UNDERLINE: 0x20, RVS: 0x40, ALT: 0x80 };
-export const MSG = { ACK: 1, KEY: 2, HELLO: 3, HELLO_ON: 4 };
+export const MSG = { ACK: 1, KEY: 2, HELLO: 3, HELLO_ON: 4, DONE: 5, CREDIT: 6, PROBE: 7, ABORT: 8 };
 
 const SPACE = 32;
 const MAX_GAP = 3; // unchanged cells worth rewriting instead of a 3-byte GOTO
@@ -306,6 +329,7 @@ export class Decoder {
     this.bits = new Array(cols * rows).fill(null); // cells drawn by BITS: 8 bytes
     this.view = VIEW.TERMINAL;
     this.mem = new Uint8Array(0x10000); // what POKE wrote
+    this.sounds = []; // SOUND commands (their data bytes are not decoded)
   }
 
   put(g, bits = null, color = this.cur) {
@@ -349,6 +373,8 @@ export class Decoder {
         case OP.NOSPRITE: this.sprites[next()] = null; break;
         case OP.GLYPH: { const code = next() | next() << 8; this.glyphs.set(code, Uint8Array.from({ length: 8 }, next)); break; }
         case OP.VIEW: this.view = next(); if (this.view === VIEW.LOAD) this.border = this.bg = next(); else next(); break;
+        case OP.SOUND: this.sounds.push({ variant: next(), delay: next(), latch: next() | next() << 8, n: next() | next() << 8 | next() << 16 }); break;
+        case OP.PROBE: break;
         case OP.POKE: {
           let addr = next() | next() << 8;
           const n = next() || 256;

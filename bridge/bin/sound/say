@@ -1,0 +1,41 @@
+#!/bin/sh
+# say: speak on the C64. PETTY's bridge puts this directory first in the PATH of
+# the program it runs, so inside PETTY this is the `say` you get, and the C64 plays
+# it (through the SID's volume register, the screen still meanwhile; RUN/STOP stops it).
+# It asks the bridge with OSC 8347, so it works over ssh too, provided the bridge
+# has a TTS: macOS `say`, or one given with its --tts.
+#
+# usage: say [-v voice] [-f file] [text...]     (text from the arguments, the file, or standard input)
+#        say --stop                              drop what is queued
+
+usage() {
+  echo "usage: say [-v voice] [-f file | text...]" >&2
+  exit 2
+}
+
+voice=
+file=
+while [ $# -gt 0 ]; do
+  case $1 in
+    --stop) { printf '\033]8347;stop\007' > /dev/tty; } 2>/dev/null || printf '\033]8347;stop\007'; exit 0 ;;
+    -v) [ $# -ge 2 ] || usage; voice=$2; shift 2 ;;
+    -f) [ $# -ge 2 ] || usage; file=$2; shift 2 ;;
+    -r | -o | -a) [ $# -ge 2 ] || usage; shift 2 ;; # macOS options that mean nothing here
+    --) shift; break ;;
+    -*) usage ;;
+    *) break ;;
+  esac
+done
+
+if [ -n "$file" ]; then
+  if [ "$file" = - ]; then text=$(cat); else text=$(cat "$file") || exit 1; fi
+elif [ $# -gt 0 ]; then
+  text=$*
+else
+  text=$(cat)
+fi
+[ -n "$text" ] || exit 0
+
+b64=$(printf '%s' "$text" | base64 | tr -d '\n')
+osc=$(printf '\033]8347;say;%s%s\007' "$b64" "${voice:+;voice=$voice}")
+{ printf '%s' "$osc" > /dev/tty; } 2>/dev/null || printf '%s' "$osc"
