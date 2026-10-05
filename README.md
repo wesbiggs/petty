@@ -272,6 +272,8 @@ shows the screen), so it drops to 1 MHz, swaps every ROM for RAM so the buffer a
 puts an `rti` in the NMI and IRQ vectors for the while, and goes back to 2 MHz after. Its SID is usually an 8580:
 `--sound-lut sid8580`. Sprites are switched off while a sound plays (their DMA would steal cycles).
 
+The measurements and what was tried and dropped are in [docs/sound.md](docs/sound.md).
+
 Things the port taught, which are in the code:
 - **The tick is a counter, not a flag.** CIA 2's timer A sets the sample period and its timer B counts A's underflows; a sample starts when B changes.
   Polling the interrupt flag register (as petty-d418's first version did) loses ticks on the old 6526 CIA that breadbin C64s have, which VICE's
