@@ -501,6 +501,7 @@ class Connection {
     const { s } = this;
     const { display } = s;
     const want = snapshot(s.term, s.panX, display, s.theme, s.panY, s.own);
+    want.move &&= s.game.used; // MOVE, for a program that is a game (the search for one costs a little)
     const reset = !this.state;
     const pal = paletteFor(display, s.theme);
     // After a reset, reload the client's extended glyphs too.

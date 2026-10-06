@@ -112,6 +112,16 @@ try {
     assert.equal(io[0x03], 100, 'y');
     assert.equal(io[0x28] & 15, 5, 'colour');
     assert.equal(io[0x15] & 2, 2, 'enabled');
+    assert.equal(io[0x1A] & 1, 0, 'no raster interrupt until a glide or a script needs it');
+  });
+
+  await check('the last shape slot, 63', async () => {
+    const shape = Array.from({ length: 63 }, (_, i) => 255 - i);
+    await send([...encodeSprDef(63, shape), ...encodeSpr(7, 63, 2, 2, 20, 30)]);
+    const { io, ram } = await machine();
+    assert.deepEqual([...ram.subarray(0x2FC0, 0x2FC0 + 63)], shape);
+    assert.equal(ram[0x07FF], 0xBF);
+    assert.equal(io[0x15] & 0x80, 0x80);
   });
 
   await check('flags: wide, tall, behind, multicolour; hide', async () => {

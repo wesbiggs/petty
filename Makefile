@@ -11,7 +11,7 @@ DIAL    ?=
 VICE_FLAGS := -acia1 -acia1mode 1 -acia1base 0xDE00 -acia1irq 1 \
               -myaciadev 0 -rsdev1 127.0.0.1:$(PORT) +rsdev1ip232 -rsdev1baud 38400
 
-.PHONY: all clean bridge theme title vice vice128 vice80 vicehires run test
+.PHONY: all clean bridge theme title vice vice128 vice80 vicehires run test game-check
 
 all: $(PRG) $(PRG128) $(PRG80) $(PRGHI)
 
@@ -100,3 +100,7 @@ test: bridge/node_modules
 
 clean:
 	rm -rf $(BUILD)
+
+# The text client's game hardware, checked in VICE (opens a window).
+game-check: $(PRG)
+	node bridge/scripts/vice-game-check.js $(PRG)

@@ -39,7 +39,7 @@
 //                               and loads the code's tables first, with POKE at DTAB, NIDX and
 //                               OUTTAB (sound/session.js). No FRAME follows: it would be data.
 //   11                 PROBE    measure the machine: the C64 answers PROBE
-//   12 slot d1..d63    SPRDEF   (C64 text) shape for hardware sprite shape slot 0-31 (see game.js)
+//   12 slot d1..d63    SPRDEF   (C64 text) shape for hardware sprite shape slot 0-63 (see game.js)
 //   13 n slot color flags xlo y
 //                      SPR      (C64 text) sprite n (0-7) shows shape `slot` at x = xlo + 256 * flags
 //                               bit 0, y (the VIC's coordinates: 24, 50 is the top left of the
@@ -104,7 +104,7 @@ export const encodeSound = (variant, delay, latch, n) => {
 };
 export const encodePoke = (addr, data) => [OP.POKE, addr & 0xFF, addr >> 8, data.length & 0xFF, ...data];
 // Game hardware (the C64 text client; game.js): sprites, SID scripts, rectangle moves.
-export const SPRITE_SLOTS = 32;
+export const SPRITE_SLOTS = 64;
 export const SPR = { ON: 2, MULTI: 4, WIDE: 8, TALL: 16, BEHIND: 32 }; // SPR flags above bit 0, which is x's bit 8
 export const encodeSprDef = (slot, data) => [OP.SPRDEF, slot, ...Array.from({ length: 63 }, (_, i) => data[i] ?? 0)];
 export const encodeSpr = (n, slot, color, flags, x, y) => [OP.SPR, n, slot, color & 15, flags & 0x3E | (x >> 8 & 1), x & 0xFF, y & 0xFF];

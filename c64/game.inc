@@ -13,8 +13,8 @@
 ; keyboard and the jiffy clock. While a sound plays (sound.inc) interrupts
 ; are off, so everything here simply waits.
 ;
-; Memory: sprite shapes at $2000 + 64 * slot (32 slots; in VIC bank 0, and
-; clear of the character ROM's image at $1000), script data wherever the
+; Memory: sprite shapes at $2000 + 64 * slot (64 slots; in VIC bank 0, and
+; clear of the character ROM's image at $1000, up to the receive buffer at $3700), script data wherever the
 ; bridge POKEs it (it uses $4000-$BFFF), variables at $C000.
 ;
 ; A script is records: n, (reg, value) * n, delay. The writes happen, then
@@ -115,6 +115,11 @@ game_init:
         sta VIC_CTRL1
         lda #1
         sta VIC_IRQFLG
+        rts
+
+; The raster interrupt is only on once something needs it (a glide or a script).
+game_irq_on:
+        lda #1
         sta VIC_IRQEN
         rts
 
@@ -209,7 +214,7 @@ op_sprdef:
         lda #63
         sta mb
         lda ma
-        cmp #32
+        cmp #64
         bcs @skip               ; no such slot: eat the data
 @loop:  jsr rb_get
         ldy #0
@@ -266,7 +271,7 @@ op_spr:
         eor #$FF
         sta gbmi
         lda mb
-        and #31
+        and #63
         clc
         adc #<(SPR_BLOCKS / 64)
         sta SPR_PTRS,y
@@ -301,6 +306,7 @@ op_glide:
         cmp #8
         bcs @bad
         tay
+        jsr game_irq_on
         lda #0
         sta gl_frames,y         ; stopped while it is set up
         lda mc
@@ -610,6 +616,7 @@ op_sidplay:
         lda ma
         cmp #4
         bcs @bad
+        jsr game_irq_on
         sei                     ; gmask, greg and the channel are the interrupt's too
         ldx ma
         lda #0

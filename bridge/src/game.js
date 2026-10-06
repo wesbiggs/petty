@@ -8,7 +8,7 @@
 // is the top left of cell 0, 0; the VIC's own coordinates are 24 and 50 more).
 //
 //   def ; SLOT ; BASE64     a shape: 63 bytes, 3 a row, 21 rows, the top left pixel
-//                           the top bit of byte 0. SLOT 0-31. Shapes are kept in the C64.
+//                           the top bit of byte 0. SLOT 0-63. Shapes are kept in the C64.
 //   set ; N ; SLOT ; X ; Y ; COLOR [; FLAGS]
 //                           show sprite N (0-7) at X, Y with that shape and colour (0-15).
 //                           FLAGS: letters x (wide), y (tall), m (multicolour), b (behind
@@ -106,6 +106,7 @@ export class GameHardware {
   //            for sound now, reply(text): write to the program's input }
   constructor(options) {
     this.o = options;
+    this.used = false; // the program has used it (the bridge then looks for MOVEs, too)
     this.shapes = new Map(); // slot -> 63 bytes
     this.sprites = new Array(8).fill(null); // {slot, color, flags, x, y}: where the C64 will have them
     this.mc = null;
@@ -126,6 +127,7 @@ export class GameHardware {
   // --- from the program --------------------------------------------------------
 
   sprite(data) {
+    this.used = true;
     try {
       this.spriteOsc(data.split(';'));
     } catch (e) {
@@ -194,6 +196,7 @@ export class GameHardware {
   }
 
   sid(data) {
+    this.used = true;
     try {
       this.sidOsc(data.split(';'));
     } catch (e) {
