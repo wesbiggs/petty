@@ -113,6 +113,7 @@ export class GameHardware {
     this.channels = new Array(4).fill(null); // { id, mask }
     this.nextAddr = SCRIPT_BASE;
     this.audioUsed = false;
+    this.primed = false; // the client's SID has been cleared for scripts
     this.pre = []; // for the next frame, before the screen: sound
     this.post = []; // ...after it: sprites
     this.unsentGlides = 0;
@@ -203,6 +204,10 @@ export class GameHardware {
 
   sidOsc([verb, ...a]) {
     const on = this.o.active();
+    if (on && !this.primed && verb !== 'reset') { // the client's SID starts with its sample player's levels
+      this.queue(this.pre, [OP.SIDRESET]);
+      this.primed = true;
+    }
     if (verb === 'def') {
       const id = int(a[0], 0, 255, 'id');
       const src = Uint8Array.from(Buffer.from(a[1] ?? '', 'base64'));
@@ -239,7 +244,7 @@ export class GameHardware {
     } else if (verb === 'reset') {
       this.channels.fill(null);
       this.audioUsed = true;
-      if (on) { this.queue(this.pre, [OP.SIDRESET]); this.o.kick(); }
+      if (on) { this.queue(this.pre, [OP.SIDRESET]); this.primed = true; this.o.kick(); }
     } else {
       throw new Error(`unknown OSC 8349 command ${verb}`);
     }
@@ -271,6 +276,7 @@ export class GameHardware {
     this.post = [];
     this.unsentGlides = 0;
     this.glideBusy = false;
+    this.primed = false;
     if (!this.o.active()) return;
     if (this.audioUsed) this.replayAudio();
     if (this.mc) this.post.push(OP.SPRMC, ...this.mc);
@@ -288,6 +294,7 @@ export class GameHardware {
   }
 
   replayAudio() {
+    this.primed = true;
     this.pre.push(OP.SIDRESET);
     for (const rec of this.scripts.values()) this.upload(rec.addr, rec.bytes);
     this.channels.forEach((c, ch) => {

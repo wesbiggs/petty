@@ -73,7 +73,7 @@ test('bad commands are logged, not thrown', () => {
   assert.equal(g.sprite('set;9;0;0;0;0'), true);
   assert.equal(g.sprite('wibble'), true);
   assert.equal(g.sid('play;0;77'), true);
-  assert.ok(!g.pending());
+  assert.ok(!decode(g.takePre(), g.takePost()).sid.some(s => s.op === 'play'));
 });
 
 test('sync waits for the glides', async () => {
@@ -98,7 +98,7 @@ test('sid: scripts are uploaded once and played by number', () => {
   g.sid('play;0;1;1+2+vol');
   assert.equal(kicks.length, 1);
   const d = decode(g.takePre());
-  assert.deepEqual(d.sid, [{ op: 'play', ch: 0, addr: SCRIPT_BASE, mask: (0x7F | 0x7F << 7 | 1 << 24) >>> 0 }]);
+  assert.deepEqual(d.sid, [{ op: 'reset' }, { op: 'play', ch: 0, addr: SCRIPT_BASE, mask: (0x7F | 0x7F << 7 | 1 << 24) >>> 0 }], 'cleared first, once');
   const script = [...d.mem.subarray(SCRIPT_BASE, SCRIPT_BASE + 9)];
   assert.deepEqual(script, [2, 4, 0x10, 24, 15, 3, 254, 0x00, 0x40]);
   g.sid('w;24;15;4;17');

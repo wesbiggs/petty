@@ -21,7 +21,9 @@ const ALT_SPACE = 256 + 32; // looks like a space to the encoder: never used
 
 export class GlyphCache {
   // `reserved`: slots that --charset uses. `redrawn`: extended glyph -> 8 bytes, from --charset.
-  constructor(display, reserved = [], redrawn = new Map()) {
+  constructor(display, reserved, redrawn) {
+    reserved ??= []; // null without --charset: a default parameter would not catch it
+    redrawn ??= new Map();
     this.display = display;
     this.redrawn = redrawn;
     const last = display.hires ? 255 : 511;

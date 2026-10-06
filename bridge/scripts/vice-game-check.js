@@ -3,7 +3,7 @@
 // emulated machine, through VICE's remote monitor. This script is the bridge:
 // VICE's SwiftLink dials it. Needs x64sc; opens a VICE window.
 //
-// usage: node scripts/vice-game-test.js [--keep] [prg]
+// usage: node scripts/vice-game-check.js [--keep] [prg]
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, copyFileSync, rmSync, existsSync } from 'node:fs';
@@ -18,7 +18,7 @@ import { compileScript, SCRIPT_BASE } from '../src/game.js';
 const { values: opt, positionals } = parseArgs({ allowPositionals: true, options: { keep: { type: 'boolean', default: false } } });
 const prg = resolve(positionals[0] ?? fileURLToPath(new URL('../../build/petty.prg', import.meta.url)));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const log = (...a) => console.error('[vice-test]', ...a);
+const log = (...a) => console.error('[vice-check]', ...a);
 const freePort = () => new Promise((ok, fail) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => ok(port)); }).on('error', fail); });
 
 const work = mkdtempSync(join(tmpdir(), 'petty-game-'));
