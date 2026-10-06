@@ -128,6 +128,7 @@ export class SoundManager {
       if (how === 'abort') this.queue.length = 0; // RUN/STOP means stop, not skip
     } finally {
       conn.sound = null;
+      this.o.afterSound?.(conn);
       this.o.redraw();
     }
   }

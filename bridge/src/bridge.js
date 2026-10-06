@@ -27,6 +27,7 @@ import { keyToBytes, MATRIX } from './keymap.js';
 import { GlyphCache } from './glyphcache.js';
 import { openSerial } from './serial.js';
 import { InlineImages, multicolourPicture } from './image.js';
+import { GameHardware } from './game.js';
 
 const { values: opt, positionals } = parseArgs({
   allowPositionals: true,
@@ -193,8 +194,18 @@ class Session {
       delay: opt['sound-delay'] === undefined ? undefined : Number(opt['sound-delay']),
       getConn: () => this.conn,
       redraw: () => { this.dirty = true; },
+      afterSound: () => this.game.audioLost(),
     });
     term.parser.registerOscHandler(8347, data => this.sound.osc(data));
+    // Game hardware: sprites and the SID, OSC 8348 and 8349 (game.js), on a client that has them.
+    this.game = new GameHardware({
+      log: this.log,
+      active: () => !!this.conn && !!this.display.game,
+      kick: () => this.conn?.flushGame(),
+      reply: text => this.proc?.write(text),
+    });
+    term.parser.registerOscHandler(8348, data => { this.dirty = true; return this.game.sprite(data); });
+    term.parser.registerOscHandler(8349, data => { this.dirty = true; return this.game.sid(data); });
     sessions.add(this);
   }
 
@@ -229,6 +240,7 @@ class Session {
     this.holding = null;
     sessions.delete(this);
     this.sound.queue.length = 0;
+    this.game.dispose();
     this.conn?.sound?.end?.('closed');
     this.proc?.kill();
     this.proc = null;
@@ -385,6 +397,9 @@ class Connection {
         this.rx.shift();
         s.debug(type === MSG.DONE ? 'sound done' : 'sound stopped on the C64');
         this.sound?.end?.(type === MSG.DONE ? 'done' : 'abort');
+      } else if (type === MSG.GLIDE) {
+        this.rx.shift();
+        s.game.glideDone();
       } else if (type === MSG.PROBE) {
         if (this.rx.length < 3) return;
         const [, lo, hi] = this.rx.splice(0, 3);
@@ -398,6 +413,7 @@ class Connection {
         s.log(`${(d ?? DISPLAY.C64).name} says hello`);
         s.setDisplay(d ?? DISPLAY.C64);
         this.sound?.end?.('closed'); // the client restarted
+        s.game.invalidate(); // with nothing in it: say all of it again (after display is set)
         this.hasSound = soundOn && !!s.display.sound;
         this.region = null;
         this.since = Date.now();
@@ -498,12 +514,24 @@ class Connection {
       : encodeReset(want, pal.border, pal.screenBg, colour, budget);
     this.state = state;
     if (partial) s.dirty = true; // the rest goes in the next frame
-    if (bytes.length === 1) return; // only FRAME marker: nothing changed
+    // Game hardware goes with the frame: the SID before the screen's changes, the sprites after them.
+    const pre = s.game.takePre(), post = s.game.takePost();
+    if (bytes.length === 1 && !pre.length && !post.length) return; // only FRAME marker: nothing changed
+    bytes = pre.concat(bytes.slice(0, -1), post, bytes.slice(-1));
     bytes = glyphs.concat(bytes);
     if (reset && charset) bytes = charsetCommands(charset, display).concat(bytes);
     if (this.restore) bytes.unshift(OP.VIEW, VIEW.TERMINAL, 0);
     this.restore = false;
     this.send(bytes);
+  }
+
+  // Sound commands that should not wait for the next screen frame (a footstep), if the
+  // C64 is free to take them.
+  flushGame() {
+    const { s } = this;
+    if (this.inFlight || this.sound || this.picture || !s.display.game) return;
+    const pre = s.game.takePre();
+    if (pre.length) this.send([...pre, OP.FRAME]);
   }
 
   // A Koala picture ({bitmap, screen, colram, bg}), full screen until a key
@@ -553,6 +581,7 @@ class Connection {
       this.state = null;
       this.inFlight = false;
       s.dirty = true;
+      s.game.invalidate(); // what was in the lost frame included
       for (const w of this.ackWaiters.splice(0)) w.resolve();
     }, ACK_TIMEOUT_MS);
   }

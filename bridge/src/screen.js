@@ -137,7 +137,7 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', 
       color[i] = display.reverse && inv ? c | VDC.RVS : c;
     }
   }
-  const screen = { cols, rows, glyph, color, hires: !!display.hires };
+  const screen = { cols, rows, glyph, color, hires: !!display.hires, move: !!display.game };
   if (display.pair) {
     const focus = cursorRow >= 0 && cursorRow < rows ? cursorRow : rows - 1;
     screen.sprites = shareColours(screen, focus);

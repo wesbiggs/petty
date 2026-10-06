@@ -38,7 +38,7 @@ OP_SCROLL   = 5
 OP_COLORS   = 6
 OP_CLS      = 7
 OP_FRAME    = 8
-NUM_OPS     = 18                ; 16 and 17 (SOUND, PROBE) are in sound.inc
+NUM_OPS     = GAME_OPS          ; 16 and 17 (SOUND, PROBE) are in sound.inc, 18 up in game.inc
 
 MSG_ACK     = 1
 MSG_KEY     = 2
@@ -82,6 +82,7 @@ start:
         jsr init_charset
         jsr init_screen
         jsr sound_init
+        jsr game_init
         lda #0
         sta rptr
         sta wptr
@@ -117,6 +118,8 @@ optable:
         .word cmdloop-1, cmdloop-1, cmdloop-1, cmdloop-1
         .word cmdloop-1, cmdloop-1, op_poke-1
         .word op_sound-1, op_probe-1
+        .word op_sprdef-1, op_spr-1, op_glide-1, op_move-1
+        .word op_sidw-1, op_sidplay-1, op_sidstop-1, op_sidreset-1, op_sprmc-1
 
 op_goto:
         jsr rb_get
@@ -376,6 +379,7 @@ init_acia:
 
 ; Once per jiffy: send KEY for new presses and auto-repeats. Clobbers A.
 keypoll:
+        jsr game_poll
         lda JIFFY_LO
         cmp lastjiffy
         beq @out
@@ -521,4 +525,5 @@ rowhi:
         bne target
 .endmacro
 .include "sound.inc"
+.include "game.inc"
 .include "glyphs.inc"
