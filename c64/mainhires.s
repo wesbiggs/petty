@@ -59,7 +59,7 @@ OP_UNDERLINE = 12
 OP_BITS     = 13
 OP_VIEW     = 14
 OP_POKE     = 15
-NUM_OPS     = 18                ; 16 and 17 (SOUND, PROBE) are in sound.inc
+NUM_OPS     = GAME_OPS          ; 16 and 17 (SOUND, PROBE) are in sound.inc, 18 up in game.inc
 
 VIEW_TERMINAL = 0
 VIEW_LOAD   = 1
@@ -113,6 +113,7 @@ start:
         jsr init_font
         jsr init_screen
         jsr sound_init
+        jsr game_init
         lda #<RBUF
         sta rp
         sta wp
@@ -153,6 +154,8 @@ optable:
         .word op_sprite-1, op_nosprite-1, op_glyph-1, op_underline-1
         .word op_bits-1, op_view-1, op_poke-1
         .word op_sound-1, op_probe-1
+        .word op_sprdef-1, op_spr-1, op_glide-1, op_move-1
+        .word op_sidw-1, op_sidplay-1, op_sidstop-1, op_sidreset-1, op_sprmc-1
 
 op_goto:
         jsr rb_get
@@ -633,6 +636,7 @@ init_acia:
 
 ; Once per jiffy: send KEY for new presses and auto-repeats. Clobbers A.
 keypoll:
+        jsr game_poll
         lda JIFFY_LO
         cmp lastjiffy
         beq @out
@@ -790,4 +794,6 @@ o40hi:
         bne target
 .endmacro
 .include "sound.inc"
+GAME_HIRES = 1
+.include "game.inc"
 .include "glyphs.inc"

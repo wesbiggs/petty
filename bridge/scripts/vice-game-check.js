@@ -1,9 +1,9 @@
-// Runs the C64 text client (build/petty.prg) in VICE and checks what the game
+// Runs the C64 text client (build/petty.prg; --hires: build/pettyhires.prg) in VICE and checks what the game
 // hardware commands (sprites, glides, MOVE, SID scripts: protocol.js) do to the
 // emulated machine, through VICE's remote monitor. This script is the bridge:
 // VICE's SwiftLink dials it. Needs x64sc; opens a VICE window.
 //
-// usage: node scripts/vice-game-check.js [--keep] [prg]
+// usage: node scripts/vice-game-check.js [--hires] [--keep] [prg]
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, copyFileSync, rmSync, existsSync } from 'node:fs';
@@ -15,8 +15,10 @@ import assert from 'node:assert/strict';
 import { MSG, OP, Decoder, encodeSprDef, encodeSpr, encodeGlide, encodeMove, encodeSidW, encodeSidPlay, encodeSidStop, encodePoke, DISPLAY } from '../src/protocol.js';
 import { compileScript, SCRIPT_BASE } from '../src/game.js';
 
-const { values: opt, positionals } = parseArgs({ allowPositionals: true, options: { keep: { type: 'boolean', default: false } } });
-const prg = resolve(positionals[0] ?? fileURLToPath(new URL('../../build/petty.prg', import.meta.url)));
+const { values: opt, positionals } = parseArgs({ allowPositionals: true, options: { keep: { type: 'boolean', default: false }, hires: { type: 'boolean', default: false } } });
+const prg = resolve(positionals[0] ?? fileURLToPath(new URL(`../../build/${opt.hires ? 'pettyhires' : 'petty'}.prg`, import.meta.url)));
+// Where the client keeps what: shapes, their pointers (and the number of shape 0's), the screen, the VIC's bank.
+const L = opt.hires ? { blocks: 0x4800, ptrs: 0x5FF8, ptr0: 0x20 } : { blocks: 0x2000, ptrs: 0x07F8, ptr0: 0x80 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.error('[vice-check]', ...a);
 const freePort = () => new Promise((ok, fail) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => ok(port)); }).on('error', fail); });
@@ -93,7 +95,12 @@ async function check(name, fn) {
 }
 
 try {
-  await waitFor(() => take(MSG.HELLO), 'HELLO from the client', 60000);
+  if (opt.hires) {
+    await waitFor(() => take(MSG.HELLO_ON), 'HELLO_ON from the client', 60000);
+    await waitFor(() => take(DISPLAY.C64_HIRES.id), 'its display');
+  } else {
+    await waitFor(() => take(MSG.HELLO), 'HELLO from the client', 60000);
+  }
   log('client is up');
   await sleep(500);
 
@@ -105,8 +112,8 @@ try {
     const shape = Array.from({ length: 63 }, (_, i) => (i * 7 + 1) & 255);
     await send([...encodeSprDef(3, shape), ...encodeSpr(1, 3, 5, 2 | 1, 300, 100)]);
     const { io, ram } = await machine();
-    assert.deepEqual([...ram.subarray(0x2000 + 3 * 64, 0x2000 + 3 * 64 + 63)], shape, 'shape bytes');
-    assert.equal(ram[0x07F9], 0x80 + 3, 'pointer');
+    assert.deepEqual([...ram.subarray(L.blocks + 3 * 64, L.blocks + 3 * 64 + 63)], shape, 'shape bytes');
+    assert.equal(ram[L.ptrs + 1], L.ptr0 + 3, 'pointer');
     assert.equal(io[0x02], 300 - 256, 'x low');
     assert.equal(io[0x10] & 2, 2, 'x bit 8');
     assert.equal(io[0x03], 100, 'y');
@@ -119,8 +126,8 @@ try {
     const shape = Array.from({ length: 63 }, (_, i) => 255 - i);
     await send([...encodeSprDef(63, shape), ...encodeSpr(7, 63, 2, 2, 20, 30)]);
     const { io, ram } = await machine();
-    assert.deepEqual([...ram.subarray(0x2FC0, 0x2FC0 + 63)], shape);
-    assert.equal(ram[0x07FF], 0xBF);
+    assert.deepEqual([...ram.subarray(L.blocks + 63 * 64, L.blocks + 63 * 64 + 63)], shape);
+    assert.equal(ram[L.ptrs + 7], L.ptr0 + 63);
     assert.equal(io[0x15] & 0x80, 0x80);
   });
 
@@ -173,7 +180,7 @@ try {
     const fill = [OP.GOTO, 0, 0];
     for (let y = 0; y < 25; y++) {
       fill.push(OP.GOTO, y, 0);
-      for (let x = 0; x < 40; x++) fill.push(OP.COLOR, (x + y) & 15, OP.PUT, 1, 33 + (x * 3 + y * 7) % 90);
+      for (let x = 0; x < 40; x++) fill.push(OP.COLOR, opt.hires ? (x * 16 + y * 5 + 1) & 255 : (x + y) & 15, OP.PUT, 1, 33 + (x * 3 + y * 7) % 90);
     }
     await send(fill);
     let seed = 7;
@@ -186,17 +193,23 @@ try {
     }
     const { io, ram } = await machine();
     for (let i = 0; i < 1000; i++) {
-      assert.equal(ram[0x400 + i], ref.glyph[i], `screen code at ${i}`);
-      assert.equal(io[0x800 + i] & 15, ref.color[i], `colour at ${i}`);
+      if (opt.hires) { // a cell is its glyph's 8 font bytes in the bitmap, and a colour byte
+        for (let r = 0; r < 8; r++) assert.equal(ram[0x6000 + i * 8 + r], ram[0x4000 + r * 256 + ref.glyph[i]], `bitmap row ${r} of cell ${i}`);
+        assert.equal(ram[0x5C00 + i], ref.color[i], `colour at ${i}`);
+      } else {
+        assert.equal(ram[0x400 + i], ref.glyph[i], `screen code at ${i}`);
+        assert.equal(io[0x800 + i] & 15, ref.color[i], `colour at ${i}`);
+      }
     }
   });
 
   await check('MOVE: a rectangle off the screen does nothing', async () => {
-    const before = (await machine()).ram.subarray(0x400, 0x400 + 1000).slice();
+    const area = ram => opt.hires ? ram.subarray(0x6000, 0x6000 + 8000) : ram.subarray(0x400, 0x400 + 1000);
+    const before = area((await machine()).ram).slice();
     await frame(encodeMove(30, 0, 10, 5, 5, 0)); // not sent to the reference: it does nothing
     await frame(encodeMove(0, 20, 5, 6, 0, 0));
     const { ram } = await machine();
-    assert.deepEqual([...ram.subarray(0x400, 0x400 + 1000)], [...before]);
+    assert.deepEqual([...area(ram)], [...before]);
   });
 
   await check('SID: a script plays, loops, and is masked', async () => {

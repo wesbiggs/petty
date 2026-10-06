@@ -13,9 +13,11 @@
 ; keyboard and the jiffy clock. While a sound plays (sound.inc) interrupts
 ; are off, so everything here simply waits.
 ;
-; Memory: sprite shapes at $2000 + 64 * slot (64 slots; in VIC bank 0, and
-; clear of the character ROM's image at $1000, up to the receive buffer at $3700), script data wherever the
-; bridge POKEs it (it uses $4000-$BFFF), variables at $C000.
+; Memory: sprite shapes, 64 slots of 64 bytes, in the VIC's bank: at $2000-$2FFF
+; (the text client; clear of the character ROM's image at $1000 and below the
+; receive buffer at $3700) or $4800-$57FF (the hi-res one, after its font). Script
+; data goes where the bridge POKEs it, $9000-$BFFF; variables are at $C000.
+; MOVE is the one part that differs: the hi-res client copies bitmap bytes.
 ;
 ; A script is records: n, (reg, value) * n, delay. The writes happen, then
 ; the next record waits `delay` frames (0: carry on at once). n = $FF ends
@@ -72,12 +74,22 @@ mb          = GV + 82
 mc          = GV + 83
 md          = GV + 84
 mmask       = GV + 85           ; 4
-GV_END      = GV + 89
+mxo         = GV + 89           ; (hi-res MOVE) byte offsets: x * 8, the destination's, width * 8
+mdo         = GV + 91
+mw8         = GV + 93
+GV_END      = GV + 95
 
 gp          = $F7               ; script read pointer (BASIC's RS-232 pointers: unused)
 
+.ifdef GAME_HIRES
+SPR_BLOCKS  = $4800             ; in the VIC's second bank, after the font and before the colours
+SPR_PTRS    = $5FF8             ; the colours at $5C00 are the "screen matrix"
+SPR_PTR0    = $20               ; the pointer for the first block: (SPR_BLOCKS - $4000) / 64
+.else
 SPR_BLOCKS  = $2000
 SPR_PTRS    = $07F8
+SPR_PTR0    = $80
+.endif
 VIC_SPRX    = $D000
 VIC_SPRXMSB = $D010
 VIC_YEXP    = $D017
@@ -273,7 +285,7 @@ op_spr:
         lda mb
         and #63
         clc
-        adc #<(SPR_BLOCKS / 64)
+        adc #SPR_PTR0
         sta SPR_PTRS,y
         lda mc
         sta VIC_SPRCOL,y
@@ -374,6 +386,9 @@ op_move:
         adc mh
         cmp #26
         bcs @bad
+.ifdef GAME_HIRES
+        jsr move_prep
+.endif
         lda mdy                 ; rows: bottom first when moving down, so that
         bmi @fwd                ; a row is read before it is written over
         beq @fwd
@@ -393,6 +408,157 @@ op_move:
         bcc :-
         jmp cmdloop
 
+.ifdef GAME_HIRES
+; (hi-res) byte offsets: x * 8, the destination's, and the width * 8.
+move_prep:
+        lda #0                  ; byte offsets of the first cell in a row of cells: x * 8, the
+        sta mxo+1               ; destination's, and the width * 8
+        sta mdo+1
+        sta mw8+1
+        lda mx
+        asl
+        rol mxo+1
+        asl
+        rol mxo+1
+        asl
+        rol mxo+1
+        sta mxo
+        lda mdc
+        asl
+        rol mdo+1
+        asl
+        rol mdo+1
+        asl
+        rol mdo+1
+        sta mdo
+        lda mw
+        asl
+        rol mw8+1
+        asl
+        rol mw8+1
+        asl
+        rol mw8+1
+        sta mw8
+        rts
+
+; Row mr of the rectangle: the bitmap bytes (8 a cell, contiguous along a row of
+; cells) and then the colours.
+move_row:
+        lda my
+        clc
+        adc mr
+        tax
+        lda o320lo,x
+        clc
+        adc mxo
+        sta src
+        lda o320hi,x
+        adc mxo+1
+        clc
+        adc #>BITMAP
+        sta src+1
+        lda mdr
+        clc
+        adc mr
+        tax
+        lda o320lo,x
+        clc
+        adc mdo
+        sta dst
+        lda o320hi,x
+        adc mdo+1
+        clc
+        adc #>BITMAP
+        sta dst+1
+        lda mdy
+        bne @fwd                ; (rows apart never overlap)
+        lda mdx
+        bmi @fwd
+        beq @fwd
+        lda src                 ; moving right along the row: cell by cell from the right
+        clc
+        adc mw8
+        sta src
+        lda src+1
+        adc mw8+1
+        sta src+1
+        lda dst
+        clc
+        adc mw8
+        sta dst
+        lda dst+1
+        adc mw8+1
+        sta dst+1
+        lda mw
+        sta ma
+@cell:  lda src
+        sec
+        sbc #8
+        sta src
+        bcs :+
+        dec src+1
+:       lda dst
+        sec
+        sbc #8
+        sta dst
+        bcs :+
+        dec dst+1
+:       ldy #7
+:       lda (src),y
+        sta (dst),y
+        dey
+        bpl :-
+        dec ma
+        bne @cell
+        jmp @colours
+@fwd:   lda mw8
+        sta cnt
+        lda mw8+1
+        sta cnt+1
+        jsr copy
+@colours:
+        lda my
+        clc
+        adc mr
+        tax
+        lda o40lo,x
+        clc
+        adc mx
+        sta src
+        lda o40hi,x
+        adc #>COLRAM
+        sta src+1
+        lda mdr
+        clc
+        adc mr
+        tax
+        lda o40lo,x
+        clc
+        adc mdc
+        sta dst
+        lda o40hi,x
+        adc #>COLRAM
+        sta dst+1
+        lda mdy
+        bne @cfwd
+        lda mdx
+        bmi @cfwd
+        beq @cfwd
+        ldy mw
+:       dey
+        lda (src),y
+        sta (dst),y
+        tya
+        bne :-
+        rts
+@cfwd:  ldy #0
+:       lda (src),y
+        sta (dst),y
+        iny
+        cpy mw
+        bcc :-
+        rts
+.else
 ; Row mr of the rectangle.
 move_row:
         lda my
@@ -450,6 +616,8 @@ move_row:
         cpy mw
         bcc :-
         rts
+
+.endif
 
 ; --- SID ---------------------------------------------------------------------
 

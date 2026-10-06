@@ -1,8 +1,8 @@
 // Game hardware for a program running in the bridge's terminal: hardware
 // sprites (OSC 8348) and the SID (OSC 8349) on the C64 text client. Where
 // say and play (OSC 8347) are about sound files, these are about the machine:
-// a program that runs on the host and uses the C64 as its screen, joystick-less
-// keyboard, sprite chip and sound chip.
+// a program that runs on the host and uses the C64 as its screen, keyboard,
+// sprite chip and sound chip. (The C64 text and hi-res clients.)
 //
 // OSC 8348: sprites. Positions are pixels of the 320x200 text screen (0, 0
 // is the top left of cell 0, 0; the VIC's own coordinates are 24 and 50 more).
@@ -49,7 +49,7 @@
 
 import { OP, SPR, SPRITE_SLOTS, encodeSprDef, encodeSpr, encodeGlide, encodeSidW, encodeSidPlay, encodeSidStop, encodePoke } from './protocol.js';
 
-export const SCRIPT_BASE = 0x4000; // where the C64 has room for scripts
+export const SCRIPT_BASE = 0x9000; // where the C64 clients have room for scripts (the hi-res one's ring ends there)
 export const SCRIPT_END = 0xC000;
 const SCREEN_X = 24, SCREEN_Y = 50; // the VIC's coordinates of the text's top left
 const MAX_QUEUE = 32768; // bytes held for a client that is not taking them

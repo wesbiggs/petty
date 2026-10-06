@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Game hardware for the C64 text client, for a program that runs wholly on the host: hardware sprites (**OSC 8348**: shapes, positions,
+- Game hardware for the C64 text and hi-res clients, for a program that runs wholly on the host: hardware sprites (**OSC 8348**: shapes, positions,
   `glide` that the C64 animates by itself, `sync`) and the SID (**OSC 8349**: register-write scripts uploaded once and played from a
   raster interrupt on four masked channels, or written directly). New client commands SPRDEF, SPR, GLIDE, MOVE, SIDW, SIDPLAY,
   SIDSTOP, SIDRESET and SPRMC, and the message GLIDE. For a program that uses them the bridge also sends a rectangle that moved a few

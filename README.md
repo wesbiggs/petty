@@ -285,17 +285,17 @@ aliases to it, such as `□`). A character with a `slot` is a new one, for a pro
 
 The glyphs are sent after each full redraw (a client start, a theme switch), so a reset restores them.
 
-## Game hardware (the C64 text client)
+## Game hardware (the C64 text and hi-res clients)
 
 A program that runs entirely on the host can use the C64 as its sprite chip and sound chip as well as its screen: it prints
-escape sequences and the bridge turns them into C64 commands. **OSC 8348** is sprites, **OSC 8349** the SID. They only work
-with the 40-column text client; the other clients ignore them. The parts are described at the top of
+escape sequences and the bridge turns them into C64 commands. **OSC 8348** is sprites, **OSC 8349** the SID. They work
+on the 40-column text and hi-res clients; the others ignore them. The parts are described at the top of
 [bridge/src/game.js](bridge/src/game.js) (the sequences) and in [protocol.js](bridge/src/protocol.js) (the wire commands).
 [bridge/lib/pettygame.py](bridge/lib/pettygame.py) prints them from Python, and
 [bridge/examples/game-demo.py](bridge/examples/game-demo.py) is a small game (a hero walking over a scrolling map,
 shooting arrows, with a tune): `make bridge CMD="-- python3 bridge/examples/game-demo.py"`, then `make vice`.
 
-**Sprites.** Eight hardware sprites, 64 shapes kept in the C64 (`$2000-$2FFF`):
+**Sprites.** Eight hardware sprites, 64 shapes kept in the C64 (`$2000-$2FFF` on the text client, `$4800-$57FF` on the hi-res one):
 
 ```
 ESC ] 8348 ; def ; SLOT ; BASE64(63 bytes) BEL          a shape (24x21, 3 bytes a row)
@@ -332,7 +332,7 @@ few cells (a map as the camera follows the hero) and sends one `MOVE` (copy a re
 each direction) and the cells that are new, rather than the whole viewport again: about 150 bytes for a one-cell pan of 21x19 cells
 instead of 2 KB. Vertical scrolls of the whole screen still use `SCROLL`.
 
-`node bridge/scripts/vice-game-check.js` (or `make game-check`) runs the client in VICE and checks all of this against the
+`node bridge/scripts/vice-game-check.js` (or `make game-check`) runs the text client (`--hires`: the hi-res one) in VICE and checks all of this against the
 emulated machine: shapes, positions, flags, glides across x = 256, random `MOVE`s against the reference decoder, and script timing and
 masking in VICE's SID dump.
 
@@ -465,7 +465,7 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `c64/mainhires.s` | hi-res 40-column C64 client |
 | `c64/pettyhires.cfg` | linker config (program must end below `$2000`) |
 | `c64/staircase.s` | standalone program for calibrating a real SID (`make build/staircase.prg`) |
-| `c64/game.inc` | game hardware for the text client: sprites, glides, MOVE, the SID script player (OSC 8348, 8349) |
+| `c64/game.inc` | game hardware for the text and hi-res clients: sprites, glides, MOVE, the SID script player (OSC 8348, 8349) |
 | `bridge/src/game.js` | those OSCs: the program's sprites and scripts, kept for a client that restarts |
 | `bridge/lib/pettygame.py` | prints them from Python; `bridge/examples/game-demo.py` is a small game |
 | `bridge/scripts/vice-game-check.js` | runs the text client in VICE and checks the game hardware against the machine |
@@ -496,7 +496,7 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `bridge/scripts/gen-title.js` | writes `bridge/title.ans`, the start screen |
 
 Memory map: code `$0801–$16DB`, sprite shapes `$2000–$2FFF`, receive ring `$3700`, character set `$3800–$3FFF`, screen `$0400`;
-SID scripts are uploaded at `$4000–$BFFF` and the game variables are at `$C000`.
+SID scripts are uploaded at `$9000–$BFFF` and the game variables are at `$C000`.
 
 Soft 80 columns: code `$0801–$1286`; the VIC uses its second bank, with glyph
 tables `$4000–$4FFF` (built at startup), sprite data `$5000–$51FF`, colours

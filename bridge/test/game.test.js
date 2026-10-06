@@ -100,7 +100,7 @@ test('sid: scripts are uploaded once and played by number', () => {
   const d = decode(g.takePre());
   assert.deepEqual(d.sid, [{ op: 'reset' }, { op: 'play', ch: 0, addr: SCRIPT_BASE, mask: (0x7F | 0x7F << 7 | 1 << 24) >>> 0 }], 'cleared first, once');
   const script = [...d.mem.subarray(SCRIPT_BASE, SCRIPT_BASE + 9)];
-  assert.deepEqual(script, [2, 4, 0x10, 24, 15, 3, 254, 0x00, 0x40]);
+  assert.deepEqual(script, [2, 4, 0x10, 24, 15, 3, 254, SCRIPT_BASE & 255, SCRIPT_BASE >> 8]);
   g.sid('w;24;15;4;17');
   assert.deepEqual(decode(g.takePre()).sid, [{ op: 'w', w: [[24, 15], [4, 17]] }]);
 });

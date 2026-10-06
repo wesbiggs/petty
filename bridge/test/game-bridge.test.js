@@ -41,6 +41,12 @@ async function run(script, { display = DISPLAY.C64, ack = true, wait = 1500, onD
 
 const osc = (n, ...parts) => `\\033]${n};${parts.join(';')}\\007`;
 
+test('the hi-res client gets them too', async () => {
+  const script = `printf '${osc(8348, 'def', 1, b64(new Uint8Array(63)))}${osc(8348, 'set', 2, 1, 10, 20, 3)}ok'; sleep 5`;
+  const { dec } = await run(script, { display: DISPLAY.C64_HIRES, wait: 8000, until: d => d.hw[2] });
+  assert.equal(dec.hw[2].x, 34);
+});
+
 test('a program drives sprites and the SID through the bridge', async () => {
   const shape = b64(new Uint8Array(63).fill(0xAA));
   const script = `printf '${osc(8348, 'def', 1, shape)}${osc(8348, 'set', 0, 1, 160, 100, 7)}${osc(8348, 'glide', 0, 2, 0, 8)}hello'
@@ -68,9 +74,9 @@ stty raw -echo; dd bs=1 count=9 2>/dev/null | od -c | head -1 > /dev/null; print
   assert.ok(dec.glyph.some((g, i) => i < 40 && g !== 32), `the program ran on after the sync reply (${log})`);
 });
 
-test('a client without game hardware gets none of it', async () => {
+test('a client without game hardware (soft 80 columns) gets none of it', async () => {
   const script = `printf '${osc(8348, 'def', 0, b64(new Uint8Array(63)))}${osc(8348, 'set', 0, 0, 10, 10, 1)}${osc(8349, 'w', 24, 15)}ok'; sleep 3`;
-  const { frames, dec } = await run(script, { display: DISPLAY.C64_HIRES, wait: 8000, until: d => d.glyph.some(g => g !== 32) });
+  const { frames, dec } = await run(script, { display: DISPLAY.C64_80, wait: 8000, until: d => d.glyph.some(g => g !== 32) });
   for (const f of frames) assert.ok(!f.some(b => b === OP.SPRDEF && false));
   assert.equal(dec.hw.filter(Boolean).length, 0);
   assert.equal(dec.sid.length, 0);
