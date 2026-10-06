@@ -43,7 +43,7 @@ make vicehires        # ...or the C64 with the 40-column hi-res screen
 
 Start the bridge first, because VICE connects when the client enables the ACIA.
 To run Claude Code directly: `make bridge CMD="-- claude"`, or
-`node bridge/src/bridge.js [--port N | --serial DEV [--baud N]] [--host H] [--fps N] [--cols N] [--rows N] [--scroll N] [--theme T] [--control N] [--title FILE] [-v] -- <cmd> [args...]`.
+`node bridge/src/bridge.js [--port N | --serial DEV [--baud N]] [--host H] [--fps N] [--cols N] [--rows N] [--scroll N] [--theme T] [--control N] [--title FILE] [--charset FILE] [-v] -- <cmd> [args...]`.
 
 When a client first connects, the bridge shows a start screen,
 [bridge/title.ans](bridge/title.ans), for four seconds before it starts the
@@ -235,6 +235,33 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
   ```bash
   node bridge/scripts/prg2pic.js picture_exe.prg      # writes picture_exe.koa (or .dd)
   ```
+
+## Custom character set (the C64 text and hi-res clients)
+
+`--charset FILE` redraws glyphs on the 40-column text and hi-res clients, to change the font or make tiles for a game. The file is JSON,
+characters to glyphs; a glyph is 8 rows of 8 pixels, as `#` and `.` or as numbers 0-255:
+
+```json
+{
+  "#": ["########", "#...#...", "########", "..#...#.", "########", "#...#...", "########", "..#...#."],
+  "\uE000": { "slot": 200, "rows": [24, 60, 126, 255, 255, 126, 60, 24] }
+}
+```
+
+A character with just rows gets a new picture in the screen code it already has (`#` above; so does everything that
+aliases to it, such as `□`). A character with a `slot` is a new one, for a program to print.
+
+- **Text client:** has no spare screen codes, so a new character takes over one of the 128 (0-127) that [glyphs.js](bridge/src/glyphs.js)
+  uses. Pick one the program doesn't print: `✻` (112), `⏺` (109), the box corners and tees (97-108). The client makes 128-255 the inverse of 0-127
+  when it starts, so the bridge POKEs each glyph and its inverse (a cursor or a coloured background shows it reversed): 64 glyphs are about 1 KB,
+  0.3 s at 38400 baud. A `slot` of 128 or more is not for this client: the character shows as `?`.
+- **Hi-res client:** loads glyphs with GLYPH, and has no inverse half to match (11 bytes a glyph). Slots 0-127 are as above. Slots 128-255 are the extended
+  glyphs' (box drawing, braille, shapes), loaded as they appear on screen; a slot you give is kept out of that, so tiles there cost no
+  text glyph, and the screen can show that many fewer extended glyphs at once. A character that has an extended glyph (`●`, `═`, braille) is
+  redrawn by changing that, as are the characters that alias to it (`⬤`).
+- **Soft 80-column and C128 clients:** not changed (a 4×8 bitmap font, and the VDC's own); a new character shows as `?`.
+
+The glyphs are sent after each full redraw (a client start, a theme switch), so a reset restores them.
 
 ## Sound (the C64 and C128 clients)
 

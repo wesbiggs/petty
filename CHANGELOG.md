@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `--charset FILE`: redraw glyphs, or add characters, on the C64 text and hi-res clients. The text client takes them with POKE
+  (and the inverse half) into spare screen codes (0-127); the hi-res client with GLYPH, in 0-127 or in the extended slots 128-255,
+  which the glyph cache then leaves alone. A game can ship its own font or tiles with a stock `.prg`.
+
 ## 0.10.1
 
 - Speech without macOS `say`: falls back to `espeak-ng` or `espeak`, and otherwise says to use `--tts`.

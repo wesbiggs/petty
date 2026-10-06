@@ -2,7 +2,7 @@
 // (C64 colour numbers, or VDC attributes on a C128).
 
 import { DISPLAY, VDC, HIRES_UNDERLINE } from './protocol.js';
-import { toScreenCode, INVERSE, SPACE } from './glyphs.js';
+import { toScreenCode, ownCode, INVERSE, SPACE } from './glyphs.js';
 import { palette, VIC_RGB } from './colors.js';
 import { IMAGE, imageCell, imageKey, imageShade } from './image.js';
 import { shareColours } from './soft80.js';
@@ -87,7 +87,7 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', 
       }
 
       const chars = cell.getWidth() === 0 || cell.isInvisible() ? '' : cell.getChars();
-      let g = (display.ext && extendedGlyph(chars)) || toScreenCode(chars);
+      let g = ownCode(chars) ?? ((display.ext && extendedGlyph(chars)) || toScreenCode(chars));
       let fg = cellFg(cell, pal);
       let bg = cellBg(cell, pal);
       // The foreground colours are adjusted to read on the screen colour

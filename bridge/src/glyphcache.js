@@ -13,17 +13,20 @@ import { OP, VDC } from './protocol.js';
 import { EXT, EXT_GLYPHS } from './extglyphs.js';
 import { INVERSE } from './glyphs.js';
 import { IMAGE } from './image.js';
+import { FIXED } from './charset.js';
 
-const isExt = g => g >= EXT && g < IMAGE;
+const isExt = g => g >= EXT && g < EXT + EXT_GLYPHS.length;
 
 const ALT_SPACE = 256 + 32; // looks like a space to the encoder: never used
 
 export class GlyphCache {
-  constructor(display) {
+  // `reserved`: slots that --charset uses. `redrawn`: extended glyph -> 8 bytes, from --charset.
+  constructor(display, reserved = [], redrawn = new Map()) {
     this.display = display;
+    this.redrawn = redrawn;
     const last = display.hires ? 255 : 511;
     this.slots = [];
-    for (let s = 128; s <= last; s++) if (s !== ALT_SPACE) this.slots.push(s);
+    for (let s = 128; s <= last; s++) if (s !== ALT_SPACE && !reserved.includes(s)) this.slots.push(s);
     this.slotOf = new Map(); // extended glyph -> slot
     this.glyphIn = new Map(); // slot -> extended glyph
     this.shown = new Map(); // slot -> frame last on screen
@@ -35,6 +38,8 @@ export class GlyphCache {
   // screen, if known) that show a reloaded slot become unknown.
   place(want, state) {
     const { glyph, color } = want;
+    // A --charset slot, 128-255, is already loaded: it only needs its number.
+    for (let i = 0; i < glyph.length; i++) if (glyph[i] >= FIXED && glyph[i] < IMAGE) glyph[i] -= FIXED;
     const needed = new Set();
     for (const g of glyph) if (isExt(g)) needed.add(g);
     if (!needed.size) return [];
@@ -53,7 +58,7 @@ export class GlyphCache {
         this.glyphIn.set(slot, g);
         this.slotOf.set(g, slot);
         inUse.add(slot);
-        out.push(OP.GLYPH, slot & 0xff, slot >> 8, ...EXT_GLYPHS[g - EXT].data);
+        out.push(OP.GLYPH, slot & 0xff, slot >> 8, ...(this.redrawn.get(g) ?? EXT_GLYPHS[g - EXT].data));
         if (state) this.#forget(state, slot);
       }
       this.shown.set(slot, this.frame);

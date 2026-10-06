@@ -15,6 +15,8 @@ import { DISPLAY, MSG, OP, VIEW, displayById, encodeFrame, encodeReset, encodePi
 import { loadLut } from './sound/lut.js';
 import { SoundManager } from './sound/manager.js';
 import { classifyRegion } from './sound/probe.js';
+import { loadCharset, charsFor, charsetCommands, reservedSlots, extRedraws } from './charset.js';
+import { setOverrides } from './glyphs.js';
 import { snapshot, paletteFor, cursorVisible } from './screen.js';
 import { THEME_NAMES, stepTheme, oscReply } from './colors.js';
 import { keyToBytes, MATRIX } from './keymap.js';
@@ -43,6 +45,7 @@ const { values: opt, positionals } = parseArgs({
     'sound-lut': { type: 'string', default: 'sid6581' },
     'sound-delay': { type: 'string' },
     'sound-out': { type: 'string' },
+    charset: { type: 'string' },
     verbose: { type: 'boolean', short: 'v', default: false },
   },
 });
@@ -101,6 +104,14 @@ try { soundLut = loadLut(opt['sound-lut']); } catch (e) { console.error(`[bridge
 const soundOn = opt.sound !== 'off';
 if (!['on', 'off'].includes(opt.sound)) { console.error('[bridge] --sound on or off'); process.exit(1); }
 
+// --charset FILE: glyphs for the C64 text and hi-res clients (charset.js), sent after each of its resets.
+let charset = null;
+if (opt.charset) {
+  try { charset = loadCharset(opt.charset); } catch (e) { console.error(`[bridge] ${e.message}`); process.exit(1); }
+}
+
+setOverrides(charset && charsFor(charset, display)); // the display starts as the C64 text client
+
 const clamp = (n, max) => Math.min(max, Math.max(0, n));
 const log = (...a) => console.error('[bridge]', ...a);
 const debug = (...a) => opt.verbose && log(...a);
@@ -155,6 +166,7 @@ function showTitle() {
 function setDisplay(d) {
   if (d === display) return;
   display = d;
+  setOverrides(charset && charsFor(charset, display));
   term.resize(termCols(), termRows());
   proc?.resize(termCols(), termRows());
   panX = Math.min(panX, panMaxX());
@@ -360,9 +372,11 @@ class Connection {
 
   sendFrame() {
     const want = snapshot(term, panX, display, theme, panY);
+    const reset = !this.state;
     const pal = paletteFor(display, theme);
     // After a reset, reload the client's extended glyphs too.
-    if (!this.state) this.glyphs = display.ext ? new GlyphCache(display) : null;
+    if (!this.state) this.glyphs = display.ext
+      ? new GlyphCache(display, charset && reservedSlots(charset, display), charset && extRedraws(charset, display)) : null;
     const glyphs = this.glyphs?.place(want, this.state) ?? [];
     const colour = display.hires ? pal.defaultFg << 4 | pal.screenBg : pal.defaultFg;
     const budget = display.hires ? IMAGE_FRAME_BYTES : Infinity;
@@ -373,6 +387,7 @@ class Connection {
     if (partial) dirty = true; // the rest goes in the next frame
     if (bytes.length === 1) return; // only FRAME marker: nothing changed
     bytes = glyphs.concat(bytes);
+    if (reset && charset) bytes = charsetCommands(charset, display).concat(bytes);
     if (this.restore) bytes.unshift(OP.VIEW, VIEW.TERMINAL, 0);
     this.restore = false;
     this.send(bytes);
