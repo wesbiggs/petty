@@ -176,9 +176,9 @@ for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-2, 0]]) {
     const { state } = encodeReset(before);
     const withMove = encodeFrame(state, after);
     const plain = encodeFrame(state, { ...after, move: false });
-    // (A map moving up is the full-width SCROLL's job, which was there already.)
-    if (dy !== 1 || dx) assert.ok(withMove.bytes.includes(OP.MOVE), 'uses MOVE');
-    assert.ok(withMove.bytes.length <= plain.bytes.length / (dy === 1 && !dx ? 1 : 2), `${withMove.bytes.length} bytes against ${plain.bytes.length}`);
+    // Always MOVE, never the full-width SCROLL: that would carry the status line up with the map until it was repainted.
+    assert.equal(withMove.bytes[0], OP.MOVE, 'starts with MOVE');
+    assert.ok(withMove.bytes.length <= plain.bytes.length / (dy === 1 && !dx ? 1 : 2) * 1.2, `${withMove.bytes.length} bytes against ${plain.bytes.length}`);
     const dec = new Decoder();
     dec.feed(encodeReset(before).bytes);
     dec.feed(withMove.bytes);

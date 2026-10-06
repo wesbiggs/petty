@@ -264,7 +264,9 @@ export function encodeFrame(state, want, budget = Infinity) {
   const { rows } = state;
   if (want.glyph.length !== state.glyph.length) throw new Error('frame size differs from screen state');
   let best = null;
-  for (let n = 0; n < rows; n++) {
+  // A game does not scroll the whole screen: SCROLL would carry its status line up with the map for
+  // as long as the repair takes to arrive. MOVE (below) moves only the map.
+  for (let n = 0; n < (want.move ? 1 : rows); n++) {
     // Only bother scrolling when the top row lines up with an old row.
     if (n > 0 && !rowMatches(state, want, n, 0)) continue;
     const frame = encodeScrolled(state, want, n);
@@ -305,8 +307,8 @@ function bestMove(state, want, best) {
 }
 
 // The source rectangle for shift (dx, dy): cells that match the old screen
-// only when shifted, in rows and columns with at least 3 such cells (so a
-// stray match elsewhere doesn't widen it), all of which fit the screen both
+// only when shifted, in the run of rows and the run of columns that hold most
+// of them (so a stray match elsewhere doesn't widen it), all of which fit the screen both
 // before and after. Null if there are too few.
 function moveRect(state, want, dx, dy) {
   const { cols, rows } = state;
@@ -325,14 +327,20 @@ function moveRect(state, want, dx, dy) {
     }
   }
   if (gain < MOVE_MIN_GAIN) return null;
+  // The run of rows (or columns) holding most of the gains, allowing gaps of up to 2 with none: on
+  // sparse ground (mostly one tile) a moved block has few cells that differ.
   const span = (n, len) => {
-    let best = null, from = -1;
-    for (let k = 0; k <= len; k++) {
-      if (k < len && n[k] >= 3) { if (from < 0) from = k; continue; }
-      if (from >= 0 && (!best || k - from > best[1] - best[0])) best = [from, k];
-      from = -1;
+    let best = null, from = -1, last = -1, sum = 0;
+    const close = () => { if (from >= 0 && (!best || sum > best.sum)) best = { from, to: last + 1, sum }; };
+    for (let k = 0; k < len; k++) {
+      if (!n[k]) continue;
+      if (from >= 0 && k - last > 3) { close(); from = -1; sum = 0; }
+      if (from < 0) from = k;
+      last = k;
+      sum += n[k];
     }
-    return best;
+    close();
+    return best && [best.from, best.to];
   };
   const ry = span(rowN, rows), rx = span(colN, cols);
   if (!ry || !rx) return null;
