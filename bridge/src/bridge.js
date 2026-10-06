@@ -4,6 +4,11 @@
 // larger and panned),
 // emulates the terminal headlessly, and streams screen diffs to the client
 // over TCP (VICE's RS-232, or a WiFi modem) or a serial device (--serial).
+//
+// By default there is one session, which a client that connects takes over and
+// which survives its reconnects. With --max-sessions N, every TCP connection
+// gets a session of its own (a pty, a terminal, a program), which ends when
+// the connection does, and a connection past N is refused.
 
 import net from 'node:net';
 import { readFileSync } from 'node:fs';
@@ -16,7 +21,6 @@ import { loadLut } from './sound/lut.js';
 import { SoundManager } from './sound/manager.js';
 import { classifyRegion } from './sound/probe.js';
 import { loadCharset, charsFor, charsetCommands, reservedSlots, extRedraws } from './charset.js';
-import { setOverrides } from './glyphs.js';
 import { snapshot, paletteFor, cursorVisible } from './screen.js';
 import { THEME_NAMES, stepTheme, oscReply } from './colors.js';
 import { keyToBytes, MATRIX } from './keymap.js';
@@ -46,6 +50,10 @@ const { values: opt, positionals } = parseArgs({
     'sound-delay': { type: 'string' },
     'sound-out': { type: 'string' },
     charset: { type: 'string' },
+    'max-sessions': { type: 'string' },
+    'idle-timeout': { type: 'string', default: '0' },
+    'on-exit': { type: 'string', default: 'restart' },
+    'control-host': { type: 'string', default: '127.0.0.1' },
     verbose: { type: 'boolean', short: 'v', default: false },
   },
 });
@@ -57,6 +65,26 @@ if (!THEME_NAMES.includes(opt.theme)) {
 
 if (!(Number.isInteger(Number(opt.scroll)) && Number(opt.scroll) > 0)) {
   console.error(`[bridge] --scroll ${opt.scroll}: use a whole number of lines, 1 or more`);
+  process.exit(1);
+}
+
+const MULTI = opt['max-sessions'] !== undefined; // a session for each connection
+const MAX_SESSIONS = MULTI ? Number(opt['max-sessions']) : 1;
+if (!(Number.isInteger(MAX_SESSIONS) && MAX_SESSIONS > 0)) {
+  console.error(`[bridge] --max-sessions ${opt['max-sessions']}: use a whole number, 1 or more`);
+  process.exit(1);
+}
+if (MULTI && opt.serial) {
+  console.error('[bridge] --max-sessions: a serial line is one session');
+  process.exit(1);
+}
+const IDLE_MS = Number(opt['idle-timeout']) * 1000; // 0 = never
+if (!(IDLE_MS >= 0)) {
+  console.error(`[bridge] --idle-timeout ${opt['idle-timeout']}: use seconds, or 0 for never`);
+  process.exit(1);
+}
+if (!['restart', 'close'].includes(opt['on-exit'])) {
+  console.error('[bridge] --on-exit restart or close');
   process.exit(1);
 }
 
@@ -84,21 +112,6 @@ if (opt.title && opt.title !== 'none') {
   }
 }
 
-// The client's screen, from its HELLO. Kept across reconnects, like the session.
-let display = DISPLAY.C64;
-
-// A terminal wider (--cols) or taller (--rows) than the display is shown
-// through a window that C=+CRSR→ and CTRL+CRSR↓ move in half-screen steps
-// (0-39, 20-59, 40-79 for 80 columns on a C64).
-const termCols = () => Math.max(display.cols, Number(opt.cols ?? 0));
-const termRows = () => Math.max(display.rows, Number(opt.rows ?? 0));
-const panMaxX = () => termCols() - display.cols;
-const panMaxY = () => termRows() - display.rows;
-let panX = 0, panY = 0;
-
-// Changed by C=+F1 or the control port (scripts/petty-ctl.js).
-let theme = opt.theme;
-
 let soundLut;
 try { soundLut = loadLut(opt['sound-lut']); } catch (e) { console.error(`[bridge] ${e.message}`); process.exit(1); }
 const soundOn = opt.sound !== 'off';
@@ -110,128 +123,217 @@ if (opt.charset) {
   try { charset = loadCharset(opt.charset); } catch (e) { console.error(`[bridge] ${e.message}`); process.exit(1); }
 }
 
-setOverrides(charset && charsFor(charset, display)); // the display starts as the C64 text client
-
 const clamp = (n, max) => Math.min(max, Math.max(0, n));
 const log = (...a) => console.error('[bridge]', ...a);
-const debug = (...a) => opt.verbose && log(...a);
 
-// --- terminal session (survives C64 reconnects) ---------------------------
+// --- sessions -------------------------------------------------------------------
+//
+// A session is a terminal and the program in it, drawn on one client's screen.
+// It survives that client's reconnects (a reset, a dropped call) unless
+// --max-sessions gives every connection its own, which end with it.
 
-const term = new xterm.Terminal({ cols: termCols(), rows: termRows(), scrollback: 200, allowProposedApi: true });
-let proc = null;
-let started = false; // the program has been spawned at least once
-let holding = null; // timer while the start screen shows
-let dirty = true;
-let syncSince = 0;
+const sessions = new Set();
+let nextId = 1;
 
-function spawn() {
-  clearTimeout(holding);
-  holding = null;
-  started = true;
-  // reset() leaves the cursor hidden if it was (by the start screen, or a
-  // program that exited without showing it).
-  term.reset();
-  term.write('\x1b[?25h');
-  proc = pty.spawn(cmd, cmdArgs, {
-    name: 'xterm-256color',
-    cols: termCols(),
-    rows: termRows(),
-    cwd: process.cwd(),
-    env: {
-      ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor',
-      PATH: `${soundOn ? `${SOUND_BIN}:` : ''}${process.env.PATH}:${BIN}`,
-      ...(soundOn ? { PETTY_SOUND: '1' } : {}),
-    },
-  });
-  proc.onData(d => term.write(d));
-  proc.onExit(({ exitCode }) => {
-    log(`${cmd} exited (${exitCode})`);
-    proc = null;
-    term.write(`\r\n\x1b[0;33m[${cmd} exited - press RETURN to restart]\x1b[0m`);
-  });
-  log(`started ${cmd} ${cmdArgs.join(' ')}`);
+class Session {
+  constructor() {
+    this.id = nextId++;
+    this.log = MULTI ? (...a) => log(`#${this.id}`, ...a) : log;
+    this.debug = (...a) => opt.verbose && this.log(...a);
+    this.conn = null;
+    this.proc = null;
+    this.started = false; // the program has been spawned at least once
+    this.holding = null; // timer while the start screen shows
+    this.dirty = true;
+    this.syncSince = 0;
+    this.destroyed = false;
+    this.closeWhenIdle = false; // --on-exit close: hang up once the last screen is out
+    // The client's screen, from its HELLO. Kept across reconnects.
+    this.display = DISPLAY.C64;
+    this.own = charset && charsFor(charset, this.display); // characters --charset gave their own codes
+    this.panX = 0;
+    this.panY = 0;
+    // Changed by C=+F1 or the control port (scripts/petty-ctl.js).
+    this.theme = opt.theme;
+    this.term = new xterm.Terminal({ cols: this.termCols(), rows: this.termRows(), scrollback: 200, allowProposedApi: true });
+    const { term } = this;
+    // Replies to terminal queries (DA, DSR, ...) go back to the program.
+    term.onData(d => this.proc?.write(d));
+    // Colour queries get the theme's colours on the connected display, so
+    // programs that pick light or dark by the background get it right.
+    for (const code of [4, 10, 11]) {
+      term.parser.registerOscHandler(code, data => {
+        const reply = oscReply(code, data, paletteFor(this.display, this.theme));
+        if (reply === null) return false;
+        this.proc?.write(reply);
+        return true;
+      });
+    }
+    term.onWriteParsed(() => { this.dirty = true; });
+    // Inline images (imgcat): drawn on the hi-res screen, as blocks
+    // on the others. Transparency shows the theme's screen colour. On the
+    // hi-res screen, a Koala picture (or any, with imgcat -t koala) shows full
+    // screen, in multicolour, until a key is pressed.
+    this.images = new InlineImages(term, () => {
+      const vic = paletteFor(DISPLAY.C64_HIRES, this.theme);
+      return { maxCols: this.display.cols, maxRows: this.display.rows, bg: vic.rgb[vic.screenBg] };
+    }, this.log, (file, args) => {
+      const pic = this.display.hires && this.conn && multicolourPicture(file, args);
+      if (pic) this.conn.showPicture(pic);
+      return !!pic;
+    });
+    term.parser.registerOscHandler(1337, data => this.images.osc(data));
+    // Sound: say and play (bridge/bin/sound) ask for it with OSC 8347; see sound/manager.js. The C64 plays
+    // it modally, the screen still, and whatever the program prints meanwhile is drawn after.
+    this.sound = new SoundManager({
+      log: this.log, debug: this.debug, enabled: soundOn,
+      tts: opt.tts, voice: opt.voice,
+      weight: opt['sound-weight'].split(',').filter(Boolean).map(Number),
+      lut: soundLut, out: opt['sound-out'],
+      delay: opt['sound-delay'] === undefined ? undefined : Number(opt['sound-delay']),
+      getConn: () => this.conn,
+      redraw: () => { this.dirty = true; },
+    });
+    term.parser.registerOscHandler(8347, data => this.sound.osc(data));
+    sessions.add(this);
+  }
+
+  // A terminal wider (--cols) or taller (--rows) than the display is shown
+  // through a window that C=+CRSR→ and CTRL+CRSR↓ move in half-screen steps
+  // (0-39, 20-59, 40-79 for 80 columns on a C64).
+  termCols() { return Math.max(this.display.cols, Number(opt.cols ?? 0)); }
+  termRows() { return Math.max(this.display.rows, Number(opt.rows ?? 0)); }
+  panMaxX() { return this.termCols() - this.display.cols; }
+  panMaxY() { return this.termRows() - this.display.rows; }
+
+  // A client takes over: the one before it, if any, is dropped.
+  attach(sock) {
+    this.conn?.sock.destroy();
+    this.conn = new Connection(this, sock);
+    this.dirty = true;
+    if (this.proc || this.holding) return;
+    if (this.started || !title) return this.spawn();
+    this.showTitle();
+    this.holding = setTimeout(() => this.spawn(), TITLE_MS);
+  }
+
+  // The client went away. A session of its own ends with it.
+  onDisconnect() {
+    if (MULTI) this.destroy();
+  }
+
+  destroy() {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    clearTimeout(this.holding);
+    this.holding = null;
+    sessions.delete(this);
+    this.sound.queue.length = 0;
+    this.conn?.sound?.end?.('closed');
+    this.proc?.kill();
+    this.proc = null;
+    this.term.dispose();
+    const { conn } = this;
+    if (conn) { this.conn = null; conn.sock.destroy(); }
+    this.log('session ended');
+  }
+
+  spawn() {
+    clearTimeout(this.holding);
+    this.holding = null;
+    this.started = true;
+    // reset() leaves the cursor hidden if it was (by the start screen, or a
+    // program that exited without showing it).
+    this.term.reset();
+    this.term.write('\x1b[?25h');
+    const proc = pty.spawn(cmd, cmdArgs, {
+      name: 'xterm-256color',
+      cols: this.termCols(),
+      rows: this.termRows(),
+      cwd: process.cwd(),
+      env: {
+        ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor',
+        PATH: `${soundOn ? `${SOUND_BIN}:` : ''}${process.env.PATH}:${BIN}`,
+        ...(soundOn ? { PETTY_SOUND: '1' } : {}),
+        PETTY_SESSION: String(this.id),
+      },
+    });
+    this.proc = proc;
+    proc.onData(d => { if (!this.destroyed) this.term.write(d); });
+    proc.onExit(({ exitCode }) => {
+      if (this.destroyed || this.proc !== proc) return;
+      this.log(`${cmd} exited (${exitCode})`);
+      this.proc = null;
+      if (opt['on-exit'] === 'close') {
+        this.closeWhenIdle = true;
+        this.dirty = true;
+        return;
+      }
+      this.term.write(`\r\n\x1b[0;33m[${cmd} exited - press RETURN to restart]\x1b[0m`);
+    });
+    this.log(`started ${cmd} ${cmdArgs.join(' ')}`);
+  }
+
+  // Draws the start screen, centred on a display wider than it.
+  showTitle() {
+    const pad = Math.max(0, Math.floor((this.display.cols - TITLE_COLS) / 2));
+    const indent = pad ? `\x1b[${pad}C` : '';
+    this.term.reset();
+    // Hide the cursor (spawn shows it again). Indent after the leading
+    // control sequences (clear the screen) and after every newline.
+    this.term.write('\x1b[?25l' + title.replace(/^(?:\x1b\[[\d;?]*[A-Za-z])*/, m => m + indent).replaceAll('\n', '\n' + indent));
+  }
+
+  setDisplay(d) {
+    if (d === this.display) return;
+    this.display = d;
+    this.own = charset && charsFor(charset, d);
+    this.term.resize(this.termCols(), this.termRows());
+    this.proc?.resize(this.termCols(), this.termRows());
+    this.panX = Math.min(this.panX, this.panMaxX());
+    this.panY = Math.min(this.panY, this.panMaxY());
+    this.log(`display is ${d.name} ${d.cols}x${d.rows}, terminal ${this.termCols()}x${this.termRows()}`);
+  }
+
+  // A full redraw sets the new border and screen colours. Programs that asked
+  // for the colours (OSC 10/11) at startup keep their answer until restarted.
+  setTheme(name) {
+    if (name === this.theme) return;
+    this.theme = name;
+    if (this.conn) this.conn.state = null;
+    this.dirty = true;
+    this.log(`theme is ${name}`);
+  }
+
+  tick() {
+    const { conn } = this;
+    if (!conn) return;
+    if (IDLE_MS && !conn.sound && Date.now() - conn.lastKey > IDLE_MS) {
+      this.log(`idle for ${opt['idle-timeout']} s - disconnecting`);
+      conn.sock.destroy();
+      return;
+    }
+    if (conn.inFlight || conn.sound) return; // a sound holds the screen
+    if (conn.picture) return conn.sendPicture();
+    if (!this.dirty) {
+      if (this.closeWhenIdle) conn.sock.end(); // the program's last screen is out
+      return;
+    }
+    if (this.term.modes.synchronizedOutputMode) {
+      this.syncSince ||= Date.now();
+      if (Date.now() - this.syncSince < SYNC_MAX_MS) return;
+    }
+    this.syncSince = 0;
+    this.dirty = false;
+    conn.sendFrame();
+  }
 }
-
-// Draws the start screen, centred on a display wider than it.
-function showTitle() {
-  const pad = Math.max(0, Math.floor((display.cols - TITLE_COLS) / 2));
-  const indent = pad ? `\x1b[${pad}C` : '';
-  term.reset();
-  // Hide the cursor (spawn shows it again). Indent after the leading
-  // control sequences (clear the screen) and after every newline.
-  term.write('\x1b[?25l' + title.replace(/^(?:\x1b\[[\d;?]*[A-Za-z])*/, m => m + indent).replaceAll('\n', '\n' + indent));
-}
-
-function setDisplay(d) {
-  if (d === display) return;
-  display = d;
-  setOverrides(charset && charsFor(charset, display));
-  term.resize(termCols(), termRows());
-  proc?.resize(termCols(), termRows());
-  panX = Math.min(panX, panMaxX());
-  panY = Math.min(panY, panMaxY());
-  log(`display is ${display.name} ${display.cols}x${display.rows}, terminal ${termCols()}x${termRows()}`);
-}
-
-// A full redraw sets the new border and screen colours. Programs that asked
-// for the colours (OSC 10/11) at startup keep their answer until restarted.
-function setTheme(name) {
-  if (name === theme) return;
-  theme = name;
-  if (conn) conn.state = null;
-  dirty = true;
-  log(`theme is ${theme}`);
-}
-
-// Replies to terminal queries (DA, DSR, ...) go back to the program.
-term.onData(d => proc?.write(d));
-
-// Colour queries get the theme's colours on the connected display, so
-// programs that pick light or dark by the background get it right.
-for (const code of [4, 10, 11]) {
-  term.parser.registerOscHandler(code, data => {
-    const reply = oscReply(code, data, paletteFor(display, theme));
-    if (reply === null) return false;
-    proc?.write(reply);
-    return true;
-  });
-}
-term.onWriteParsed(() => { dirty = true; });
-
-// Inline images (imgcat): drawn on the hi-res screen, as blocks
-// on the others. Transparency shows the theme's screen colour. On the
-// hi-res screen, a Koala picture (or any, with imgcat -t koala) shows full
-// screen, in multicolour, until a key is pressed.
-const images = new InlineImages(term, () => {
-  const vic = paletteFor(DISPLAY.C64_HIRES, theme);
-  return { maxCols: display.cols, maxRows: display.rows, bg: vic.rgb[vic.screenBg] };
-}, log, (file, args) => {
-  const pic = display.hires && conn && multicolourPicture(file, args);
-  if (pic) conn.showPicture(pic);
-  return !!pic;
-});
-term.parser.registerOscHandler(1337, data => images.osc(data));
-
-// Sound: say and play (bridge/bin/sound) ask for it with OSC 8347; see sound/manager.js. The C64 plays
-// it modally, the screen still, and whatever the program prints meanwhile is drawn after.
-const sound = new SoundManager({
-  log, debug, enabled: soundOn,
-  tts: opt.tts, voice: opt.voice,
-  weight: opt['sound-weight'].split(',').filter(Boolean).map(Number),
-  lut: soundLut, out: opt['sound-out'],
-  delay: opt['sound-delay'] === undefined ? undefined : Number(opt['sound-delay']),
-  getConn: () => conn,
-  redraw: () => { dirty = true; },
-});
-term.parser.registerOscHandler(8347, data => sound.osc(data));
 
 // --- C64 connection ----------------------------------------------------------
 
-let conn = null;
-
 class Connection {
-  constructor(sock) {
+  constructor(session, sock) {
+    this.s = session;
     this.sock = sock;
     this.state = null; // null = C64 screen unknown, needs a reset
     this.inFlight = false;
@@ -242,11 +344,13 @@ class Connection {
     this.picture = null; // frames of a full-screen picture still to send, while it shows
     this.restore = false; // back from a picture: switch to the terminal screen
     this.since = Date.now();
+    this.lastKey = Date.now(); // for --idle-timeout
     this.hasSound = false; // the client can play sound (its display says so)
     this.region = null; // PAL or NTSC, from PROBE
     this.sound = null; // while a sound plays: { credits, onCredit, end }; the screen waits
     this.ackWaiters = []; // callbacks for the next ACK (sendAndWait)
     sock.setNoDelay?.(true);
+    sock.setKeepAlive?.(true, 30000); // a call that drops without a FIN still ends, and frees its session
     sock.on('data', d => this.onData(d));
     sock.on('close', () => this.close('closed'));
     sock.on('error', e => this.close(e.message));
@@ -254,14 +358,17 @@ class Connection {
 
   close(why) {
     clearTimeout(this.ackTimer); // also for a connection that a newer one replaced
-    if (conn !== this) return;
-    log(`client disconnected (${why})`);
+    const { s } = this;
+    if (s.conn !== this) return;
+    s.log(`client disconnected (${why})`);
     this.sound?.end?.('closed');
     for (const w of this.ackWaiters.splice(0)) w.reject(new Error('C64 disconnected'));
-    conn = null;
+    s.conn = null;
+    s.onDisconnect();
   }
 
   onData(data) {
+    const { s } = this;
     this.rx.push(...data);
     while (this.rx.length) {
       const type = this.rx[0];
@@ -276,44 +383,48 @@ class Connection {
         if (this.sound) { this.sound.credits++; this.sound.onCredit?.(); }
       } else if (type === MSG.DONE || type === MSG.ABORT) {
         this.rx.shift();
-        debug(type === MSG.DONE ? 'sound done' : 'sound stopped on the C64');
+        s.debug(type === MSG.DONE ? 'sound done' : 'sound stopped on the C64');
         this.sound?.end?.(type === MSG.DONE ? 'done' : 'abort');
       } else if (type === MSG.PROBE) {
         if (this.rx.length < 3) return;
         const [, lo, hi] = this.rx.splice(0, 3);
         this.region = classifyRegion(lo | hi << 8);
-        log(`C64 is ${this.region.name} (${lo | hi << 8} cycles a frame)`);
+        s.log(`C64 is ${this.region.name} (${lo | hi << 8} cycles a frame)`);
       } else if (type === MSG.HELLO || type === MSG.HELLO_ON) {
         if (type === MSG.HELLO_ON && this.rx.length < 2) return;
         const [, id = DISPLAY.C64.id] = this.rx.splice(0, type === MSG.HELLO ? 1 : 2);
         const d = displayById(id);
-        if (!d) log(`unknown display ${id}, assuming C64`);
-        log(`${(d ?? DISPLAY.C64).name} says hello`);
-        setDisplay(d ?? DISPLAY.C64);
+        if (!d) s.log(`unknown display ${id}, assuming C64`);
+        s.log(`${(d ?? DISPLAY.C64).name} says hello`);
+        s.setDisplay(d ?? DISPLAY.C64);
         this.sound?.end?.('closed'); // the client restarted
-        this.hasSound = soundOn && !!display.sound;
+        this.hasSound = soundOn && !!s.display.sound;
         this.region = null;
         this.since = Date.now();
+        this.lastKey = Date.now();
         if (this.hasSound) this.sock.write(Buffer.from([OP.PROBE]));
-        if (holding) showTitle();
+        if (s.holding) s.showTitle();
         this.state = null;
         this.picture = null;
         this.restore = false;
         this.inFlight = false;
         clearTimeout(this.ackTimer);
-        dirty = true;
+        s.dirty = true;
       } else if (type === MSG.KEY) {
         if (this.rx.length < 3) return;
         const [, code, mods] = this.rx.splice(0, 3);
+        this.lastKey = Date.now();
         this.onKey(code, mods);
       } else {
-        debug(`junk byte ${type}`);
+        s.debug(`junk byte ${type}`);
         this.rx.shift();
       }
     }
   }
 
   onKey(code, mods) {
+    const { s } = this;
+    const { term, display } = s;
     // Any key ends a full-screen picture, and is not passed on.
     if (this.picture) {
       this.endPicture();
@@ -328,52 +439,54 @@ class Connection {
         altScreen: term.buffer.active.type === 'alternate',
       },
     });
-    debug(`key ${MATRIX[code]} mods=${mods} -> ${JSON.stringify(bytes)}`);
+    s.debug(`key ${MATRIX[code]} mods=${mods} -> ${JSON.stringify(bytes)}`);
     if (!bytes) return;
     if (bytes.pan) {
-      const x = clamp(panX + bytes.pan * display.cols / 2, panMaxX());
-      if (x !== panX) { panX = x; dirty = true; debug(`pan to column ${panX}`); }
+      const x = clamp(s.panX + bytes.pan * display.cols / 2, s.panMaxX());
+      if (x !== s.panX) { s.panX = x; s.dirty = true; s.debug(`pan to column ${x}`); }
       return;
     }
     if (bytes.panY) {
-      const y = clamp(panY + bytes.panY * Math.floor(display.rows / 2), panMaxY());
-      if (y !== panY) { panY = y; dirty = true; debug(`pan to row ${panY}`); }
+      const y = clamp(s.panY + bytes.panY * Math.floor(display.rows / 2), s.panMaxY());
+      if (y !== s.panY) { s.panY = y; s.dirty = true; s.debug(`pan to row ${y}`); }
       return;
     }
     if (bytes.theme) {
-      setTheme(stepTheme(theme, bytes.theme));
+      s.setTheme(stepTheme(s.theme, bytes.theme));
       return;
     }
     if (bytes.scroll) {
       term.scrollLines(bytes.scroll * SCROLL_LINES);
-      dirty = true;
+      s.dirty = true;
       return;
     }
     // Any other key ends the start screen, and is not passed on.
-    if (holding) {
-      spawn();
+    if (s.holding) {
+      s.spawn();
       return;
     }
     // Typing jumps back to the live screen, like iTerm2.
     const buf = term.buffer.active;
     if (buf.viewportY !== buf.baseY) {
       term.scrollToBottom();
-      dirty = true;
+      s.dirty = true;
     }
     // ...and, in a terminal taller than the display, to the cursor's row.
-    const y = clamp(Math.min(buf.cursorY, Math.max(panY, buf.cursorY - display.rows + 1)), panMaxY());
-    if (y !== panY && cursorVisible(term)) { panY = y; dirty = true; debug(`pan to row ${panY}`); }
-    if (!proc) {
-      if (bytes === '\r') spawn();
+    const y = clamp(Math.min(buf.cursorY, Math.max(s.panY, buf.cursorY - display.rows + 1)), s.panMaxY());
+    if (y !== s.panY && cursorVisible(term)) { s.panY = y; s.dirty = true; s.debug(`pan to row ${y}`); }
+    if (!s.proc) {
+      if (bytes === '\r' && !s.closeWhenIdle) s.spawn();
       return;
     }
-    proc.write(bytes);
+    s.proc.write(bytes);
   }
 
   sendFrame() {
-    const want = snapshot(term, panX, display, theme, panY);
+    const { s } = this;
+    const { display } = s;
+    const want = snapshot(s.term, s.panX, display, s.theme, s.panY, s.own);
     const reset = !this.state;
-    const pal = paletteFor(display, theme);
+    const pal = paletteFor(display, s.theme);
     // After a reset, reload the client's extended glyphs too.
     if (!this.state) this.glyphs = display.ext
       ? new GlyphCache(display, charset && reservedSlots(charset, display), charset && extRedraws(charset, display)) : null;
@@ -384,7 +497,7 @@ class Connection {
       ? encodeFrame(this.state, want, budget)
       : encodeReset(want, pal.border, pal.screenBg, colour, budget);
     this.state = state;
-    if (partial) dirty = true; // the rest goes in the next frame
+    if (partial) s.dirty = true; // the rest goes in the next frame
     if (bytes.length === 1) return; // only FRAME marker: nothing changed
     bytes = glyphs.concat(bytes);
     if (reset && charset) bytes = charsetCommands(charset, display).concat(bytes);
@@ -410,7 +523,7 @@ class Connection {
     this.picture = null;
     this.restore = true;
     this.state = null;
-    dirty = true;
+    this.s.dirty = true;
   }
 
   // A frame, and resolves on its ACK. (Rejects if the C64 goes away; if the ACK does not come, the
@@ -428,43 +541,41 @@ class Connection {
   }
 
   send(bytes) {
+    const { s } = this;
     this.sock.write(Buffer.from(bytes));
     this.bytesSent += bytes.length;
-    debug(`frame ${bytes.length} bytes`);
+    s.debug(`frame ${bytes.length} bytes`);
     this.inFlight = true;
     clearTimeout(this.ackTimer); // an earlier frame's timer must not fire later
     this.ackTimer = setTimeout(() => {
-      (this.timeouts++ ? debug : log)('ACK timeout - forcing full redraw');
+      (this.timeouts++ ? s.debug : s.log)('ACK timeout - forcing full redraw');
       if (this.picture) this.endPicture();
       this.state = null;
       this.inFlight = false;
-      dirty = true;
+      s.dirty = true;
       for (const w of this.ackWaiters.splice(0)) w.resolve();
     }, ACK_TIMEOUT_MS);
   }
 }
 
-function tick() {
-  if (!conn || conn.inFlight || conn.sound) return; // a sound holds the screen
-  if (conn.picture) return conn.sendPicture();
-  if (!dirty) return;
-  if (term.modes.synchronizedOutputMode) {
-    syncSince ||= Date.now();
-    if (Date.now() - syncSince < SYNC_MAX_MS) return;
-  }
-  syncSince = 0;
-  dirty = false;
-  conn.sendFrame();
-}
+setInterval(() => { for (const s of sessions) s.tick(); }, FRAME_MS);
 
-function attach(sock) {
-  if (conn) conn.sock.destroy();
-  conn = new Connection(sock);
-  dirty = true;
-  if (proc || holding) return;
-  if (started || !title) return spawn();
-  showTitle();
-  holding = setTimeout(spawn, TITLE_MS);
+// --- listening ---------------------------------------------------------------
+
+let shared = null; // the one session, unless every connection has its own
+
+function accept(sock) {
+  if (MULTI) {
+    if (sessions.size >= MAX_SESSIONS) {
+      log(`refused ${sock.remoteAddress}: ${MAX_SESSIONS} sessions already`);
+      sock.destroy();
+      return;
+    }
+    new Session().attach(sock);
+  } else {
+    shared ??= new Session();
+    shared.attach(sock);
+  }
 }
 
 // A serial device is one connection for good: reopened if it goes away (a
@@ -483,7 +594,7 @@ function openSerialPort() {
   serialError = null;
   log(`opened ${opt.serial} at ${opt.baud} baud - start the C64 client now`);
   sock.on('close', () => setTimeout(openSerialPort, SERIAL_RETRY_MS));
-  attach(sock);
+  accept(sock);
 }
 
 if (opt.serial) {
@@ -491,29 +602,48 @@ if (opt.serial) {
 } else {
   net.createServer(sock => {
     log(`client connected from ${sock.remoteAddress}:${sock.remotePort}`);
-    attach(sock);
+    accept(sock);
   }).listen(Number(opt.port), opt.host, () => {
-    log(`listening on ${opt.host}:${opt.port} - start VICE / the C64 client now`);
+    log(`listening on ${opt.host}:${opt.port} - start VICE / the C64 client now${MULTI ? ` (up to ${MAX_SESSIONS} sessions)` : ''}`);
   });
 }
 
 // --- control port: one command per line, one reply line each -------------
+//
+// With one session, commands act on it. With several, `sessions` lists them and
+// the others take a session first: `@3 theme amber`, `@3 say hello`, `@3 kick`.
 
 function control(line) {
-  const [cmd, ...words] = line.trim().split(/\s+/);
-  const arg = words[0];
-  if (cmd === 'say') return sound.add({ text: words.join(' ') }), 'queued';
-  if (cmd === 'play') return sound.add({ path: words.join(' ') }), 'queued';
-  if (cmd === 'theme') {
-    if (!arg) return `${theme} (${THEME_NAMES.join(', ')})`;
-    const name = arg === 'next' ? stepTheme(theme, 1) : arg === 'prev' ? stepTheme(theme, -1) : arg;
-    if (!THEME_NAMES.includes(name)) return `error: unknown theme ${arg}: use ${THEME_NAMES.join(', ')}, next or prev`;
-    setTheme(name);
-    return theme;
+  let words = line.trim().split(/\s+/);
+  if (words[0] === 'sessions') {
+    return [...sessions].map(s => `#${s.id} ${s.conn ? s.display.name : 'no client'} ${s.theme}`).join('; ') || 'none';
   }
-  return `error: unknown command ${cmd}: use theme [name|next|prev], say TEXT or play FILE`;
+  let session;
+  if (/^@\d+$/.test(words[0])) {
+    session = [...sessions].find(s => s.id === Number(words[0].slice(1)));
+    if (!session) return `error: no session ${words[0]}`;
+    words = words.slice(1);
+  } else if (sessions.size === 1) {
+    [session] = sessions;
+  } else {
+    return sessions.size ? 'error: several sessions: say which, as @N (see: sessions)' : 'error: no session';
+  }
+  const [cmd, ...rest] = words;
+  const arg = rest[0];
+  if (cmd === 'say') return session.sound.add({ text: rest.join(' ') }), 'queued';
+  if (cmd === 'play') return session.sound.add({ path: rest.join(' ') }), 'queued';
+  if (cmd === 'kick') return session.destroy(), 'ended';
+  if (cmd === 'theme') {
+    if (!arg) return `${session.theme} (${THEME_NAMES.join(', ')})`;
+    const name = arg === 'next' ? stepTheme(session.theme, 1) : arg === 'prev' ? stepTheme(session.theme, -1) : arg;
+    if (!THEME_NAMES.includes(name)) return `error: unknown theme ${arg}: use ${THEME_NAMES.join(', ')}, next or prev`;
+    session.setTheme(name);
+    return session.theme;
+  }
+  return `error: unknown command ${cmd}: use sessions, [@N] theme [name|next|prev], say TEXT, play FILE or kick`;
 }
 
+// Loopback unless --control-host says otherwise: it can make the bridge play any file on the host.
 net.createServer(sock => {
   let buf = '';
   sock.setEncoding('utf8');
@@ -528,10 +658,8 @@ net.createServer(sock => {
   });
   sock.on('error', () => {});
 }).on('error', e => log(`control port: ${e.message}`))
-  .listen(CONTROL_PORT, opt.host, () => log(`control on ${opt.host}:${CONTROL_PORT}`));
+  .listen(CONTROL_PORT, opt['control-host'], () => log(`control on ${opt['control-host']}:${CONTROL_PORT}`));
 
-setInterval(tick, FRAME_MS);
-
-const shutdown = () => { proc?.kill(); process.exit(0); };
+const shutdown = () => { for (const s of sessions) s.proc?.kill(); process.exit(0); };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);

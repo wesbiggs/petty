@@ -43,7 +43,7 @@ make vicehires        # ...or the C64 with the 40-column hi-res screen
 
 Start the bridge first, because VICE connects when the client enables the ACIA.
 To run Claude Code directly: `make bridge CMD="-- claude"`, or
-`node bridge/src/bridge.js [--port N | --serial DEV [--baud N]] [--host H] [--fps N] [--cols N] [--rows N] [--scroll N] [--theme T] [--control N] [--title FILE] [--charset FILE] [-v] -- <cmd> [args...]`.
+`node bridge/src/bridge.js [--port N | --serial DEV [--baud N]] [--host H] [--fps N] [--cols N] [--rows N] [--scroll N] [--theme T] [--control N] [--title FILE] [--charset FILE] [--max-sessions N] [--idle-timeout S] [--on-exit restart|close] [--control-host H] [-v] -- <cmd> [args...]`.
 
 When a client first connects, the bridge shows a start screen,
 [bridge/title.ans](bridge/title.ans), for four seconds before it starts the
@@ -67,8 +67,8 @@ make theme T=amber    # or T=next / T=prev; no T shows the current theme
 node bridge/scripts/petty-ctl.js [--port N] theme amber
 ```
 
-`petty-ctl.js` talks to the bridge's control port, which listens on `--host`
-at `--port` + 1 (6465) unless `--control N` says otherwise. The screen is
+`petty-ctl.js` talks to the bridge's control port, which listens on `--control-host`
+(127.0.0.1: it can make the bridge play any file on the host) at `--port` + 1 (6465) unless `--control N` says otherwise. The screen is
 redrawn in the new colours at once, but a program that asked for the colours
 at startup keeps its answer until it restarts: Claude Code started on `dark`
 keeps its dark-mode colours after a switch to `light`.
@@ -235,6 +235,28 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
   ```bash
   node bridge/scripts/prg2pic.js picture_exe.prg      # writes picture_exe.koa (or .dd)
   ```
+
+## Several clients at once
+
+By default the bridge has one session: a client that connects takes it over, and it survives that client's reconnects.
+`--max-sessions N` gives every TCP connection a session of its own (its own pty, terminal and program, with `PETTY_SESSION=id` in its environment),
+for a program that serves several players:
+
+```bash
+node bridge/src/bridge.js --host 0.0.0.0 --title none --max-sessions 20 --idle-timeout 600 --on-exit close -- ./mygame
+```
+
+- A session ends when its connection does, and kills its program. A connection past N is closed at once, and logged.
+  TCP keepalive is on, so a call that dropped without a goodbye still ends and frees its place.
+- `--idle-timeout S` hangs up on a client that has pressed no key for S seconds (not while a sound plays). 0, the default, never.
+- `--on-exit close` hangs up when the program exits (after the last screen is out), instead of waiting for RETURN to restart it.
+- Each session has its own screen, display (a C64 and a C128 can play together), theme, pan position and sound queue.
+  `--charset` and the other options are shared.
+- The bridge runs whatever `--` names for anyone who connects, so name a program and not a shell, and add authentication in it.
+  Run it as a user that can do little else.
+- A serial line is always one session, so it can't be combined with `--max-sessions`.
+- The control port takes `sessions` (list), and `@N` before a command picks a session: `@3 theme amber`, `@3 say hi`, `@3 kick`.
+  Without `@N`, a command acts on the only session.
 
 ## Custom character set (the C64 text and hi-res clients)
 

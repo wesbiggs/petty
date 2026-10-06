@@ -2,9 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DISPLAY, Decoder } from '../src/protocol.js';
 import { parseCharset, charsetCommands, charsFor, reservedSlots, extRedraws, CHARSET_ADDR, FIXED } from '../src/charset.js';
+import xterm from '@xterm/headless';
+import { snapshot } from '../src/screen.js';
 import { GlyphCache } from '../src/glyphcache.js';
 import { EXT, EXT_GLYPHS, extendedGlyph } from '../src/extglyphs.js';
-import { toScreenCode, setOverrides } from '../src/glyphs.js';
+import { toScreenCode } from '../src/glyphs.js';
 
 const WALL = ['########', '#...#...', '########', '..#...#.', '########', '#...#...', '########', '..#...#.'];
 
@@ -37,15 +39,6 @@ test('charsetPokes: glyphs and their inverses land in the client\'s character RA
   assert.equal(d.mem[CHARSET_ADDR + 37 * 8], 0, 'next slot untouched');
 });
 
-test('setOverrides: a new character draws as its slot, and goes away again', () => {
-  const { chars } = parseCharset({ '': { slot: 112, rows: WALL } });
-  assert.equal(toScreenCode(''), toScreenCode('?'));
-  setOverrides(chars);
-  assert.equal(toScreenCode(''), 112);
-  setOverrides(null);
-  assert.equal(toScreenCode(''), toScreenCode('?'));
-});
-
 test('hi-res: GLYPH for every slot, 128-255 kept out of the cache, ext glyphs redrawn', () => {
   const H = DISPLAY.C64_HIRES;
   const cs = parseCharset({ '#': WALL, '\uE000': { slot: 200, rows: WALL }, '●': [1, 2, 3, 4, 5, 6, 7, 8] });
@@ -74,4 +67,13 @@ test('a fixed slot passes through the cache even when no extended glyph is on sc
   const want = { glyph: Int32Array.from([FIXED + 200, 32]), color: new Int16Array(2) };
   assert.deepEqual(cache.place(want, null), []);
   assert.deepEqual([...want.glyph], [200, 32]);
+});
+
+test('snapshot draws a new character as its slot, only given its own map', async () => {
+  const term = new xterm.Terminal({ cols: 40, rows: 25, allowProposedApi: true });
+  await new Promise(r => term.write('a\uE000', r));
+  const { chars } = parseCharset({ '\uE000': { slot: 112, rows: WALL } });
+  const mine = snapshot(term, 0, DISPLAY.C64, 'dark', 0, charsFor({ chars, glyphs: new Map([[112, 0]]) }, DISPLAY.C64));
+  assert.equal(mine.glyph[1], 112);
+  assert.equal(snapshot(term).glyph[1], toScreenCode('?'), 'another session has no such character');
 });

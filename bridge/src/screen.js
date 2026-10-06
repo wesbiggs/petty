@@ -2,7 +2,7 @@
 // (C64 colour numbers, or VDC attributes on a C128).
 
 import { DISPLAY, VDC, HIRES_UNDERLINE } from './protocol.js';
-import { toScreenCode, ownCode, INVERSE, SPACE } from './glyphs.js';
+import { toScreenCode, INVERSE, SPACE } from './glyphs.js';
 import { palette, VIC_RGB } from './colors.js';
 import { IMAGE, imageCell, imageKey, imageShade } from './image.js';
 import { shareColours } from './soft80.js';
@@ -55,7 +55,8 @@ export function cursorVisible(term) {
 // background, and inline images are glyphs from IMAGE up (image.js); other
 // displays show an image as blocks of its colours. On a display with `pair`
 // cells, the result also has `sprites` (see soft80.js).
-export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', panY = 0) {
+// `own`: characters --charset gave codes of their own on this display (charset.js charsFor).
+export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', panY = 0, own = null) {
   const { cols, rows } = display;
   const pal = paletteFor(display, theme);
   const glyph = new Int32Array(cols * rows);
@@ -87,7 +88,7 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', 
       }
 
       const chars = cell.getWidth() === 0 || cell.isInvisible() ? '' : cell.getChars();
-      let g = ownCode(chars) ?? ((display.ext && extendedGlyph(chars)) || toScreenCode(chars));
+      let g = own?.get(chars) ?? ((display.ext && extendedGlyph(chars)) || toScreenCode(chars));
       let fg = cellFg(cell, pal);
       let bg = cellBg(cell, pal);
       // The foreground colours are adjusted to read on the screen colour

@@ -112,29 +112,16 @@ for (const [from, to] of Object.entries(INVERSES)) table.set(from, table.get(to)
 const cache = new Map();
 const UNKNOWN = asciiCode('?');
 
-// Characters that --charset gives a screen code of their own (charset.js), or
-// null. Set while the connected client is one that has loaded them.
-let overrides = null;
-export function setOverrides(map) {
-  overrides = map?.size ? map : null;
-  cache.clear();
-}
-
-// The screen code --charset gave this text, or undefined.
-export const ownCode = chars => overrides?.get(chars);
-
 // Map a terminal cell's text (one grapheme, may be '' for blank) to a screen code.
 export function toScreenCode(chars) {
   if (chars === '' || chars === ' ') return SPACE;
-  const own = overrides?.get(chars);
-  if (own !== undefined) return own;
   let code = table.get(chars);
   if (code !== undefined) return code;
   code = cache.get(chars);
   if (code !== undefined) return code;
   // Strip accents (é -> e), else fall back to '?'.
   const base = chars.normalize('NFD').replace(/[̀-ͯ]/g, '');
-  code = overrides?.get(base[0]) ?? table.get(base[0]) ?? UNKNOWN;
+  code = table.get(base[0]) ?? UNKNOWN;
   cache.set(chars, code);
   return code;
 }

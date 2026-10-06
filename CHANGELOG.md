@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `--max-sessions N`: a session of its own for every TCP connection, up to N (more are refused), ended with the connection.
+  The bridge's terminal, pty, display, theme, images and sound are now per session. Also `--idle-timeout S`,
+  `--on-exit close`, `PETTY_SESSION` in the program's environment, TCP keepalive, and `sessions`, `@N` and `kick` on the control port.
+  Without `--max-sessions`, behaviour is as before: one session that survives reconnects.
+- The control port now listens on `127.0.0.1` rather than `--host`; `--control-host` changes that.
+
 - `--charset FILE`: redraw glyphs, or add characters, on the C64 text and hi-res clients. The text client takes them with POKE
   (and the inverse half) into spare screen codes (0-127); the hi-res client with GLYPH, in 0-127 or in the extended slots 128-255,
   which the glyph cache then leaves alone. A game can ship its own font or tiles with a stock `.prg`.
