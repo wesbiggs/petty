@@ -43,7 +43,7 @@ make vicehires        # ...or the C64 with the 40-column hi-res screen
 
 Start the bridge first, because VICE connects when the client enables the ACIA.
 To run Claude Code directly: `make bridge CMD="-- claude"`, or
-`node bridge/src/bridge.js [--port N | --serial DEV [--baud N]] [--host H] [--fps N] [--cols N] [--rows N] [--scroll N] [--theme T] [--control N] [--title FILE] [-v] -- <cmd> [args...]`.
+`node bridge/src/bridge.js [--port N | --serial DEV [--baud N]] [--host H] [--fps N] [--cols N] [--rows N] [--scroll N] [--theme T] [--control N] [--title FILE] [--charset FILE] [--max-sessions N] [--idle-timeout S] [--on-exit restart|close] [--control-host H] [-v] -- <cmd> [args...]`.
 
 When a client first connects, the bridge shows a start screen,
 [bridge/title.ans](bridge/title.ans), for four seconds before it starts the
@@ -67,8 +67,8 @@ make theme T=amber    # or T=next / T=prev; no T shows the current theme
 node bridge/scripts/petty-ctl.js [--port N] theme amber
 ```
 
-`petty-ctl.js` talks to the bridge's control port, which listens on `--host`
-at `--port` + 1 (6465) unless `--control N` says otherwise. The screen is
+`petty-ctl.js` talks to the bridge's control port, which listens on `--control-host`
+(127.0.0.1: it can make the bridge play any file on the host) at `--port` + 1 (6465) unless `--control N` says otherwise. The screen is
 redrawn in the new colours at once, but a program that asked for the colours
 at startup keeps its answer until it restarts: Claude Code started on `dark`
 keeps its dark-mode colours after a switch to `light`.
@@ -236,6 +236,106 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
   node bridge/scripts/prg2pic.js picture_exe.prg      # writes picture_exe.koa (or .dd)
   ```
 
+## Several clients at once
+
+By default the bridge has one session: a client that connects takes it over, and it survives that client's reconnects.
+`--max-sessions N` gives every TCP connection a session of its own (its own pty, terminal and program, with `PETTY_SESSION=id` in its environment),
+for a program that serves several players:
+
+```bash
+node bridge/src/bridge.js --host 0.0.0.0 --title none --max-sessions 20 --idle-timeout 600 --on-exit close -- ./mygame
+```
+
+- A session ends when its connection does, and kills its program. A connection past N is closed at once, and logged.
+  TCP keepalive is on, so a call that dropped without a goodbye still ends and frees its place.
+- `--idle-timeout S` hangs up on a client that has pressed no key for S seconds (not while a sound plays). 0, the default, never.
+- `--on-exit close` hangs up when the program exits (after the last screen is out), instead of waiting for RETURN to restart it.
+- Each session has its own screen, display (a C64 and a C128 can play together), theme, pan position and sound queue.
+  `--charset` and the other options are shared.
+- The bridge runs whatever `--` names for anyone who connects, so name a program and not a shell, and add authentication in it.
+  Run it as a user that can do little else.
+- A serial line is always one session, so it can't be combined with `--max-sessions`.
+- The control port takes `sessions` (list), and `@N` before a command picks a session: `@3 theme amber`, `@3 say hi`, `@3 kick`.
+  Without `@N`, a command acts on the only session.
+
+## Custom character set (the C64 text and hi-res clients)
+
+`--charset FILE` redraws glyphs on the 40-column text and hi-res clients, to change the font or make tiles for a game. The file is JSON,
+characters to glyphs; a glyph is 8 rows of 8 pixels, as `#` and `.` or as numbers 0-255:
+
+```json
+{
+  "#": ["########", "#...#...", "########", "..#...#.", "########", "#...#...", "########", "..#...#."],
+  "\uE000": { "slot": 200, "rows": [24, 60, 126, 255, 255, 126, 60, 24] }
+}
+```
+
+A character with just rows gets a new picture in the screen code it already has (`#` above; so does everything that
+aliases to it, such as `□`). A character with a `slot` is a new one, for a program to print.
+
+- **Text client:** has no spare screen codes, so a new character takes over one of the 128 (0-127) that [glyphs.js](bridge/src/glyphs.js)
+  uses. Pick one the program doesn't print: `✻` (112), `⏺` (109), the box corners and tees (97-108). The client makes 128-255 the inverse of 0-127
+  when it starts, so the bridge POKEs each glyph and its inverse (a cursor or a coloured background shows it reversed): 64 glyphs are about 1 KB,
+  0.3 s at 38400 baud. A `slot` of 128 or more is not for this client: the character shows as `?`.
+- **Hi-res client:** loads glyphs with GLYPH, and has no inverse half to match (11 bytes a glyph). Slots 0-127 are as above. Slots 128-255 are the extended
+  glyphs' (box drawing, braille, shapes), loaded as they appear on screen; a slot you give is kept out of that, so tiles there cost no
+  text glyph, and the screen can show that many fewer extended glyphs at once. A character that has an extended glyph (`●`, `═`, braille) is
+  redrawn by changing that, as are the characters that alias to it (`⬤`).
+- **Soft 80-column and C128 clients:** not changed (a 4×8 bitmap font, and the VDC's own); a new character shows as `?`.
+
+The glyphs are sent after each full redraw (a client start, a theme switch), so a reset restores them.
+
+## Game hardware (the C64 text and hi-res clients)
+
+A program that runs entirely on the host can use the C64 as its sprite chip and sound chip as well as its screen: it prints
+escape sequences and the bridge turns them into C64 commands. **OSC 8348** is sprites, **OSC 8349** the SID. They work
+on the 40-column text and hi-res clients; the others ignore them. The parts are described at the top of
+[bridge/src/game.js](bridge/src/game.js) (the sequences) and in [protocol.js](bridge/src/protocol.js) (the wire commands).
+[bridge/lib/pettygame.py](bridge/lib/pettygame.py) prints them from Python, and
+[bridge/examples/game-demo.py](bridge/examples/game-demo.py) is a small game (a hero walking over a scrolling map,
+shooting arrows, with a tune): `make bridge CMD="-- python3 bridge/examples/game-demo.py"`, then `make vice`.
+
+**Sprites.** Eight hardware sprites, 64 shapes kept in the C64 (`$2000-$2FFF` on the text client, `$4800-$57FF` on the hi-res one):
+
+```
+ESC ] 8348 ; def ; SLOT ; BASE64(63 bytes) BEL          a shape (24x21, 3 bytes a row)
+ESC ] 8348 ; set ; N ; SLOT ; X ; Y ; COLOR [; xymb] BEL show sprite N; x wide, y tall, m multicolour, b behind the text
+ESC ] 8348 ; glide ; N ; DX ; DY ; FRAMES BEL           the C64 moves it DX, DY pixels a video frame for FRAMES frames
+ESC ] 8348 ; hide ; N BEL     ;  mc ; C1 ; C2 BEL      ;  sync ; TAG BEL
+```
+
+X and Y are pixels of the 320x200 text screen. Nothing is sent for a `set` that changes nothing, so a program can say where
+everything is every frame. A glide is how a walk or a flying arrow costs one command rather than one per frame, over a link
+that carries about 3.8 KB/s: it is ticked on the C64 by a raster interrupt, below the last text row, so it never tears. A `set`
+at the place the glide ends is a no-op. `sync` asks to be told when the glides are over: the bridge writes
+`ESC ] 8348 ; sync ; TAG BEL` to the program's input, which the C64 reports (and, if it does not, the time they should
+take is up); `pettygame.Replies` takes these out of what you read from stdin. The sprites ride in the same frame as the screen's own
+changes (after them), so a tile and the sprite on it change together. The bridge remembers the shapes and sprites and sends them again
+to a client that restarts.
+
+**The SID.** A script is a list of records, `[n, (register, value) * n, delay]`: write `n` registers, then wait `delay` frames.
+A script is uploaded once and played by number on one of four channels, each with a mask of the registers its script may write,
+so music on voices 1 and 2 and an effect on voice 3 cannot disturb each other. Scripts are played from the same interrupt, so
+nothing is sent while a tune plays; time is in frames, so the tempo follows the machine (PAL or NTSC).
+
+```
+ESC ] 8349 ; def ; ID ; BASE64(script) BEL      n = 255 ends it, 254 loops (to the start, or the last 253), 253 marks the loop point
+ESC ] 8349 ; play ; CH ; ID [; 1+2+3+f+vol] BEL start it on channel 0-3, where it may write (voices 1-3, the filter, the volume; default all)
+ESC ] 8349 ; stop ; CH|all BEL   ;   w ; REG ; VAL [; REG ; VAL ...] BEL   ;   reset BEL
+```
+
+A `play` goes out at once, ahead of the next screen frame, so a footstep is not held up behind a redraw. Speech and `play`
+(OSC 8347) still take the SID modally: the screen holds, the music stops, and the bridge starts any looping music again afterwards.
+
+**Scrolling maps.** The bridge looks at each frame of a program that has used OSC 8348 or 8349 for a block of cells that moved a
+few cells (a map as the camera follows the hero) and sends one `MOVE` (copy a rectangle, glyphs and colours, by up to 3 cells in
+each direction) and the cells that are new, rather than the whole viewport again: about 150 bytes for a one-cell pan of 21x19 cells
+instead of 2 KB. Vertical scrolls of the whole screen still use `SCROLL`.
+
+`node bridge/scripts/vice-game-check.js` (or `make game-check`) runs the text client (`--hires`: the hi-res one) in VICE and checks all of this against the
+emulated machine: shapes, positions, flags, glides across x = 256, random `MOVE`s against the reference decoder, and script timing and
+masking in VICE's SID dump.
+
 ## Sound (the C64 and C128 clients)
 
 A program in the terminal can speak, or play music, through the C64's SID, with `say` and `play`. The bridge
@@ -359,12 +459,16 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | Path | What |
 |---|---|
 | `c64/main.s` | ca65 client: NMI serial receive, command decoder, keyboard scan |
-| `c64/petty.cfg` | linker config (program must end below `$3700`) |
+| `c64/petty.cfg` | linker config (program must end below `$2000`) |
 | `c64/main80.s` | soft 80-column C64 client: the same, drawing into the bitmap |
 | `c64/petty80.cfg` | linker config (program must end below `$2000`) |
 | `c64/mainhires.s` | hi-res 40-column C64 client |
 | `c64/pettyhires.cfg` | linker config (program must end below `$2000`) |
 | `c64/staircase.s` | standalone program for calibrating a real SID (`make build/staircase.prg`) |
+| `c64/game.inc` | game hardware for the text and hi-res clients: sprites, glides, MOVE, the SID script player (OSC 8348, 8349) |
+| `bridge/src/game.js` | those OSCs: the program's sprites and scripts, kept for a client that restarts |
+| `bridge/lib/pettygame.py` | prints them from Python; `bridge/examples/game-demo.py` is a small game |
+| `bridge/scripts/vice-game-check.js` | runs the text client in VICE and checks the game hardware against the machine |
 | `c64/sound.inc` | sound for all the clients: SOUND and PROBE, the 2-bit decoder and the playback loop |
 | `c128/main.s` | C128 client: the same, drawing on the VDC at 2 MHz |
 | `c128/petty128.cfg` | linker config (program must end below `$3800`) |
@@ -391,7 +495,8 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `bridge/scripts/gen-colortest.js` | writes `colortest.ans` |
 | `bridge/scripts/gen-title.js` | writes `bridge/title.ans`, the start screen |
 
-Memory map: code `$0801–$0D50`, receive ring `$3700`, character set `$3800–$3FFF`, screen `$0400`.
+Memory map: code `$0801–$16DB`, sprite shapes `$2000–$2FFF`, receive ring `$3700`, character set `$3800–$3FFF`, screen `$0400`;
+SID scripts are uploaded at `$9000–$BFFF` and the game variables are at `$C000`.
 
 Soft 80 columns: code `$0801–$1286`; the VIC uses its second bank, with glyph
 tables `$4000–$4FFF` (built at startup), sprite data `$5000–$51FF`, colours

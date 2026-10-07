@@ -55,7 +55,8 @@ export function cursorVisible(term) {
 // background, and inline images are glyphs from IMAGE up (image.js); other
 // displays show an image as blocks of its colours. On a display with `pair`
 // cells, the result also has `sprites` (see soft80.js).
-export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', panY = 0) {
+// `own`: characters --charset gave codes of their own on this display (charset.js charsFor).
+export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', panY = 0, own = null) {
   const { cols, rows } = display;
   const pal = paletteFor(display, theme);
   const glyph = new Int32Array(cols * rows);
@@ -87,7 +88,7 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', 
       }
 
       const chars = cell.getWidth() === 0 || cell.isInvisible() ? '' : cell.getChars();
-      let g = (display.ext && extendedGlyph(chars)) || toScreenCode(chars);
+      let g = own?.get(chars) ?? ((display.ext && extendedGlyph(chars)) || toScreenCode(chars));
       let fg = cellFg(cell, pal);
       let bg = cellBg(cell, pal);
       // The foreground colours are adjusted to read on the screen colour
@@ -136,7 +137,7 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', 
       color[i] = display.reverse && inv ? c | VDC.RVS : c;
     }
   }
-  const screen = { cols, rows, glyph, color, hires: !!display.hires };
+  const screen = { cols, rows, glyph, color, hires: !!display.hires, move: !!display.game };
   if (display.pair) {
     const focus = cursorRow >= 0 && cursorRow < rows ? cursorRow : rows - 1;
     screen.sprites = shareColours(screen, focus);

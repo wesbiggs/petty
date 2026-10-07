@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- Game hardware for the C64 text and hi-res clients, for a program that runs wholly on the host: hardware sprites (**OSC 8348**: shapes, positions,
+  `glide` that the C64 animates by itself, `sync`) and the SID (**OSC 8349**: register-write scripts uploaded once and played from a
+  raster interrupt on four masked channels, or written directly). New client commands SPRDEF, SPR, GLIDE, MOVE, SIDW, SIDPLAY,
+  SIDSTOP, SIDRESET and SPRMC, and the message GLIDE. For a program that uses them the bridge also sends a rectangle that moved a few
+  cells (a scrolling map) as MOVE. `bridge/lib/pettygame.py`, `bridge/examples/game-demo.py`, `make game-check`. See the README.
+  The text client now ends below `$2000` (it reached about `$1690`), where the sprite shapes start.
+- Fix: the bridge crashed on a hi-res or C128 client when run without `--charset`.
+
+- `--max-sessions N`: a session of its own for every TCP connection, up to N (more are refused), ended with the connection.
+  The bridge's terminal, pty, display, theme, images and sound are now per session. Also `--idle-timeout S`,
+  `--on-exit close`, `PETTY_SESSION` in the program's environment, TCP keepalive, and `sessions`, `@N` and `kick` on the control port.
+  Without `--max-sessions`, behaviour is as before: one session that survives reconnects.
+- The control port now listens on `127.0.0.1` rather than `--host`; `--control-host` changes that.
+
+- `--charset FILE`: redraw glyphs, or add characters, on the C64 text and hi-res clients. The text client takes them with POKE
+  (and the inverse half) into spare screen codes (0-127); the hi-res client with GLYPH, in 0-127 or in the extended slots 128-255,
+  which the glyph cache then leaves alone. A game can ship its own font or tiles with a stock `.prg`.
+
 ## 0.10.1
 
 - Speech without macOS `say`: falls back to `espeak-ng` or `espeak`, and otherwise says to use `--tts`.
