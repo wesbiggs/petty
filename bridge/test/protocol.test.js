@@ -5,6 +5,7 @@ import { toScreenCode, screenCodeToChar, INVERSE } from '../src/glyphs.js';
 import { keyToBytes, MATRIX, SHIFT, CTRL, CBM, ALT } from '../src/keymap.js';
 import { VIC, RGBI, palette, oscReply, THEME_NAMES, stepTheme } from '../src/colors.js';
 import { snapshot } from '../src/screen.js';
+import { wideEmoji } from '../src/unicode.js';
 import { FONT4 } from '../src/font4x8.js';
 import { EXT, extendedGlyph } from '../src/extglyphs.js';
 import { GlyphCache } from '../src/glyphcache.js';
@@ -263,7 +264,7 @@ test('glyph mapping', () => {
   assert.equal(toScreenCode('⎿'), toScreenCode('└'));
   assert.equal(toScreenCode('█'), SPACE | INVERSE);
   assert.equal(toScreenCode('é'), toScreenCode('e'));
-  assert.equal(toScreenCode('🦀'), toScreenCode('?'));
+  assert.equal(toScreenCode('🦀'), toScreenCode('·'));
 });
 
 test('keymap', () => {
@@ -470,4 +471,16 @@ test('hi-res: underline', async () => {
     assert.equal(dec2.glyph[i], scrolled.glyph[i], `glyph ${i}`);
     assert.ok(sameLook(scrolled.glyph[i], dec2.color[i], scrolled.color[i], true), `colour ${i}`);
   }
+});
+
+test('emoji take two cells, the middot and a space, so the line keeps its columns', async () => {
+  const term = new xterm.Terminal({ cols: 20, rows: 2, allowProposedApi: true });
+  wideEmoji(term);
+  await new Promise(r => term.write('a🦀b✅c👍🏽d漢e❤️f', r));
+  const g = snapshot(term).glyph;
+  const dot = toScreenCode('·');
+  const want = ['a', dot, ' ', 'b', dot, ' ', 'c', dot, ' ', 'd', dot, ' ', 'e', '❤', 'f'];
+  // ❤ is one cell (text presentation) and has no glyph: a middot too
+  assert.deepEqual([...g.slice(0, 15)], want.map(x => typeof x === 'number' ? x : x === ' ' ? 32 : x === '❤' ? dot : toScreenCode(x)));
+  assert.equal(term.buffer.active.cursorX, 15);
 });

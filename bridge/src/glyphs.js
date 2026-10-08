@@ -110,7 +110,11 @@ for (const [from, to] of Object.entries(ALIASES)) table.set(from, table.get(to))
 for (const [from, to] of Object.entries(INVERSES)) table.set(from, table.get(to) | INVERSE);
 
 const cache = new Map();
-const UNKNOWN = asciiCode('?');
+// A character with no glyph shows as a middot, as in a bulleted list.
+export const UNKNOWN = table.get('·');
+
+// Whether a character has a glyph of its own, rather than the middot for the unknown.
+export const hasGlyph = ch => table.has(ch) || table.has(ch.normalize('NFD').replace(/[̀-ͯ]/g, '')[0]);
 
 // Map a terminal cell's text (one grapheme, may be '' for blank) to a screen code.
 export function toScreenCode(chars) {
@@ -119,7 +123,7 @@ export function toScreenCode(chars) {
   if (code !== undefined) return code;
   code = cache.get(chars);
   if (code !== undefined) return code;
-  // Strip accents (é -> e), else fall back to '?'.
+  // Strip accents (é -> e), else fall back to the middot.
   const base = chars.normalize('NFD').replace(/[̀-ͯ]/g, '');
   code = table.get(base[0]) ?? UNKNOWN;
   cache.set(chars, code);

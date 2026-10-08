@@ -6,7 +6,7 @@ import xterm from '@xterm/headless';
 import { snapshot } from '../src/screen.js';
 import { GlyphCache } from '../src/glyphcache.js';
 import { EXT, EXT_GLYPHS, extendedGlyph } from '../src/extglyphs.js';
-import { toScreenCode } from '../src/glyphs.js';
+import { toScreenCode, UNKNOWN } from '../src/glyphs.js';
 
 const WALL = ['########', '#...#...', '########', '..#...#.', '########', '#...#...', '########', '..#...#.'];
 
@@ -75,5 +75,5 @@ test('snapshot draws a new character as its slot, only given its own map', async
   const { chars } = parseCharset({ '\uE000': { slot: 112, rows: WALL } });
   const mine = snapshot(term, 0, DISPLAY.C64, 'dark', 0, charsFor({ chars, glyphs: new Map([[112, 0]]) }, DISPLAY.C64));
   assert.equal(mine.glyph[1], 112);
-  assert.equal(snapshot(term).glyph[1], toScreenCode('?'), 'another session has no such character');
+  assert.equal(snapshot(term).glyph[1], UNKNOWN, 'another session has no such character');
 });

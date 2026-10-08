@@ -18,10 +18,10 @@
 // A character drawn from the extended glyphs (●, ═, braille ...) is redrawn by
 // changing that glyph.
 //
-// The other clients (soft 80, C128) draw their own fonts, and show a new character as '?'.
+// The other clients (soft 80, C128) draw their own fonts, and show a new character as a middot.
 
 import { readFileSync } from 'node:fs';
-import { toScreenCode, INVERSE } from './glyphs.js';
+import { toScreenCode, INVERSE, hasGlyph } from './glyphs.js';
 import { extendedGlyph } from './extglyphs.js';
 import { OP, encodePoke } from './protocol.js';
 
@@ -54,8 +54,8 @@ export function parseCharset(json) {
     if (code === undefined) {
       code = toScreenCode(ch);
       if (code & INVERSE) throw new Error(`${where}: is drawn as an inverse glyph, so give a "slot"`);
-      if (code === toScreenCode('?') && ch !== '?' && extendedGlyph(ch) === undefined) {
-        throw new Error(`${where}: has no glyph to redraw (it shows as '?'), so give a "slot"`);
+      if (!hasGlyph(ch) && extendedGlyph(ch) === undefined) {
+        throw new Error(`${where}: has no glyph to redraw (it shows as a middot), so give a "slot"`);
       }
     } else if (!Number.isInteger(code) || code < 0 || code > 255) {
       throw new Error(`${where}: "slot" is a screen code 0-255`);

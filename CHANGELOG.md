@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A character with no glyph shows as a middot (·) instead of `?`. Emoji and other wide characters are now two cells in the bridge's terminal
+  (it counted them as one, which shifted the rest of the line): the first cell is the middot and the second a space. `bridge/src/unicode.js`.
 - Game hardware for the C64 text and hi-res clients, for a program that runs wholly on the host: hardware sprites (**OSC 8348**: shapes, positions,
   `glide` that the C64 animates by itself, `sync`) and the SID (**OSC 8349**: register-write scripts uploaded once and played from a
   raster interrupt on four masked channels, or written directly). New client commands SPRDEF, SPR, GLIDE, MOVE, SIDW, SIDPLAY,

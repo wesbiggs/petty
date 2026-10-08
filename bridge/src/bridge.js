@@ -21,6 +21,7 @@ import { loadLut } from './sound/lut.js';
 import { SoundManager } from './sound/manager.js';
 import { classifyRegion } from './sound/probe.js';
 import { loadCharset, charsFor, charsetCommands, reservedSlots, extRedraws } from './charset.js';
+import { wideEmoji } from './unicode.js';
 import { snapshot, paletteFor, cursorVisible } from './screen.js';
 import { THEME_NAMES, stepTheme, oscReply } from './colors.js';
 import { keyToBytes, MATRIX } from './keymap.js';
@@ -157,6 +158,7 @@ class Session {
     // Changed by C=+F1 or the control port (scripts/petty-ctl.js).
     this.theme = opt.theme;
     this.term = new xterm.Terminal({ cols: this.termCols(), rows: this.termRows(), scrollback: 200, allowProposedApi: true });
+    wideEmoji(this.term);
     const { term } = this;
     // Replies to terminal queries (DA, DSR, ...) go back to the program.
     term.onData(d => this.proc?.write(d));
