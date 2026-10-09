@@ -57,10 +57,10 @@ const SPECIAL = {
 // and CTRL+CRSR↓ { panY } to move the 25-row window over a taller one.
 // C=+F1 returns { theme } to switch to the next (SHIFT: previous) theme.
 const WHEEL_COL = 20, WHEEL_ROW = 12;
-function wheel(up, mouse) {
+function wheel(up, mouse, appCursor) {
   const button = up ? 64 : 65;
   if (!mouse || mouse.tracking === 'none') {
-    if (mouse?.altScreen) return ESC + '[' + (up ? 'A' : 'B');
+    if (mouse?.altScreen) return ESC + (appCursor ? 'O' : '[') + (up ? 'A' : 'B');
     return { scroll: up ? -1 : 1 };
   }
   if (mouse.encoding === 'SGR') return `${ESC}[<${button};${WHEEL_COL};${WHEEL_ROW}M`;
@@ -88,7 +88,7 @@ function keyToBytesNoAlt(code, mods, { appCursor = false, mouse = null } = {}) {
   if (ARROW[key]) {
     if ((mods & CTRL) && (key === 'UP' || key === 'DOWN')) return { panY: key === 'DOWN' ? 1 : -1 };
     if (mods & CBM) {
-      if (key === 'UP' || key === 'DOWN') return wheel(key === 'UP', mouse);
+      if (key === 'UP' || key === 'DOWN') return wheel(key === 'UP', mouse, appCursor);
       return { pan: key === 'RIGHT' ? 1 : -1 };
     }
     return ESC + (appCursor ? 'O' : '[') + ARROW[key];

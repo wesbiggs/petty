@@ -23,6 +23,8 @@ const MAX_ROWS = 25;
 
 // --- the cells of every image in the terminal --------------------------------
 
+// (Shared by all sessions: a key is reused only after 65536 cells, far more than a screen and its
+// scrollback hold, so one session's images outlast the others' traffic in practice.)
 const cells = new Uint8Array(KEYS * CELL_BYTES);
 let nextKey = 0;
 
@@ -48,6 +50,9 @@ export function imageShade(key) {
 }
 
 // --- decoding ------------------------------------------------------------------
+
+// Pictures from the program are untrusted: a few KB of PNG can claim gigabytes of pixels.
+const MAX_PIXELS = 4096 * 4096;
 
 // {width, height, rgba} from a PNG (not interlaced).
 export function decodePNG(buf) {
@@ -75,7 +80,9 @@ export function decodePNG(buf) {
   const bits = channels * depth;
   const bpp = Math.max(1, bits >> 3); // bytes to the same channel of the previous pixel
   const stride = Math.ceil(width * bits / 8);
-  const raw = inflateSync(Buffer.concat(idat));
+  if (width * height > MAX_PIXELS) throw new Error(`PNG too big (${width}x${height}): at most ${MAX_PIXELS} pixels`);
+  const raw = inflateSync(Buffer.concat(idat), { maxOutputLength: (stride + 1) * height });
+  if (raw.length < (stride + 1) * height) throw new Error('PNG data is short');
   const px = new Uint8Array(stride * height);
 
   // Undo the filters, one row at a time.

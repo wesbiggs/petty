@@ -36,6 +36,7 @@ function makePalette({
   fgSet = ALL, bgSet = ALL, ramp = null, underline = 0,
 }) {
   const cache = new Map();
+  const setIds = new Map(); // a set -> the name its cache entries go under
   const shade = i => ramp ? ramp.find(([max]) => luma(rgb[i]) <= max)[1] : i;
 
   // Nearest palette entry using a "redmean" weighted distance. A clearly
@@ -43,7 +44,7 @@ function makePalette({
   // lavender rgb(177,185,249) are closer to light grey than to any blue.
   function nearest(value, set) {
     if (exact.has(value)) return exact.get(value);
-    const key = `${value},${set === fgSet}`;
+    const key = `${value},${setIds.get(set)}`; // per set: foreground and background differ
     let best = cache.get(key);
     if (best !== undefined) return best;
     const r = value >> 16, g = (value >> 8) & 0xff, b = value & 0xff;
@@ -63,6 +64,7 @@ function makePalette({
   }
 
   const fgNoScreen = fgSet.filter(i => i !== screen);
+  setIds.set(fgNoScreen, 'fg').set(bgSet, 'bg');
   return {
     rgb, underline, screenBg: screen, border,
     defaultFg: shade(defaultFg), boldFg: shade(boldFg), dimFg: shade(dimFg),

@@ -547,6 +547,21 @@ Other notes:
 - The C128 client needs an 80-column monitor. It blanks the 40-column screen,
   because the VIC shows garbage at 2 MHz.
 
+## Security
+
+The bridge gives whoever connects to it a terminal on your machine, with no
+password. By default it listens on `127.0.0.1` only, and refuses a TCP
+connection that does not open with the client's hello (so a web page cannot
+type into it through a `fetch` to localhost). `--host 0.0.0.0`, as the WiFi modem
+setup needs, opens it to your whole network: use a network you trust, run
+a restricted program rather than a shell (`-- ./mygame`), and prefer `--max-sessions`
+with `--idle-timeout`. The control port is on `127.0.0.1` too; `--control-host`
+widens it, and it can make the bridge play any file on its host.
+
+Some SwiftLink-compatible cartridges use the W65C51N, whose "transmit empty" flag is stuck
+on; the clients wait on that flag before each byte they send, so on such a cartridge
+keys may be lost or garbled. (Untested here.)
+
 ## Releases
 
 The version is `bridge/package.json`'s, and the start screen shows it. To

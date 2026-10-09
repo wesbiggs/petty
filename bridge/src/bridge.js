@@ -99,6 +99,8 @@ const SERIAL_RETRY_MS = 2000;
 const SYNC_MAX_MS = 250; // don't wait forever on synchronized output
 const TITLE_MS = 4000; // how long the start screen shows, unless a key is pressed
 const TITLE_COLS = 40;
+const RESYNC_BYTES = 2400;
+const PTY_HIGH_WATER = 64; // chunks of the program's output waiting for the terminal to parse
 const IMAGE_FRAME_BYTES = 2048; // hi-res frames split up past this (images), so keys stay responsive
 const BIN = fileURLToPath(new URL('../bin', import.meta.url)); // imgcat, a fallback at the end of the program's PATH
 const SOUND_BIN = fileURLToPath(new URL('../bin/sound', import.meta.url)); // say and play, which come first: they speak on the C64
@@ -135,6 +137,7 @@ const log = (...a) => console.error('[bridge]', ...a);
 // --max-sessions gives every connection its own, which end with it.
 
 const sessions = new Set();
+let shared = null; // the one session, unless every connection has its own
 let nextId = 1;
 
 class Session {
@@ -241,6 +244,7 @@ class Session {
     clearTimeout(this.holding);
     this.holding = null;
     sessions.delete(this);
+    if (shared === this) shared = null; // the next connection gets a fresh session
     this.sound.queue.length = 0;
     this.game.dispose();
     this.conn?.sound?.end?.('closed');
@@ -273,7 +277,14 @@ class Session {
       },
     });
     this.proc = proc;
-    proc.onData(d => { if (!this.destroyed) this.term.write(d); });
+    // Backpressure: while xterm still has output to parse, the pty is paused, so a program that
+    // floods the terminal waits instead of growing the write queue without bound.
+    let pending = 0;
+    proc.onData(d => {
+      if (this.destroyed) return;
+      if (++pending >= PTY_HIGH_WATER) proc.pause();
+      this.term.write(d, () => { if (--pending < PTY_HIGH_WATER) proc.resume(); });
+    });
     proc.onExit(({ exitCode }) => {
       if (this.destroyed || this.proc !== proc) return;
       this.log(`${cmd} exited (${exitCode})`);
@@ -356,6 +367,7 @@ class Connection {
     this.bytesSent = 0;
     this.timeouts = 0; // in a row: a serial line has nobody on it until the C64 starts
     this.picture = null; // frames of a full-screen picture still to send, while it shows
+    this.resync = false; // an ACK was lost: the client may be partway through a command
     this.restore = false; // back from a picture: switch to the terminal screen
     this.since = Date.now();
     this.lastKey = Date.now(); // for --idle-timeout
@@ -363,6 +375,7 @@ class Connection {
     this.region = null; // PAL or NTSC, from PROBE
     this.sound = null; // while a sound plays: { credits, onCredit, end }; the screen waits
     this.ackWaiters = []; // callbacks for the next ACK (sendAndWait)
+    this.verified = !!opt.serial; // a TCP client must open with HELLO (see onData)
     sock.setNoDelay?.(true);
     sock.setKeepAlive?.(true, 30000); // a call that drops without a FIN still ends, and frees its session
     sock.on('data', d => this.onData(d));
@@ -371,18 +384,30 @@ class Connection {
   }
 
   close(why) {
-    clearTimeout(this.ackTimer); // also for a connection that a newer one replaced
+    clearTimeout(this.ackTimer);
+    // Also for a connection that a newer one replaced: a sound playing on it, or a frame awaited,
+    // would otherwise wait for ever, and hold the session's sound queue with it.
+    this.sound?.end?.('closed');
+    for (const w of this.ackWaiters.splice(0)) w.reject(new Error('C64 disconnected'));
     const { s } = this;
     if (s.conn !== this) return;
     s.log(`client disconnected (${why})`);
-    this.sound?.end?.('closed');
-    for (const w of this.ackWaiters.splice(0)) w.reject(new Error('C64 disconnected'));
     s.conn = null;
     s.onDisconnect();
   }
 
   onData(data) {
     const { s } = this;
+    // A real client says hello first. Anything else (an HTTP request from a web page, say, whose body
+    // could otherwise type into the program) is not a client: hang up.
+    if (!this.verified) {
+      if (data[0] !== MSG.HELLO && data[0] !== MSG.HELLO_ON) {
+        s.log(`refused a connection that did not open with HELLO (first byte ${data[0]})`);
+        this.sock.destroy();
+        return;
+      }
+      this.verified = true;
+    }
     this.rx.push(...data);
     while (this.rx.length) {
       const type = this.rx[0];
@@ -522,6 +547,10 @@ class Connection {
     if (bytes.length === 1 && !pre.length && !post.length) return; // only FRAME marker: nothing changed
     bytes = pre.concat(bytes.slice(0, -1), post, bytes.slice(-1));
     bytes = glyphs.concat(bytes);
+    // After a lost ACK the client may be in the middle of a command whose bytes went missing, and would
+    // swallow the start of this reset as that command's data. Opcode 0 is a no-op in every client, so
+    // enough of them to finish the longest command (BITS, 255 cells of 9 bytes) bring it back in step.
+    if (reset && this.resync) { bytes = new Array(RESYNC_BYTES).fill(0).concat(bytes); this.resync = false; }
     if (reset && charset) bytes = charsetCommands(charset, display).concat(bytes);
     if (this.restore) bytes.unshift(OP.VIEW, VIEW.TERMINAL, 0);
     this.restore = false;
@@ -568,7 +597,7 @@ class Connection {
 
   // Resolves when no frame is in flight.
   async idle() {
-    while (this.inFlight) await new Promise(r => setTimeout(r, 10));
+    while (this.inFlight && !this.sock.destroyed) await new Promise(r => setTimeout(r, 10));
   }
 
   send(bytes) {
@@ -582,6 +611,7 @@ class Connection {
       (this.timeouts++ ? s.debug : s.log)('ACK timeout - forcing full redraw');
       if (this.picture) this.endPicture();
       this.state = null;
+      this.resync = true;
       this.inFlight = false;
       s.dirty = true;
       s.game.invalidate(); // what was in the lost frame included
@@ -593,8 +623,6 @@ class Connection {
 setInterval(() => { for (const s of sessions) s.tick(); }, FRAME_MS);
 
 // --- listening ---------------------------------------------------------------
-
-let shared = null; // the one session, unless every connection has its own
 
 function accept(sock) {
   if (MULTI) {
@@ -677,15 +705,22 @@ function control(line) {
 
 // Loopback unless --control-host says otherwise: it can make the bridge play any file on the host.
 net.createServer(sock => {
-  let buf = '';
+  let buf = '', first = true, dead = false;
   sock.setEncoding('utf8');
   sock.on('data', d => {
+    if (dead) return;
     buf += d;
     let nl;
     while ((nl = buf.indexOf('\n')) >= 0) {
       const line = buf.slice(0, nl);
       buf = buf.slice(nl + 1);
-      if (line.trim()) sock.write(control(line) + '\n');
+      if (!line.trim()) continue;
+      const reply = control(line);
+      sock.write(reply + '\n');
+      // A first line that is no command is not petty-ctl: an HTTP request from a web page, whose
+      // body lines would otherwise run as commands.
+      if (first && reply.startsWith('error')) { dead = true; return sock.end(); }
+      first = false;
     }
   });
   sock.on('error', () => {});

@@ -56,7 +56,7 @@ printf '${osc(8349, 'def', 0, b64([1, 4, 0x11, 5, 254]))}${osc(8349, 'play', 0, 
   assert.equal(dec.hw[0].x, 184);
   assert.equal(dec.hw[0].y, 150);
   assert.deepEqual(dec.hw[0].glide, { frames: 8, dx: 2, dy: 0 });
-  assert.equal(String.fromCharCode(...dec.glyph.subarray(0, 5).map(g => g + 64)).toLowerCase().includes('hello') || dec.glyph[0] !== 32, true);
+  assert.deepEqual([...dec.glyph.subarray(0, 5)], [8, 5, 12, 12, 15], '"hello" in screen codes');
   const play = dec.sid.find(s => s.op === 'play');
   assert.ok(play, 'SID script started');
   assert.equal(play.mask, (0x7F | 1 << 24) >>> 0);
@@ -76,8 +76,8 @@ stty raw -echo; dd bs=1 count=9 2>/dev/null | od -c | head -1 > /dev/null; print
 
 test('a client without game hardware (soft 80 columns) gets none of it', async () => {
   const script = `printf '${osc(8348, 'def', 0, b64(new Uint8Array(63)))}${osc(8348, 'set', 0, 0, 10, 10, 1)}${osc(8349, 'w', 24, 15)}ok'; sleep 3`;
-  const { frames, dec } = await run(script, { display: DISPLAY.C64_80, wait: 8000, until: d => d.glyph.some(g => g !== 32) });
-  for (const f of frames) assert.ok(!f.some(b => b === OP.SPRDEF && false));
+  const { dec } = await run(script, { display: DISPLAY.C64_80, wait: 8000, until: d => d.glyph.some(g => g !== 32) });
+  assert.equal(dec.shapes.size, 0);
   assert.equal(dec.hw.filter(Boolean).length, 0);
   assert.equal(dec.sid.length, 0);
   assert.ok(dec.glyph.some(g => g !== 32), 'the text still shows');

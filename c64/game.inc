@@ -358,6 +358,18 @@ op_move:
         beq @bad
         lda mh
         beq @bad
+        lda mx                  ; the sums below wrap past 255: bound each term first
+        cmp #41
+        bcs @bad
+        lda mw
+        cmp #41
+        bcs @bad
+        lda my
+        cmp #26
+        bcs @bad
+        lda mh
+        cmp #26
+        bcs @bad
         lda mx                  ; the source: x + w <= 40, y + h <= 25
         clc
         adc mw

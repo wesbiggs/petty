@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Security: a TCP connection that does not open with HELLO is dropped, and so is a control-port connection whose first line is no
+  command (an HTTP request from a web page could type into the program). README: Security.
+- Fix: `kick` on a single-session bridge left it unable to take another client.
+- Fix: a client that reconnected while a sound played left the session's sound queue stuck for good.
+- Fix: inline PNGs are limited to 16 M pixels and inflate to their stated size (a 31 KB file could take 1 GB).
+- Fix: in the `classic` theme a colour used as both foreground and background could come out as the screen colour.
+- After a lost ACK the full redraw is preceded by no-op bytes, so a client that lost part of a command is back in step.
+- The pty is paused while the terminal has output to parse. `MOVE` bounds each argument before adding them. C=+CRSR up/down
+  on the alternate screen honours application cursor mode.
+
 - A character with no glyph shows as a middot (·) instead of `?`. Emoji and other wide characters are now two cells in the bridge's terminal
   (it counted them as one, which shifted the rest of the line): the first cell is the middot and the second a space. `bridge/src/unicode.js`.
 - Game hardware for the C64 text and hi-res clients, for a program that runs wholly on the host: hardware sprites (**OSC 8348**: shapes, positions,

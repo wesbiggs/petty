@@ -49,7 +49,7 @@ def shape(rows):
 
 
 def sprite_def(slot, rows_or_bytes):
-    """Shape slot 0-31 (kept in the C64). Rows as for shape(), or 63 bytes."""
+    """Shape slot 0-63 (kept in the C64). Rows as for shape(), or 63 bytes."""
     data = rows_or_bytes if isinstance(rows_or_bytes, (bytes, bytearray)) else shape(rows_or_bytes)
     _osc(8348, "def", slot, _b64(data))
 
