@@ -338,6 +338,7 @@ class Session {
       conn.sock.destroy();
       return;
     }
+    if (!conn.verified) return; // nothing goes out until the client has said HELLO
     if (conn.inFlight || conn.sound) return; // a sound holds the screen
     if (conn.picture) return conn.sendPicture();
     if (!this.dirty) {
