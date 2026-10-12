@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.0
 
 - Security: a TCP connection that does not open with HELLO is dropped, and so is a control-port connection whose first line is no
   command (an HTTP request from a web page could type into the program). README: Security.
