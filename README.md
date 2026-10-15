@@ -30,6 +30,24 @@ claude ⇄ pty ⇄ xterm (headless) → diff/encode ══ TCP / serial ══�
   wired to the host by a USB-serial adapter or through a WiFi modem (see
   [Real hardware](#real-hardware))
 
+## Using a release
+
+Each [release](https://github.com/wesbiggs/petty/releases) has the clients and the bridge as separate files:
+
+- `petty-vX.Y.Z.d64`, `petty-vX.Y.Z-prg.zip` and the loose `.prg` files are the C64 and C128 clients (no `make` or cc65 needed).
+- `petty-bridge-vX.Y.Z.tar.gz` is the bridge. It has no `node_modules`, because `node-pty` is a native addon that has to be built
+  for your machine, so install the dependencies once (Node 20+, and a C/C++ toolchain if there is no prebuilt `node-pty` for your platform):
+
+```bash
+tar xzf petty-bridge-vX.Y.Z.tar.gz && cd petty-bridge-vX.Y.Z
+npm ci --omit=dev
+node src/bridge.js -- bash        # listens on 127.0.0.1:6464; add --port, --host, --serial as below
+```
+
+The commands in the rest of this README are written for a git checkout, where the bridge is in `bridge/`. In the release
+tarball, drop that prefix: `node src/bridge.js`, `node scripts/petty-ctl.js`, `lib/pettygame.py`. There is no Makefile in
+the tarball; the `make` targets only build the clients and start VICE.
+
 ## Run it in VICE
 
 ```bash

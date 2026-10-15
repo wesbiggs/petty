@@ -48,7 +48,7 @@ jobs:
           # on the host that runs it.
           b="petty-bridge-$v"
           mkdir -p "$b"
-          cp -R bridge/src bridge/bin bridge/scripts bridge/test \
+          cp -R bridge/src bridge/bin bridge/lib bridge/examples bridge/scripts bridge/test \
             bridge/package.json bridge/package-lock.json bridge/title.ans \
             README.md LICENSE "$b/"
           tar -czf "dist/$b.tar.gz" "$b"
