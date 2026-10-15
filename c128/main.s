@@ -109,6 +109,9 @@ n           = $26
 mode24      = $27               ; register 24 with the copy bit clear
 tmp         = $28
 
+CLIENT_ASK  = 1                 ; this client can ask for the dial's settings (dialask.inc)
+CLIENT_C128 = 1
+
 ; --- BASIC stub: 10 SYS7181 -------------------------------------------------
 .segment "LOADADDR"
         .word $1C01
@@ -598,6 +601,50 @@ init_acia:
         rts
 
 .include "dial.inc"
+
+; The next byte the NMI has put in the receive ring: C set and A = it, else C clear. Clobbers X.
+dial_rx:
+        ldx rptr
+        cpx wptr
+        beq @none
+        lda RBUF,x
+        inc rptr
+        sec
+        rts
+@none:  clc
+        rts
+
+; The dial's progress, and asking for its settings (dialask.inc), draw through this.
+UI_COLS     = 80
+CFG         = $0B00             ; the cassette buffer
+.if DIAL_DBGCODE
+; A = screen code, X = column, Y = row.
+ui_cell:
+        sta ui_code
+        txa
+        clc
+        adc rowlo,y
+        sta pos
+        lda rowhi,y
+        adc #0
+        sta pos+1
+        jsr seek_screen
+        ldx #R_DATA
+        stx VDC_ADDR
+        lda ui_code
+        jsr vdc_write
+        jsr seek_attr
+        ldx #R_DATA
+        stx VDC_ADDR
+        lda curattr
+        jmp vdc_write
+
+ui_code: .byte 0
+
+ui_clear:
+        jmp clear_screen
+.endif
+.include "dialask.inc"
 
 ; --- keyboard ----------------------------------------------------------------
 

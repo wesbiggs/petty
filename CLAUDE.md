@@ -22,5 +22,9 @@ From a code review. Not fixed on purpose or for lack of a way to test; pick them
 - **Private xterm APIs.** The bridge uses `term._core.coreMouseService`, `coreService.isCursorHidden` and `_inputHandler`
   (`bridge.js`, `screen.js`, `image.js`). `@xterm/headless` is `^6.0.0`: pin the exact version, or add a startup self-check that
   these exist, before taking a new xterm release.
+- **`PETTY.CFG` (DIALASK) is untested on a real drive.** Tested in VICE with a D64 only. `cfg_load` loads straight into the cassette
+  buffer, so a PETTY.CFG far longer than 71 bytes would overrun it (the end address is checked after the fact). Tested in VICE (x64sc, x128)
+  on all four clients, never on hardware. The dial reads the modem through each client's RX ring (`dial_rx`), so a client's NMI
+  must stay as it is.
 - **Untested on hardware.** The lost-ACK resync (2400 no-op bytes) has only been tested against the reference decoder, not a
   client in VICE. The W65C51N transmit-empty caveat in the README is unverified.

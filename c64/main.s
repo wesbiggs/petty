@@ -67,6 +67,8 @@ lines       = $21
 row         = $22
 glyph       = $23
 
+CLIENT_ASK  = 1                 ; this client can ask for the dial's settings (dialask.inc)
+
 ; --- BASIC stub: 10 SYS2061 -------------------------------------------------
 .segment "LOADADDR"
         .word $0801
@@ -374,6 +376,42 @@ init_acia:
         rts
 
 .include "dial.inc"
+
+; The next byte the NMI has put in the receive ring: C set and A = it, else C clear. Clobbers X.
+dial_rx:
+        ldx rptr
+        cpx wptr
+        beq @none
+        lda RBUF,x
+        inc rptr
+        sec
+        rts
+@none:  clc
+        rts
+
+; The dial's progress, and asking for its settings (dialask.inc), draw through this.
+UI_COLS     = 40
+CFG         = $0334             ; the cassette buffer
+.if DIAL_DBGCODE
+; A = screen code, X = column, Y = row.
+ui_cell:
+        pha
+        txa
+        clc
+        adc rowlo,y
+        sta scr
+        lda rowhi,y
+        adc #0
+        sta scr+1
+        pla
+        ldy #0
+        sta (scr),y
+        rts
+
+ui_clear:
+        jmp clear_screen
+.endif
+.include "dialask.inc"
 
 ; --- keyboard ----------------------------------------------------------------
 

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Dial setup on the C64** (`make DIALASK=1`, all four clients): the modem's start-up command, the bridge's address and a
+  dial-progress switch are asked for on the screen, kept in `PETTY.CFG` on the last device used, and asked again when the
+  call does not come in about 10 seconds. `DIALINIT=ATC` sends a command line before `ATDT` (for a TeensyROM's Ethernet modem,
+  which also waits longer for the answer to it), and `DIALDEBUG=1` shows the dial's progress on the screen. The clients' dial step now reads the modem through the receive ring their NMI fills, not by polling the ACIA.
 - **OSC 8350 `display`**: a program asks which client it is drawing on and what it can do, and is answered once the client has said
   HELLO (`c64`, `c64-hires`, `c64-80`, `c128`, with its size and flags). `bridge/scripts/ask-display.js`. See the README.
 

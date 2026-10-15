@@ -105,6 +105,8 @@ scol        = $2C
 srow        = $2D
 sidx        = $2E
 
+CLIENT_ASK  = 1                 ; this client can ask for the dial's settings (dialask.inc)
+
 ; --- BASIC stub: 10 SYS2061 -------------------------------------------------
 .segment "LOADADDR"
         .word $0801
@@ -171,7 +173,12 @@ op_goto:
         cmp #COLS
         bcc :+
         lda #COLS-1
-:       lsr                     ; cell column; C = right half
+:       jsr goto_rc
+        jmp cmdloop
+
+; Set the write position to the row in `row` and the column in A.
+goto_rc:
+        lsr                     ; cell column; C = right half
         sta tmp
         lda #0
         rol
@@ -200,7 +207,7 @@ op_goto:
         adc o320hi,x
         adc #>BITMAP
         sta bp+1
-        jmp cmdloop
+        rts
 
 op_color:
         jsr rb_get
@@ -668,6 +675,51 @@ init_acia:
         rts
 
 .include "dial.inc"
+
+; The next byte the NMI has put in the receive ring: C set and A = it, else C clear. Clobbers X.
+dial_rx:
+        lda rp
+        cmp wp
+        bne @have
+        lda rp+1
+        cmp wp+1
+        beq @none
+@have:  ldx #0
+        lda (rp,x)
+        sta tmp
+        inc rp
+        bne @out
+        inc rp+1
+        lda rp+1
+        cmp #>RBUF_END
+        bne @out
+        lda #>RBUF
+        sta rp+1
+@out:   lda tmp
+        sec
+        rts
+@none:  clc
+        rts
+
+; The dial's progress, and asking for its settings (dialask.inc), draw through this.
+UI_COLS     = 80
+CFG         = $0334             ; the cassette buffer
+.if DIAL_DBGCODE
+; A = screen code, X = column, Y = row.
+ui_cell:
+        sta ui_code
+        sty row
+        txa
+        jsr goto_rc
+        lda ui_code
+        jmp putcell
+
+ui_code: .byte 0
+
+ui_clear:
+        jmp clear_screen
+.endif
+.include "dialask.inc"
 
 ; --- keyboard ----------------------------------------------------------------
 

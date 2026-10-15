@@ -506,6 +506,7 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `bridge/scripts/prg2pic.js` | saves the picture a self-showing `.prg` displays, as Koala or Doodle |
 | `bridge/scripts/gen-glyphs.js` | writes `c64/glyphs.inc` and `c64/font4x8.inc` |
 | `bridge/scripts/fake-c64.js` | pretend client for testing without VICE |
+| `c64/dialask.inc` | the dial's progress display and the setup screen with `PETTY.CFG` (`DIALDEBUG=1`, `DIALASK=1`), for all four clients |
 | `bridge/scripts/fake-modem.js` | pretend WiFi modem for testing the dial step |
 | `bridge/scripts/petty-ctl.js` | sends commands to the bridge's control port |
 | `bridge/scripts/mock-soft80.js` | renders a program's soft 80-column screen to an image |
@@ -553,12 +554,28 @@ Two ways to reach the bridge from a SwiftLink:
   make bridge CMD="--host 0.0.0.0 -- claude"
   ```
 
+  If the modem needs a command first, add `DIALINIT=ATC` (any one command line): the client sends it, and waits a moment,
+  before every dial.
+
   At startup, such a client sends `ATDT 192.168.1.20:6464` and waits for
   `CONNECT`, dialling again every half minute until one comes. Then it
   discards the rest of the modem's result line and says hello. A client
   built without `DIAL` doesn't dial. Pass the same `DIAL` to every `make`
   that builds the clients (`make vice DIAL=...` too): a different one,
   or none, rebuilds them. If the call drops, run the client again to redial.
+
+  **Setting it up on the C64 instead.** `make DIALASK=1` (all four clients) takes these from the client: it
+  loads `PETTY.CFG` from the last device used (8 if that is not a disk drive), and if there is none, asks on the screen for
+  the modem's start-up command (`DIALINIT`: `ATC` for a TeensyROM, blank for none), the bridge's address (`DIAL`, as
+  `host:port`) and whether to show the dial's progress, then saves the answers. Each question shows the built-in `DIAL`,
+  `DIALINIT` and `DIALDEBUG` as its answer, so `make DIALASK=1 DIALINIT=ATC` asks with `ATC` already in. RETURN keeps what is
+  shown; a letter or digit typed first replaces it; DEL edits it. A blank address skips dialling. If CONNECT does not come in
+  about 10 seconds the questions come back, with the current values shown, and are saved if changed. Delete `PETTY.CFG` to be
+  asked from scratch. Without a drive the answers are asked each time. On the C128 the file is read and written with the 2 MHz mode off.
+
+  `DIALDEBUG=1` (or the question) shows the dial's progress in rows 21-24 of the screen, on all four clients: `>D` and the ACIA status
+  (`10`, say, as two hex digits), `>I` after the start-up command, `>T` after `ATDT`, what the modem sends, `>C` on
+  CONNECT. Status `aa` or `5a` and nothing else moving means the cartridge is not presenting a SwiftLink at `$DE00`.
 
 Other notes:
 
