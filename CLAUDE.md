@@ -26,5 +26,9 @@ From a code review. Not fixed on purpose or for lack of a way to test; pick them
   buffer, so a PETTY.CFG far longer than 71 bytes would overrun it (the end address is checked after the fact). Tested in VICE (x64sc, x128)
   on all four clients, never on hardware. The dial reads the modem through each client's RX ring (`dial_rx`), so a client's NMI
   must stay as it is.
+- **RUN/STOP+RESTORE (`c64/restart.inc`) is untested with a real RESTORE key.** VICE cannot press it: the checks jumped to the
+  KERNAL's NMI routine (C64) or the client's `nmi` (C128) with RUN/STOP faked in the keyboard variable. It takes an NMI the ACIA did
+  not raise (status bit 7 clear) for RESTORE, so a RESTORE that arrives with a byte pending is missed. The modem hang-up (`+++`, `ATH`)
+  was tried only against `fake-modem.js`.
 - **Untested on hardware.** The lost-ACK resync (2400 no-op bytes) has only been tested against the reference decoder, not a
   client in VICE. The W65C51N transmit-empty caveat in the README is unverified.

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **RUN/STOP+RESTORE restarts the client** (all four): the screen, SID, sprites and interrupts are set up again, the client says
+  HELLO anew (the bridge redraws everything) and, in a build that dials, hangs the modem up (`+++`, `ATH`) and dials again.
+  RESTORE alone does nothing, as before. `c64/restart.inc`; `bridge/scripts/fake-modem.js` understands `+++` and `ATH`.
 - **Dial setup on the C64** (`make DIALASK=1`, all four clients): the modem's start-up command, the bridge's address and a
   dial-progress switch are asked for on the screen, kept in `PETTY.CFG` on the last device used, and asked again when the
   call does not come in about 10 seconds. `DIALINIT=ATC` sends a command line before `ATDT` (for a TeensyROM's Ethernet modem,
