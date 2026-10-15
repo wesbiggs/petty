@@ -82,3 +82,25 @@ test('a client without game hardware (soft 80 columns) gets none of it', async (
   assert.equal(dec.sid.length, 0);
   assert.ok(dec.glyph.some(g => g !== 32), 'the text still shows');
 });
+
+// OSC 8350: a program asks what it is drawing on.
+for (const [display, want] of [
+  [DISPLAY.C64, 'c64;40;25;game,sound'],
+  [DISPLAY.C64_HIRES, 'c64-hires;40;25;hires,ext,game,sound'],
+  [DISPLAY.C64_80, 'c64-80;80;25;sound,pair'],
+  [DISPLAY.C128, 'c128;80;25;ext,sound,reverse'],
+]) {
+  test(`OSC 8350 display: the program is told it is on the ${display.name}`, async () => {
+    // The program asks as it starts, usually before the client's HELLO has been read: the answer is
+    // whatever the client turns out to be, not a guess. It writes what it was told to the screen.
+    const asker = fileURLToPath(new URL('../scripts/ask-display.js', import.meta.url));
+    const { dec } = await run(`node ${asker}`, { display, wait: 8000, until: d => /8350;display;/.test(screenText(d, display)) });
+    assert.ok(screenText(dec, display).includes(`8350;display;${want}`), screenText(dec, display));
+  });
+}
+
+function screenText(dec, display) {
+  let s = '';
+  for (let i = 0; i < display.cols * display.rows; i++) s += String.fromCharCode(dec.glyph[i] === 0 ? 64 : dec.glyph[i] < 32 ? dec.glyph[i] + 96 : dec.glyph[i]);
+  return s;
+}

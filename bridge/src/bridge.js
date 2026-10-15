@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import pty from 'node-pty';
 import xterm from '@xterm/headless';
-import { DISPLAY, MSG, OP, VIEW, displayById, encodeFrame, encodeReset, encodePicture } from './protocol.js';
+import { DISPLAY, MSG, OP, VIEW, displayById, displayReport, encodeFrame, encodeReset, encodePicture } from './protocol.js';
 import { loadLut } from './sound/lut.js';
 import { SoundManager } from './sound/manager.js';
 import { classifyRegion } from './sound/probe.js';
@@ -211,7 +211,21 @@ class Session {
     });
     term.parser.registerOscHandler(8348, data => { this.dirty = true; return this.game.sprite(data); });
     term.parser.registerOscHandler(8349, data => { this.dirty = true; return this.game.sid(data); });
+    // OSC 8350: a program asks what it is drawing on. `display` is answered with `ESC ] 8350 ; display ; KEY;COLS;ROWS;FLAGS BEL`
+    // (protocol.js displayReport), once the client has said HELLO: so a question asked as the program starts is answered
+    // a moment later, when the client arrives, and not with a guess.
+    term.parser.registerOscHandler(8350, data => {
+      if (data !== 'display') return false;
+      if (this.conn?.hello) this.answerDisplay();
+      else this.displayAsked = true;
+      return true;
+    });
     sessions.add(this);
+  }
+
+  answerDisplay() {
+    this.displayAsked = false;
+    this.proc?.write(`\x1b]8350;display;${displayReport(this.display)}\x07`);
   }
 
   // A terminal wider (--cols) or taller (--rows) than the display is shown
@@ -440,6 +454,8 @@ class Connection {
         if (!d) s.log(`unknown display ${id}, assuming C64`);
         s.log(`${(d ?? DISPLAY.C64).name} says hello`);
         s.setDisplay(d ?? DISPLAY.C64);
+        this.hello = true;
+        if (s.displayAsked) s.answerDisplay(); // OSC 8350, asked before the client arrived
         this.sound?.end?.('closed'); // the client restarted
         s.game.invalidate(); // with nothing in it: say all of it again (after display is set)
         this.hasSound = soundOn && !!s.display.sound;

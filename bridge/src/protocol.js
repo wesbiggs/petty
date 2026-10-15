@@ -80,11 +80,12 @@
 
 import { IMAGE, imageCell } from './image.js';
 
+// key: what OSC 8350 `display` tells a program (see displayReport).
 export const DISPLAY = {
-  C64: { id: 0, name: 'C64', cols: 40, rows: 25, sound: true, game: true },
-  C128: { id: 1, name: 'C128 VDC', cols: 80, rows: 25, reverse: true, ext: true, sound: true },
-  C64_80: { id: 2, name: 'C64 soft-80', cols: 80, rows: 25, pair: true, sound: true },
-  C64_HIRES: { id: 3, name: 'C64 hi-res', cols: 40, rows: 25, hires: true, ext: true, sound: true, game: true },
+  C64: { id: 0, key: 'c64', name: 'C64', cols: 40, rows: 25, sound: true, game: true },
+  C128: { id: 1, key: 'c128', name: 'C128 VDC', cols: 80, rows: 25, reverse: true, ext: true, sound: true },
+  C64_80: { id: 2, key: 'c64-80', name: 'C64 soft-80', cols: 80, rows: 25, pair: true, sound: true },
+  C64_HIRES: { id: 3, key: 'c64-hires', name: 'C64 hi-res', cols: 40, rows: 25, hires: true, ext: true, sound: true, game: true },
 };
 export const displayById = id => Object.values(DISPLAY).find(d => d.id === id);
 
@@ -538,4 +539,14 @@ export class Decoder {
       }
     }
   }
+}
+
+/**
+ * What a program is told when it asks (OSC 8350 ; display): `KEY;COLS;ROWS;FLAGS`, FLAGS a comma-separated list
+ * of what the display can do: `hires` (per-cell colours, 128-255 free for glyphs), `ext` (the extended glyphs),
+ * `game` (sprites and SID: OSC 8348/8349), `sound`, `reverse` (C128), `pair` (soft 80).
+ */
+export function displayReport(d) {
+  const flags = ['hires', 'ext', 'game', 'sound', 'reverse', 'pair'].filter(f => d[f]);
+  return `${d.key};${d.cols};${d.rows};${flags.join(',')}`;
 }

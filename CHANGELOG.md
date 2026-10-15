@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **OSC 8350 `display`**: a program asks which client it is drawing on and what it can do, and is answered once the client has said
+  HELLO (`c64`, `c64-hires`, `c64-80`, `c128`, with its size and flags). `bridge/scripts/ask-display.js`. See the README.
+
 ## 0.11.0
 
 - Security: a TCP connection that does not open with HELLO is dropped, and so is a control-port connection whose first line is no

@@ -336,6 +336,21 @@ instead of 2 KB. Vertical scrolls of the whole screen still use `SCROLL`.
 emulated machine: shapes, positions, flags, glides across x = 256, random `MOVE`s against the reference decoder, and script timing and
 masking in VICE's SID dump.
 
+## Asking what you are drawing on (OSC 8350)
+
+A program that draws differently for each PETTY client (the text client has 31 spare screen codes, the hi-res one 128 more
+and a colour per cell) can ask:
+
+```
+ESC ] 8350 ; display BEL
+```
+
+and read back, on its input, `ESC ] 8350 ; display ; KEY ; COLS ; ROWS ; FLAGS BEL`. KEY is `c64`, `c64-hires`, `c64-80` or `c128`;
+FLAGS is a comma-separated list of `hires`, `ext`, `game`, `sound`, `reverse`, `pair` (what the display can do, as in the sections
+above). The answer waits for the client's HELLO, so asking as the program starts is fine: it comes when the client arrives, and
+is never a guess. A bridge without this answers nothing, so a program should give up after a second or two.
+`node bridge/scripts/ask-display.js` is a program that asks and prints the answer.
+
 ## Sound (the C64 and C128 clients)
 
 A program in the terminal can speak, or play music, through the C64's SID, with `say` and `play`. The bridge
@@ -414,6 +429,8 @@ Every frame ends with FRAME and
 the C64 answers ACK. The bridge keeps only one frame in flight, so fast output
 merges into fewer frames instead of overflowing the client's receive buffer (256
 bytes; 4 KB on the bitmap C64 clients).
+(The program-facing escape sequences, OSC 8347-8350, are not part of this wire protocol: they are between the program and the
+bridge, and the bridge turns them into the commands above. OSC 8350 `display` needs none, and the client is unchanged.)
 C64→host messages are ACK, `KEY code mods` and HELLO (and, for sound, CREDIT, DONE, ABORT and PROBE). A client on another
 display sends `HELLO_ON id` instead (1 = C128 VDC, 2 = C64 soft 80 columns,
 both 80×25; 3 = C64 hi-res, 40×25), and the bridge
@@ -493,6 +510,7 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `bridge/scripts/petty-ctl.js` | sends commands to the bridge's control port |
 | `bridge/scripts/mock-soft80.js` | renders a program's soft 80-column screen to an image |
 | `bridge/scripts/gen-colortest.js` | writes `colortest.ans` |
+| `bridge/scripts/ask-display.js` | asks the bridge which client it is drawing on (OSC 8350) and prints the answer |
 | `bridge/scripts/gen-title.js` | writes `bridge/title.ans`, the start screen |
 
 Memory map: code `$0801–$16DB`, sprite shapes `$2000–$2FFF`, receive ring `$3700`, character set `$3800–$3FFF`, screen `$0400`;
