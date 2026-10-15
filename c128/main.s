@@ -65,6 +65,7 @@ SHFLG       = $D3               ; shift/C=/ctrl/alt flags
 SFDX        = $D4               ; matrix code of held key, 88 = none
 LOCKS       = $F7               ; $80 = no shift+C= toggle, $40 = no ctrl+S
 NO_KEY      = 88
+STOP_KEY    = 63                ; matrix code of RUN/STOP
 
 ; protocol
 OP_GOTO     = 1
@@ -583,6 +584,7 @@ send:
 
 nmi:
         lda ACIA_STATUS         ; also acknowledges the interrupt
+        bpl @restore            ; bit 7: the ACIA's interrupt, else RESTORE
         and #$08                ; receive register full?
         beq :+
         lda ACIA_DATA
@@ -590,6 +592,11 @@ nmi:
         sta RBUF,x
         inc wptr
 :       jmp INT_RETURN
+@restore:
+        lda SFDX
+        cmp #STOP_KEY           ; RUN/STOP+RESTORE?
+        bne :-
+        jmp restart
 
 init_acia:
         sta ACIA_STATUS         ; programmed reset
@@ -601,6 +608,7 @@ init_acia:
         rts
 
 .include "dial.inc"
+.include "restart.inc"
 
 ; The next byte the NMI has put in the receive ring: C set and A = it, else C clear. Clobbers X.
 dial_rx:

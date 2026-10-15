@@ -112,6 +112,12 @@ it rarely needs `--cols`. Switching clients mid-session resizes the terminal.
 If the program exits, press RETURN on the C64 to start it again. The session
 survives C64 resets and reconnects; a reset just triggers a full redraw.
 
+**RUN/STOP+RESTORE** restarts the client without a reset: it sets the screen, the
+SID and the sprites up again, says hello to the bridge anew (which redraws
+everything) and, in a client built with `DIAL`, hangs the modem up and dials again.
+Use it when the link is out of step or a dial went nowhere. It does not work while a
+sound plays (RUN/STOP stops that; then press it again). RESTORE alone does nothing.
+
 ## Keys
 
 | C64 | Sends | Claude Code meaning |

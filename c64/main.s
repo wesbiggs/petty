@@ -25,6 +25,7 @@ NMIVEC      = $0318
 JIFFY_LO    = $A2
 KEYCOUNT    = $C6               ; keyboard buffer length
 CURKEY      = $CB               ; matrix code of held key, 64 = none
+STOP_KEY    = 63                ; ...of RUN/STOP
 BLNSW       = $CC               ; cursor blink switch (nonzero = off)
 SHFLAG      = $028D             ; shift/C=/ctrl flags
 MODE        = $0291             ; $80 = disable shift+C= charset toggle
@@ -355,16 +356,22 @@ nmi:
         txa
         pha
         lda ACIA_STATUS         ; also acknowledges the interrupt
+        bpl @restore            ; bit 7: the ACIA's interrupt, else RESTORE
         and #$08                ; receive register full?
-        beq :+
+        beq @out
         lda ACIA_DATA
         ldx wptr
         sta RBUF,x
         inc wptr
-:       pla
+@out:   pla
         tax
         pla
         rti
+@restore:
+        lda CURKEY
+        cmp #STOP_KEY           ; RUN/STOP+RESTORE?
+        bne @out
+        jmp restart
 
 init_acia:
         sta ACIA_STATUS         ; programmed reset
@@ -376,6 +383,7 @@ init_acia:
         rts
 
 .include "dial.inc"
+.include "restart.inc"
 
 ; The next byte the NMI has put in the receive ring: C set and A = it, else C clear. Clobbers X.
 dial_rx:

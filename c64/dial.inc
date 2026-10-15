@@ -65,6 +65,27 @@ dial:
 .endif
         lda #%00001001          ; RX irq on: the client's NMI fills its ring and dial_rx reads it
         sta ACIA_CMD
+        lda dial_restarted      ; RUN/STOP+RESTORE: the call may still be up: escape and hang up
+        beq @redial
+        lda #0
+        sta dial_restarted
+        lda #DIAL_SETTLE        ; a second of quiet either side of the escape
+        jsr dial_drain
+        ldx #0
+:       lda dial_escape,x
+        beq :+
+        jsr send
+        inx
+        bne :-
+:       lda #DIAL_SETTLE
+        jsr dial_drain
+        ldx #0
+:       lda dial_hangup,x
+        beq :+
+        jsr send
+        inx
+        bne :-
+:
 @redial:
 .if DIAL_ASKING
         lda dial_host           ; blank: nothing to dial
@@ -165,6 +186,9 @@ dial_drain:
         rts
 
 dial_cmd:     .byte "ATDT", 0
+dial_escape:  .byte "+++", 0
+dial_hangup:  .byte 13, "ATH", 13, 0
+dial_restarted: .byte 0         ; set by restart (restart.inc)
 dial_connect: .byte "CONNECT"
 dial_until:   .byte 0
 dial_since:   .byte 0
