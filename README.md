@@ -12,8 +12,9 @@ client's screen (40×25, or 80×25) and emulates the terminal headlessly
 already converted to C64 screen codes and colours. The C64 client (1.3 KB of
 6502) just copies them into screen RAM and sends key presses back.
 
-Unlike C64 chat clients for Claude (such as
-[claude64](https://github.com/theletterf/claude64)), it runs the real Claude Code
+![Claude Code running in C64's 80-column mode](docs/claude80.png)
+
+Want AI on your C64? PETTY runs the real Claude Code
 CLI. And unlike on-C64 VT100 terminals (CBterm, GTERM), no escape sequences are
 parsed on the C64, so it shows anything xterm can.
 
