@@ -35,7 +35,7 @@ jobs:
         run: |
           node bridge/scripts/gen-glyphs.js
           node bridge/scripts/gen-title.js
-          git diff --exit-code -- c64/glyphs.inc c64/font4x8.inc bridge/title.ans
+          git diff --exit-code -- c64/glyphs.inc c64/font4x8.inc c64/font6x8.inc bridge/title.ans
 
       - uses: actions/upload-artifact@v4
         with:

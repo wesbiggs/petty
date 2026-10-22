@@ -7,6 +7,7 @@ import { VIC, RGBI, palette, oscReply, THEME_NAMES, stepTheme } from '../src/col
 import { snapshot } from '../src/screen.js';
 import { wideEmoji } from '../src/unicode.js';
 import { FONT4 } from '../src/font4x8.js';
+import { FONT6 } from '../src/font6x8.js';
 import { EXT, extendedGlyph } from '../src/extglyphs.js';
 import { GlyphCache } from '../src/glyphcache.js';
 import xterm from '@xterm/headless';
@@ -190,6 +191,54 @@ test('soft 80 columns: letters get sprites before punctuation', async () => {
   const { sprites } = await soft80('\x1b[32m(\x1b[31mo      '.repeat(9) + '\r\n'.repeat(10) + '\x1b[32mm\x1b[31mo');
   assert.equal(sprites.length, 8);
   assert.deepEqual([sprites[0].row, sprites[0].col, sprites[0].color], [10, 1, VIC.fg('palette', 1)]);
+});
+
+const soft53 = async text => {
+  const term = new xterm.Terminal({ cols: 53, rows: 25, allowProposedApi: true });
+  await new Promise(done => term.write('\x1b[?25l' + text, done));
+  return snapshot(term, 0, DISPLAY.C64_53);
+};
+
+test('soft 53 columns: each group of 4 cells shares one colour', async () => {
+  // red "ab", green "c", a space; then a blue "d" and three cells of green background
+  const { color } = await soft53('\x1b[31mab\x1b[32mc \x1b[34md\x1b[42m   \x1b[0m');
+  assert.equal(color[0], VIC.fg('palette', 1), 'red a and b outweigh green c');
+  assert.deepEqual([...color.slice(1, 4)], [color[0], color[0], color[0]]);
+  assert.equal(color[4], VIC.bg('palette', 2), 'the solid background cells outweigh d');
+  assert.deepEqual([...color.slice(5, 8)], [color[4], color[4], color[4]]);
+});
+
+test('soft 53 columns: the last column is a group of its own', async () => {
+  const { color, sprites } = await soft53(`\x1b[1;49H\x1b[31mabc\x1b[32mde\x1b[34mf`); // columns 48-53
+  assert.equal(color[52], VIC.fg('palette', 2), 'e, in column 52, keeps its colour');
+  assert.equal(color[53], VIC.fg('palette', 4), 'and f, on the next row, its own');
+  assert.deepEqual(sprites.map(s => [s.col, s.row, s.color]), [[51, 0, VIC.fg('palette', 2)]], 'd is repainted');
+});
+
+test('soft 53 columns: a sprite repaints a letter that lost its colour, 6 pixels wide', async () => {
+  // One group: green "mm" keeps the colour, red "o" in column 2 loses it.
+  const { color, sprites } = await soft53('\x1b[32mmm\x1b[31mo');
+  assert.equal(color[2], VIC.fg('palette', 2), 'o drawn green in the bitmap');
+  assert.equal(sprites.length, 1);
+  const [s] = sprites;
+  assert.deepEqual([s.col, s.row, s.color], [2, 0, VIC.fg('palette', 1)]);
+  // o's pixels, and nothing else, in the sprite's first 6 columns
+  const c = FONT6[toScreenCode('o')];
+  for (let y = 0; y < 21; y++) {
+    const bits = (s.data[y * 3] << 16) | (s.data[y * 3 + 1] << 8) | s.data[y * 3 + 2];
+    assert.equal(bits, y < 8 ? c[y] << 18 : 0, `line ${y}`);
+  }
+});
+
+test('soft 53 columns: a sprite takes the losers of 4 columns and 2 rows', async () => {
+  // Each group is green "mm" and red "oo": the two o lose, and so do the two below.
+  const line = '\x1b[32mmm\x1b[31moo'.repeat(13);
+  const { sprites } = await soft53(line + '\r\n' + line);
+  assert.equal(sprites.length, 8);
+  assert.deepEqual(sprites.map(s => [s.col, s.row]), [[2, 0], [6, 0], [10, 0], [14, 0], [18, 0], [22, 0], [26, 0], [30, 0]]);
+  const lit = s => s.data.reduce((n, b) => n + [...b.toString(2)].filter(c => c === '1').length, 0);
+  const o = FONT6[toScreenCode('o')].reduce((n, r) => n + [...r.toString(2)].filter(c => c === '1').length, 0);
+  assert.ok(sprites.every(s => lit(s) === 4 * o), 'four o per sprite');
 });
 
 test('themes', () => {

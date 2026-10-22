@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Runs a command (default: $SHELL) in a pty the size of the client's screen
-// (40x25 C64 text or hi-res; 80x25 C128 VDC or C64 soft 80 columns; or
-// larger and panned),
+// (40x25 C64 text or hi-res; 80x25 C128 VDC or C64 soft 80 columns; 53x25
+// C64 soft 53 columns; or larger and panned),
 // emulates the terminal headlessly, and streams screen diffs to the client
 // over TCP (VICE's RS-232, or a WiFi modem) or a serial device (--serial).
 //

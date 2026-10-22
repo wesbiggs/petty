@@ -88,6 +88,7 @@ for (const [display, want] of [
   [DISPLAY.C64, 'c64;40;25;game,sound'],
   [DISPLAY.C64_HIRES, 'c64-hires;40;25;hires,ext,game,sound'],
   [DISPLAY.C64_80, 'c64-80;80;25;sound,pair'],
+  [DISPLAY.C64_53, 'c64-53;53;25;sound,quad'],
   [DISPLAY.C128, 'c128;80;25;ext,sound,reverse'],
 ]) {
   test(`OSC 8350 display: the program is told it is on the ${display.name}`, async () => {

@@ -12,7 +12,7 @@
 //   06 border bg       COLORS   set $D020/$D021
 //   07                 CLS      clear screen with spaces, pointer to 0,0
 //   08                 FRAME    end of frame; C64 answers ACK
-//   09 n col row color d1..d63  SPRITE  (soft 80 columns) show hardware sprite
+//   09 n col row color d1..d63  SPRITE  (soft 80 and 53 columns) show hardware sprite
 //                               n (0-7) with 24x21 pixels d, its top left
 //                               corner on character col, row
 //   0A n               NOSPRITE hide sprite n
@@ -69,9 +69,10 @@
 //   09                 GLIDE    every sprite glide has ended
 //
 // Rows and columns are those of the client's display: 40x25 on the C64, 80x25
-// on the C128's VDC and on the C64's soft 80-column bitmap screen. The write
-// pointer wraps at the end of the screen. `pair`: two neighbouring cells share
-// one colour (the bridge makes them equal). `hires`: every cell has its own
+// on the C128's VDC and on the C64's soft 80-column bitmap screen, 53x25 on
+// its soft 53-column one. The write pointer wraps at the end of the screen.
+// `pair`: two neighbouring cells share one colour (the bridge makes them
+// equal); `quad`: four do (columns 0-3, 4-7, ... of each row; see soft80.js). `hires`: every cell has its own
 // foreground and background, and there is no inverse half of the character
 // set; a colour's bit 8 is underline, sent with UNDERLINE. `reverse`:
 // inverse video is an attribute (VDC.RVS), not a character.
@@ -86,6 +87,7 @@ export const DISPLAY = {
   C128: { id: 1, key: 'c128', name: 'C128 VDC', cols: 80, rows: 25, reverse: true, ext: true, sound: true },
   C64_80: { id: 2, key: 'c64-80', name: 'C64 soft-80', cols: 80, rows: 25, pair: true, sound: true },
   C64_HIRES: { id: 3, key: 'c64-hires', name: 'C64 hi-res', cols: 40, rows: 25, hires: true, ext: true, sound: true, game: true },
+  C64_53: { id: 4, key: 'c64-53', name: 'C64 soft-53', cols: 53, rows: 25, quad: true, sound: true },
 };
 export const displayById = id => Object.values(DISPLAY).find(d => d.id === id);
 
@@ -544,9 +546,9 @@ export class Decoder {
 /**
  * What a program is told when it asks (OSC 8350 ; display): `KEY;COLS;ROWS;FLAGS`, FLAGS a comma-separated list
  * of what the display can do: `hires` (per-cell colours, 128-255 free for glyphs), `ext` (the extended glyphs),
- * `game` (sprites and SID: OSC 8348/8349), `sound`, `reverse` (C128), `pair` (soft 80).
+ * `game` (sprites and SID: OSC 8348/8349), `sound`, `reverse` (C128), `pair` (soft 80), `quad` (soft 53).
  */
 export function displayReport(d) {
-  const flags = ['hires', 'ext', 'game', 'sound', 'reverse', 'pair'].filter(f => d[f]);
+  const flags = ['hires', 'ext', 'game', 'sound', 'reverse', 'pair', 'quad'].filter(f => d[f]);
   return `${d.key};${d.cols};${d.rows};${flags.join(',')}`;
 }

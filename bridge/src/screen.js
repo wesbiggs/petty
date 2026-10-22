@@ -11,7 +11,7 @@ import { EXT, EXT_GLYPHS, extendedGlyph } from './extglyphs.js';
 
 const INVERSE_END = 256; // glyphs from here on are extended, not inverted
 
-const KIND = { [DISPLAY.C64.id]: 'vic', [DISPLAY.C128.id]: 'rgbi', [DISPLAY.C64_80.id]: 'vic', [DISPLAY.C64_HIRES.id]: 'vic' };
+const KIND = { [DISPLAY.C64.id]: 'vic', [DISPLAY.C128.id]: 'rgbi', [DISPLAY.C64_80.id]: 'vic', [DISPLAY.C64_HIRES.id]: 'vic', [DISPLAY.C64_53.id]: 'vic' };
 
 // How much of each screen code's cell is foreground, 0-1, from the 4x8 font
 // (close enough for the 8x8 one).
@@ -54,7 +54,7 @@ export function cursorVisible(term) {
 // glyphcache.js). On a `hires` display, colours are foreground << 4 |
 // background, and inline images are glyphs from IMAGE up (image.js); other
 // displays show an image as blocks of its colours. On a display with `pair`
-// cells, the result also has `sprites` (see soft80.js).
+// or `quad` cells, the result also has `sprites` (see soft80.js).
 // `own`: characters --charset gave codes of their own on this display (charset.js charsFor).
 export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', panY = 0, own = null) {
   const { cols, rows } = display;
@@ -138,9 +138,9 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', 
     }
   }
   const screen = { cols, rows, glyph, color, hires: !!display.hires, move: !!display.game };
-  if (display.pair) {
+  if (display.pair || display.quad) {
     const focus = cursorRow >= 0 && cursorRow < rows ? cursorRow : rows - 1;
-    screen.sprites = shareColours(screen, focus);
+    screen.sprites = shareColours(screen, focus, display.quad ? 6 : 4);
   }
   return screen;
 }

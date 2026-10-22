@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Soft 53-column C64 client** (`petty53.prg`, `make vice53`): 53×25 in the hi-res bitmap with a 6×8 font
+  (`bridge/src/font6x8.js`, generated into `c64/font6x8.inc`), announced as `HELLO_ON 4`. Each group of four characters
+  (three bitmap cells) shares a colour, and sprites repaint the characters that lost theirs, as on the soft 80-column screen
+  (`soft80.js` now handles both). OSC 8350 reports it as `c64-53` with the flag `quad`. `fake-c64.js --soft53`,
+  `mock-soft80.js --53`.
 - **RUN/STOP+RESTORE restarts the client** (all four): the screen, SID, sprites and interrupts are set up again, the client says
   HELLO anew (the bridge redraws everything) and, in a build that dials, hangs the modem up (`+++`, `ATH`) and dials again.
   RESTORE alone does nothing, as before. `c64/restart.inc`; `bridge/scripts/fake-modem.js` understands `+++` and `ATH`.

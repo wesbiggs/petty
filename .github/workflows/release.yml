@@ -41,6 +41,7 @@ jobs:
             -write build/petty.prg petty \
             -write build/pettyhires.prg pettyhires \
             -write build/petty80.prg petty80 \
+            -write build/petty53.prg petty53 \
             -write build/petty128.prg petty128 \
             -write build/staircase.prg staircase
           (cd dist && zip "petty-$v-prg.zip" *.prg)

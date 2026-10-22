@@ -78,7 +78,7 @@ export function loadCharset(file) {
 }
 
 // What a display can load: slots 0-127 on the text client; 0-255 on the hi-res one.
-const slotsOf = display => display.hires ? 256 : display.ext || display.pair ? 0 : 128;
+const slotsOf = display => display.hires ? 256 : display.ext || display.pair || display.quad ? 0 : 128;
 const usable = (cs, display) => [...cs.glyphs].filter(([code]) => code < slotsOf(display));
 
 // New characters -> the snapshot glyph number that shows them, for glyphs.js's overrides.

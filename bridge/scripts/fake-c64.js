@@ -1,6 +1,6 @@
-// Pretends to be the C64 (or a C128, or the C64 in soft 80 columns or
+// Pretends to be the C64 (or a C128, or the C64 in soft 80 or 53 columns or
 // hi-res): connects to the bridge, types keys, prints the decoded screen.
-// usage: node scripts/fake-c64.js [--c128 | --soft80 | --hires] [--serial dev] [port] "text to type"
+// usage: node scripts/fake-c64.js [--c128 | --soft80 | --soft53 | --hires] [--serial dev] [port] "text to type"
 import net from 'node:net';
 import { parseArgs } from 'node:util';
 import { Decoder, DISPLAY, MSG, OP, VDC } from '../src/protocol.js';
@@ -14,6 +14,7 @@ const { values: opt, positionals } = parseArgs({
   options: {
     c128: { type: 'boolean', default: false },
     soft80: { type: 'boolean', default: false },
+    soft53: { type: 'boolean', default: false },
     hires: { type: 'boolean', default: false },
     serial: { type: 'string' },
     baud: { type: 'string', default: '38400' },
@@ -21,7 +22,7 @@ const { values: opt, positionals } = parseArgs({
 });
 const port = Number(positionals[0] ?? 6464);
 const typed = positionals[1] ?? 'echo hello from the c64\r';
-const display = opt.c128 ? DISPLAY.C128 : opt.soft80 ? DISPLAY.C64_80 : opt.hires ? DISPLAY.C64_HIRES : DISPLAY.C64;
+const display = opt.c128 ? DISPLAY.C128 : opt.soft80 ? DISPLAY.C64_80 : opt.soft53 ? DISPLAY.C64_53 : opt.hires ? DISPLAY.C64_HIRES : DISPLAY.C64;
 const { cols, rows } = display;
 const hello = display === DISPLAY.C64 ? [MSG.HELLO] : [MSG.HELLO_ON, display.id];
 const dec = new Decoder(cols, rows);

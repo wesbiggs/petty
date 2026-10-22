@@ -1,4 +1,4 @@
-; --- the dial's progress, and asking for its settings (all four clients) --------------
+; --- the dial's progress, and asking for its settings (all five clients) --------------
 ;
 ; Included by each client after dial.inc, which says when each part is built:
 ;
@@ -10,9 +10,9 @@
 ;                  come in 9-13 seconds the screen asks again, with the current values shown.
 ;
 ; Everything is drawn one character at a time through the client's own routine, so one engine serves the text,
-; 80-column VDC, soft 80-column and hi-res clients. A client provides:
+; 80-column VDC, soft 80- and 53-column and hi-res clients. A client provides:
 ;
-;   UI_COLS      its width (40 or 80); the height is 25
+;   UI_COLS      its width (40, 53 or 80); the height is 25
 ;   CFG          where the settings live (RAM the KERNAL's tape code would use): 71 bytes
 ;   ui_cell      A = screen code, X = column, Y = row: draw it there. May clobber anything but the stack.
 ;   ui_clear     clear the screen

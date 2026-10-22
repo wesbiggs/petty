@@ -2,6 +2,7 @@ BUILD   := build
 PRG     := $(BUILD)/petty.prg
 PRG128  := $(BUILD)/petty128.prg
 PRG80   := $(BUILD)/petty80.prg
+PRG53   := $(BUILD)/petty53.prg
 PRGHI   := $(BUILD)/pettyhires.prg
 PORT    ?= 6464
 DIAL    ?=
@@ -14,14 +15,14 @@ DIALASK ?=
 VICE_FLAGS := -acia1 -acia1mode 1 -acia1base 0xDE00 -acia1irq 1 \
               -myaciadev 0 -rsdev1 127.0.0.1:$(PORT) +rsdev1ip232 -rsdev1baud 38400
 
-.PHONY: all clean bridge theme title vice vice128 vice80 vicehires run test game-check
+.PHONY: all clean bridge theme title vice vice128 vice80 vice53 vicehires run test game-check
 
-all: $(PRG) $(PRG128) $(PRG80) $(PRGHI)
+all: $(PRG) $(PRG128) $(PRG80) $(PRG53) $(PRGHI)
 
 # The generator writes both includes.
-c64/glyphs.inc: bridge/src/glyphs.js bridge/src/font4x8.js bridge/scripts/gen-glyphs.js
+c64/glyphs.inc: bridge/src/glyphs.js bridge/src/font4x8.js bridge/src/font6x8.js bridge/scripts/gen-glyphs.js
 	node bridge/scripts/gen-glyphs.js
-c64/font4x8.inc: c64/glyphs.inc ;
+c64/font4x8.inc c64/font6x8.inc: c64/glyphs.inc ;
 
 # make DIAL=host:port builds clients that dial the bridge through a WiFi
 # modem; DIALINIT=ATC makes them send that command line first;
@@ -53,6 +54,12 @@ $(BUILD)/main80.o: c64/main80.s c64/font4x8.inc c64/sound.inc c64/dial.inc c64/d
 
 $(PRG80): $(BUILD)/main80.o c64/petty80.cfg
 	ld65 -C c64/petty80.cfg -m $(BUILD)/petty80.map -o $@ $(BUILD)/main80.o
+
+$(BUILD)/main53.o: c64/main53.s c64/font6x8.inc c64/sound.inc c64/dial.inc c64/dialask.inc c64/restart.inc $(DIALSTR) | $(BUILD)
+	ca65 -I c64 -I $(BUILD) -l $(BUILD)/main53.lst -o $@ c64/main53.s
+
+$(PRG53): $(BUILD)/main53.o c64/petty53.cfg
+	ld65 -C c64/petty53.cfg -m $(BUILD)/petty53.map -o $@ $(BUILD)/main53.o
 
 $(BUILD)/mainhires.o: c64/mainhires.s c64/glyphs.inc c64/sound.inc c64/game.inc c64/dial.inc c64/dialask.inc c64/restart.inc $(DIALSTR) | $(BUILD)
 	ca65 -I c64 -I $(BUILD) -l $(BUILD)/mainhires.lst -o $@ c64/mainhires.s
@@ -96,6 +103,10 @@ vice128: $(PRG128)
 # Terminal 2, C64 with the soft 80-column bitmap screen
 vice80: $(PRG80)
 	x64sc $(VICE_FLAGS) -autostart $(PRG80)
+
+# Terminal 2, C64 with the soft 53-column bitmap screen
+vice53: $(PRG53)
+	x64sc $(VICE_FLAGS) -autostart $(PRG53)
 
 # Terminal 2, C64 with the 40-column hi-res bitmap screen
 vicehires: $(PRGHI)

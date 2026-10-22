@@ -3,11 +3,13 @@
 A Commodore 64 terminal (PETSCII + TTY) for Claude Code or any other terminal
 program. There are also 80-column clients: one for the C128's 80-column
 screen, and one for the C64 that draws 80 columns in the hi-res bitmap. A
-third C64 client draws 40 columns in the hi-res bitmap, for colours per cell
-and several hundred more glyphs, which the C128 client has too.
+third C64 client draws 53 columns in the hi-res bitmap, with a 6-pixel font
+that is easier to read than the 80-column one's. A fourth draws 40 columns in
+the hi-res bitmap, for colours per cell and several hundred more glyphs,
+which the C128 client has too.
 
 A bridge on a Mac or Linux host runs the program in a pty the size of the
-client's screen (40×25, or 80×25) and emulates the terminal headlessly
+client's screen (40×25, 53×25 or 80×25) and emulates the terminal headlessly
 (`@xterm/headless`). It sends the C64 only the screen cells that changed,
 already converted to C64 screen codes and colours. The C64 client (1.3 KB of
 6502) just copies them into screen RAM and sends key presses back.
@@ -52,11 +54,12 @@ the tarball; the `make` targets only build the clients and start VICE.
 ## Run it in VICE
 
 ```bash
-make                  # builds build/petty.prg, petty128.prg, petty80.prg and pettyhires.prg (regenerates c64/*.inc)
+make                  # builds build/petty.prg, petty128.prg, petty80.prg, petty53.prg and pettyhires.prg (regenerates c64/*.inc)
 make bridge           # terminal 1: listens on 127.0.0.1:6464, spawns your $SHELL on connect
 make vice             # terminal 2: VICE with an emulated SwiftLink on TCP 6464
 make vice128          # ...or a C128 in 80 columns: watch VICE's VDC window
 make vice80           # ...or the C64 with the soft 80-column screen
+make vice53           # ...or the C64 with the soft 53-column screen
 make vicehires        # ...or the C64 with the 40-column hi-res screen
 ```
 
@@ -107,8 +110,8 @@ C=+CRSR↓ and C=+CRSR↑ scroll the bridge's scrollback by one line per press;
 `--scroll 3` makes it three, like a mouse wheel notch. A program that tracks
 the mouse gets one wheel event per press instead, and decides how far to go.
 
-On the C128 and the soft 80-column C64 the program gets an 80×25 terminal, so
-it rarely needs `--cols`. Switching clients mid-session resizes the terminal.
+On the C128 and the soft 80-column C64 the program gets an 80×25 terminal (53×25
+on the soft 53-column C64), so it rarely needs `--cols`. Switching clients mid-session resizes the terminal.
 
 If the program exits, press RETURN on the C64 to start it again. The session
 survives C64 resets and reconnects; a reset just triggers a full redraw.
@@ -143,7 +146,7 @@ sound plays (RUN/STOP stops that; then press it again). RESTORE alone does nothi
 | SHIFT+: / SHIFT+; | `[` / `]` (C= gives `{` / `}`) | |
 | SHIFT+@, SHIFT+- | `` ` ``, `_` | |
 
-The soft 80-column and hi-res clients use the same keys. The C128 client sends them too,
+The soft 80- and 53-column and hi-res clients use the same keys. The C128 client sends them too,
 plus:
 
 | C128 | Sends |
@@ -191,6 +194,18 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
   that keeps its neighbour's colour ([bridge/src/soft80.js](bridge/src/soft80.js)).
   `node bridge/scripts/mock-soft80.js out.ppm 1500 -- <cmd>` previews a
   program's screen, sprites included, without an emulator.
+- **Soft 53 columns (C64):** the same idea with a 6×8 font
+  ([bridge/src/font6x8.js](bridge/src/font6x8.js), generated into
+  `c64/font6x8.inc`): 53 characters of 6 pixels make 318 of the bitmap's 320.
+  Letters are 5 pixels wide and 7 tall (lowercase 5, with descenders), as in
+  the C64's own font; lines and blocks use all 6. Four characters fill three
+  8×8 cells, and the middle two straddle a cell boundary, so each group of four
+  (columns 0–3, 4–7, …; column 52 alone) shares one colour: the colour with
+  the most weight among its characters (letters and digits first, then lit
+  pixels) keeps it, and sprites repaint the others as on the soft 80-column
+  screen. A sprite is exactly 4 characters wide. The client builds its glyph
+  tables, one per position in the group (12 KB), at startup.
+  `node bridge/scripts/mock-soft80.js --53 out.ppm 1500 -- <cmd>` previews it.
 - **Hi-res 40 columns (C64):** the text client's screen drawn into the hi-res
   bitmap, where each 8×8 cell has its own foreground and background. So
   backgrounds are real (black text on a white card, a red ♥ on it),
@@ -306,7 +321,7 @@ aliases to it, such as `□`). A character with a `slot` is a new one, for a pro
   glyphs' (box drawing, braille, shapes), loaded as they appear on screen; a slot you give is kept out of that, so tiles there cost no
   text glyph, and the screen can show that many fewer extended glyphs at once. A character that has an extended glyph (`●`, `═`, braille) is
   redrawn by changing that, as are the characters that alias to it (`⬤`).
-- **Soft 80-column and C128 clients:** not changed (a 4×8 bitmap font, and the VDC's own); a new character shows as `?`.
+- **Soft 80- and 53-column and C128 clients:** not changed (4×8 and 6×8 bitmap fonts, and the VDC's own); a new character shows as `?`.
 
 The glyphs are sent after each full redraw (a client start, a theme switch), so a reset restores them.
 
@@ -370,9 +385,9 @@ and a colour per cell) can ask:
 ESC ] 8350 ; display BEL
 ```
 
-and read back, on its input, `ESC ] 8350 ; display ; KEY ; COLS ; ROWS ; FLAGS BEL`. KEY is `c64`, `c64-hires`, `c64-80` or `c128`;
-FLAGS is a comma-separated list of `hires`, `ext`, `game`, `sound`, `reverse`, `pair` (what the display can do, as in the sections
-above). The answer waits for the client's HELLO, so asking as the program starts is fine: it comes when the client arrives, and
+and read back, on its input, `ESC ] 8350 ; display ; KEY ; COLS ; ROWS ; FLAGS BEL`. KEY is `c64`, `c64-hires`, `c64-80`, `c64-53` or `c128`;
+FLAGS is a comma-separated list of `hires`, `ext`, `game`, `sound`, `reverse`, `pair`, `quad` (what the display can do, as in the sections
+above; `pair` and `quad`: 2 or 4 neighbouring cells share a colour). The answer waits for the client's HELLO, so asking as the program starts is fine: it comes when the client arrives, and
 is never a guess. A bridge without this answers nothing, so a program should give up after a second or two.
 `node bridge/scripts/ask-display.js` is a program that asks and prints the answer.
 
@@ -405,9 +420,9 @@ and streams them at about 2 KB/s of the link's 3.8; the C64 plays them by writin
 (a sample every two raster lines), polling the serial link in the same loop. A flow-control byte
 for each byte taken keeps the C64's 256-byte buffer from overflowing, as a SwiftLink has no handshake. Three SID voices are held at a DC level so the volume steps have
 something to scale. The bridge asks the client what machine it is when it says hello (PAL or NTSC, from the length of a video frame) and times the samples to match.
-The client's code is [c64/sound.inc](c64/sound.inc), included by all four clients: text, soft 80-column, hi-res and C128 (each
+The client's code is [c64/sound.inc](c64/sound.inc), included by all five clients: text, soft 80- and 53-column, hi-res and C128 (each
 supplies `RX_PENDING`, a macro that tests its receive ring, and POKE, which loads the tables). Each plays modally, and
-scored 9-10 dB speech-band SNR against the speech in VICE (old CIA, PAL). The text, soft 80 and hi-res clients keep the
+scored 9-10 dB speech-band SNR against the speech in VICE (old CIA, PAL). The text, soft 80 and 53 and hi-res clients keep the
 display on and lock the samples to the raster. The C128 client has nothing to lock to (its 40-column VIC is blank, the VDC
 shows the screen), so it drops to 1 MHz, swaps every ROM for RAM so the buffer and tables can sit at $CD00-$CFFF,
 puts an `rti` in the NMI and IRQ vectors for the while, and goes back to 2 MHz after. Its SID is usually an 8580:
@@ -438,7 +453,7 @@ Things the port taught, which are in the code:
 
 Measured in VICE (`node bridge/scripts/sound-capture.js`, which plays a sentence through the whole path and scores the recording): 15 dB speech-band SNR against what the encoder planned, and
 9.5 dB against the speech itself (the 2-bit code and the noise weight cost the rest), on PAL and NTSC machines, with the old and the new CIA. Not tested: RUN/STOP, a real SwiftLink, a real machine,
-and the soft 80-column and text clients (they have no sound).
+and the soft 80- and 53-column and text clients.
 
 Options: `--tts`, `--voice`, `--sound-weight`, `--sound-lut` (the SID's output table: `sid6581`, `sid8580`, or a JSON file measured from your machine, below), `--sound-delay`, `--sound-out FILE` (write what it played, to compare), `--sound off`.
 The control port takes `say TEXT` and `play FILE` (`node bridge/scripts/petty-ctl.js say hello`).
@@ -447,7 +462,7 @@ The control port takes `say TEXT` and `play FILE` (`node bridge/scripts/petty-ct
 
 See [bridge/src/protocol.js](bridge/src/protocol.js). Host→C64 opcodes are GOTO,
 COLOR, PUT, REPEAT, SCROLL, COLORS, CLS and FRAME, plus SPRITE and NOSPRITE for
-the soft 80-column screen, GLYPH for the hi-res one and the C128, and
+the soft 80- and 53-column screens, GLYPH for the hi-res one and the C128, and
 UNDERLINE, BITS (cells of a picture, as raw pixels), VIEW (full-screen
 multicolour pictures), POKE (to load them), and SOUND and PROBE (see [Sound](#sound-the-c64-and-c128-clients)), which every client has.
 Every frame ends with FRAME and
@@ -458,7 +473,7 @@ bytes; 4 KB on the bitmap C64 clients).
 bridge, and the bridge turns them into the commands above. OSC 8350 `display` needs none, and the client is unchanged.)
 C64→host messages are ACK, `KEY code mods` and HELLO (and, for sound, CREDIT, DONE, ABORT and PROBE). A client on another
 display sends `HELLO_ON id` instead (1 = C128 VDC, 2 = C64 soft 80 columns,
-both 80×25; 3 = C64 hi-res, 40×25), and the bridge
+both 80×25; 3 = C64 hi-res, 40×25; 4 = C64 soft 53 columns, 53×25), and the bridge
 resizes the program's terminal to match. For the C128, colours are VDC
 attribute bytes (bit 6 reverses the cell, bit 7 selects characters 256–511),
 and key codes go up to 87 with ALT as modifier bit 3. For
@@ -476,6 +491,7 @@ cd bridge && npm test                                 # encoder vs reference dec
 node bridge/scripts/fake-c64.js 6464 $'echo hi\r'            # pretend C64: types keys, prints screen
 node bridge/scripts/fake-c64.js --c128 6464 $'echo hi\r'     # same, as an 80-column C128
 node bridge/scripts/fake-c64.js --soft80 6464 $'echo hi\r'   # same, as the soft 80-column C64
+node bridge/scripts/fake-c64.js --soft53 6464 $'echo hi\r'   # same, as the soft 53-column C64
 node bridge/scripts/fake-c64.js --hires 6464 $'echo hi\r'    # same, as the hi-res C64
 node bridge/scripts/fake-c64.js --serial /dev/ttys005 0 $'echo hi\r'  # to a bridge on --serial
 ```
@@ -504,6 +520,8 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `c64/petty.cfg` | linker config (program must end below `$2000`) |
 | `c64/main80.s` | soft 80-column C64 client: the same, drawing into the bitmap |
 | `c64/petty80.cfg` | linker config (program must end below `$2000`) |
+| `c64/main53.s` | soft 53-column C64 client: the same, with 6-pixel characters |
+| `c64/petty53.cfg` | linker config (program must end below `$2000`, where its glyph tables start) |
 | `c64/mainhires.s` | hi-res 40-column C64 client |
 | `c64/pettyhires.cfg` | linker config (program must end below `$2000`) |
 | `c64/staircase.s` | standalone program for calibrating a real SID (`make build/staircase.prg`) |
@@ -514,14 +532,15 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `c64/sound.inc` | sound for all the clients: SOUND and PROBE, the 2-bit decoder and the playback loop |
 | `c128/main.s` | C128 client: the same, drawing on the VDC at 2 MHz |
 | `c128/petty128.cfg` | linker config (program must end below `$3800`) |
-| `c64/dial.inc` | the dial step, included by all four clients |
+| `c64/dial.inc` | the dial step, included by all five clients |
 | `bridge/src/bridge.js` | TCP server or serial port, pty, frame pacing |
 | `bridge/src/serial.js` | opens a serial device, raw at the given baud rate |
 | `bridge/src/screen.js` | xterm buffer → screen codes/colours |
-| `bridge/src/soft80.js` | soft 80 columns: shared cell colours and sprite repaints |
+| `bridge/src/soft80.js` | soft 80 and 53 columns: shared cell colours and sprite repaints |
 | `bridge/src/protocol.js` | encoder and reference decoder |
 | `bridge/src/glyphs.js` / `colors.js` / `keymap.js` | character, colour, key mappings |
 | `bridge/src/font4x8.js` | 4×8 font for the soft 80-column screen |
+| `bridge/src/font6x8.js` | 6×8 font for the soft 53-column screen |
 | `bridge/src/extglyphs.js` / `glyphcache.js` | the extra glyphs for the hi-res C64 and the C128, and which are loaded |
 | `bridge/src/image.js` | inline images: OSC 1337, PNG and C64 pictures, hi-res conversion |
 | `bridge/bin/imgcat` | sends pictures as inline images, where iTerm2's imgcat isn't installed |
@@ -529,12 +548,12 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `bridge/src/sound/` | sound: the OSC and queue (`manager.js`), the playback session, the codec, DSP, TTS and file loading |
 | `bridge/scripts/sound-capture.js` | plays a sound in VICE through the whole path and scores the recording |
 | `bridge/scripts/prg2pic.js` | saves the picture a self-showing `.prg` displays, as Koala or Doodle |
-| `bridge/scripts/gen-glyphs.js` | writes `c64/glyphs.inc` and `c64/font4x8.inc` |
+| `bridge/scripts/gen-glyphs.js` | writes `c64/glyphs.inc`, `c64/font4x8.inc` and `c64/font6x8.inc` |
 | `bridge/scripts/fake-c64.js` | pretend client for testing without VICE |
-| `c64/dialask.inc` | the dial's progress display and the setup screen with `PETTY.CFG` (`DIALDEBUG=1`, `DIALASK=1`), for all four clients |
+| `c64/dialask.inc` | the dial's progress display and the setup screen with `PETTY.CFG` (`DIALDEBUG=1`, `DIALASK=1`), for all five clients |
 | `bridge/scripts/fake-modem.js` | pretend WiFi modem for testing the dial step |
 | `bridge/scripts/petty-ctl.js` | sends commands to the bridge's control port |
-| `bridge/scripts/mock-soft80.js` | renders a program's soft 80-column screen to an image |
+| `bridge/scripts/mock-soft80.js` | renders a program's soft 80-column (`--53`: 53-column) screen to an image |
 | `bridge/scripts/gen-colortest.js` | writes `colortest.ans` |
 | `bridge/scripts/ask-display.js` | asks the bridge which client it is drawing on (OSC 8350) and prints the answer |
 | `bridge/scripts/gen-title.js` | writes `bridge/title.ans`, the start screen |
@@ -546,6 +565,12 @@ Soft 80 columns: code `$0801–$1286`; the VIC uses its second bank, with glyph
 tables `$4000–$4FFF` (built at startup), sprite data `$5000–$51FF`, colours
 `$5C00` (sprite pointers `$5FF8`) and the bitmap `$6000–$7F3F`; receive ring
 `$8000–$8FFF` (4 KB, because a bitmap scroll takes about 90 ms).
+
+Soft 53 columns: code `$0801–$199D`, glyph tables `$2000–$4FFF` (built at
+startup: six tables of 2 KB, one for each part of a cell a character can
+fall in); the rest as the soft 80-column client: the VIC's second bank,
+sprite data `$5000–$51FF`, colours `$5C00`, bitmap `$6000–$7F3F`, receive
+ring `$8000–$8FFF`.
 
 Hi-res 40 columns: code `$0801–$0FB2`; the VIC uses its second bank, with the
 font `$4000–$47FF` (one page per pixel row), colours `$5C00` and the bitmap
@@ -589,7 +614,7 @@ Two ways to reach the bridge from a SwiftLink:
   that builds the clients (`make vice DIAL=...` too): a different one,
   or none, rebuilds them. If the call drops, run the client again to redial.
 
-  **Setting it up on the C64 instead.** `make DIALASK=1` (all four clients) takes these from the client: it
+  **Setting it up on the C64 instead.** `make DIALASK=1` (all five clients) takes these from the client: it
   loads `PETTY.CFG` from the last device used (8 if that is not a disk drive), and if there is none, asks on the screen for
   the modem's start-up command (`DIALINIT`: `ATC` for a TeensyROM, blank for none), the bridge's address (`DIAL`, as
   `host:port`) and whether to show the dial's progress, then saves the answers. Each question shows the built-in `DIAL`,
@@ -598,7 +623,7 @@ Two ways to reach the bridge from a SwiftLink:
   about 10 seconds the questions come back, with the current values shown, and are saved if changed. Delete `PETTY.CFG` to be
   asked from scratch. Without a drive the answers are asked each time. On the C128 the file is read and written with the 2 MHz mode off.
 
-  `DIALDEBUG=1` (or the question) shows the dial's progress in rows 21-24 of the screen, on all four clients: `>D` and the ACIA status
+  `DIALDEBUG=1` (or the question) shows the dial's progress in rows 21-24 of the screen, on all five clients: `>D` and the ACIA status
   (`10`, say, as two hex digits), `>I` after the start-up command, `>T` after `ATDT`, what the modem sends, `>C` on
   CONNECT. Status `aa` or `5a` and nothing else moving means the cartridge is not presenting a SwiftLink at `$DE00`.
 
@@ -633,9 +658,9 @@ make title
 git commit -am "Version 1.0.0" && git tag v1.0.0 && git push origin main v1.0.0
 ```
 
-CI (`.github/workflows/ci.yml`) runs the tests, builds the four clients and
+CI (`.github/workflows/ci.yml`) runs the tests, builds the five clients and
 checks that `bridge/title.ans` and the generated includes are up to date. A `v*` tag
 runs it again, then `release.yml` checks the tag against the version and
 publishes a GitHub release with the `.prg` files, a zip of them, a `.d64`
-disk image holding all four and `staircase`, and the bridge as `petty-bridge-<tag>.tar.gz`
+disk image holding all five and `staircase`, and the bridge as `petty-bridge-<tag>.tar.gz`
 (without `node_modules`: unpack it, `npm ci`, then `node src/bridge.js`).
