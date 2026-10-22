@@ -206,6 +206,8 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
   screen. A sprite is exactly 4 characters wide. The client builds its glyph
   tables, one per position in the group (12 KB), at startup.
   `node bridge/scripts/mock-soft80.js --53 out.ppm 1500 -- <cmd>` previews it.
+
+  ![The soft 53-column client in VICE: colours, backgrounds, inverse, box drawing and symbols](docs/soft53.png)
 - **Hi-res 40 columns (C64):** the text client's screen drawn into the hi-res
   bitmap, where each 8×8 cell has its own foreground and background. So
   backgrounds are real (black text on a white card, a red ♥ on it),
