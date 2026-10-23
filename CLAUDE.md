@@ -3,6 +3,8 @@
 Bridge (Node, `bridge/`) plus 6502 clients (`c64/`, `c128/`). `make test` runs the bridge tests, `make` builds the clients,
 `make screen-check` checks the C64 client's screens in VICE against the reference decoder, `make game-check` the game hardware and
 `make picture-check` full-screen pictures, CELLS and underline, on each screen (they need `x64sc`; a headless VICE build works).
+`make vice-test` runs the clients in VICE too (`bridge/vice/`: hello, drawing, RUN/STOP+RESTORE and the dial, against a
+pretend bridge, the real one and a pretend modem; a window each unless VICE is headless, as CI's is).
 
 There are two clients: `petty.prg` (C64) and `petty128.prg`. The C64 client (`c64/main.s`) has four screens, `text.s`, `hires.s`,
 `soft80.s` and `soft53.s`, each assembled in a `.scope` of its own; `main.s` has what they share once (ring, keyboard, dial, sound,
@@ -33,14 +35,16 @@ From a code review. Not fixed on purpose or for lack of a way to test; pick them
   buffer, so a PETTY.CFG far longer than 71 bytes would overrun it (the end address is checked after the fact). Tested in VICE (x64sc, x128)
   on the single-screen C64 clients this one replaced and on the C128, never on hardware; on today's C64 client (it asks on its text screen)
   only the setup screen was looked at. The dial reads the modem through each client's RX ring (`dial_rx`), so a client's NMI must stay as it is.
-- **RUN/STOP+RESTORE (`c64/restart.inc`) is untested with a real RESTORE key.** VICE cannot press it: the checks jumped to the
-  KERNAL's NMI routine (C64) or the client's `nmi` (C128) with RUN/STOP faked in the keyboard variable. It takes an NMI with no byte
-  waiting and status bit 7 clear for RESTORE, so a RESTORE that arrives with a byte pending is missed. (A byte waiting is always
-  taken: `send`'s status reads clear bit 7 too, and lost a byte now and then while the client was sending, e.g. keys repeated fast.) The modem hang-up (`+++`, `ATH`)
-  was tried only against `fake-modem.js`.
+- **RUN/STOP+RESTORE (`c64/restart.inc`) is untested with a real RESTORE key.** VICE cannot press it: `bridge/vice/restart.js`
+  (and the checks before it) puts RUN/STOP in the KERNAL's held-key variable and jumps to the KERNAL's NMI routine (C64) or
+  the client's `nmi` (C128). It takes an NMI with no byte waiting and status bit 7 clear for RESTORE, so a RESTORE that
+  arrives with a byte pending is missed. (A byte waiting is always taken: `send`'s status reads clear bit 7 too, and lost a
+  byte now and then while the client was sending, e.g. keys repeated fast.) The modem hang-up (`+++`, `ATH`) is tried only
+  against pretend modems (`fake-modem.js`, and the one in `bridge/vice/lib/vice.js`).
 - **The C64 client (`petty.prg`, four screens) is tested in VICE only.** Each screen matches the reference decoder after random frames
-  (`make screen-check`), the game and picture checks pass on every screen, and the dial, `DIALASK`'s setup screen and RUN/STOP+RESTORE
-  (faked as above) were tried once by hand, before the game hardware, pictures and images came to the soft screens. Sound was measured
+  (`make screen-check`), the game and picture checks pass on every screen, `bridge/vice/` checks its hello, drawing and
+  RUN/STOP+RESTORE on each screen, and the dial, `DIALASK`'s setup screen and RUN/STOP+RESTORE (faked as above) were tried
+  once by hand, before the game hardware, pictures and images came to the soft screens. Sound was measured
   on its hi-res screen only. C=+F3 was not pressed in VICE: the key is covered by the bridge's tests. `PETTY.CFG` does not hold the
   screen to start on (only `make START=...` does).
 - **A connection that never says HELLO still takes the session over first.** `Session.attach` drops the current client as soon as a

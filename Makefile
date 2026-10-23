@@ -12,7 +12,7 @@ DIALASK ?=
 VICE_FLAGS := -acia1 -acia1mode 1 -acia1base 0xDE00 -acia1irq 1 \
               -myaciadev 0 -rsdev1 127.0.0.1:$(PORT) +rsdev1ip232 -rsdev1baud 38400
 
-.PHONY: all clean bridge theme title vice vice128 run test game-check screen-check picture-check
+.PHONY: all clean bridge theme title vice vice128 run test vice-test game-check screen-check picture-check
 
 all: $(PRG) $(PRG128)
 
@@ -109,3 +109,12 @@ screen-check: $(PRG)
 # Full-screen pictures (petty-view), inline picture cells and underline on each of the C64 client's screens, in VICE.
 picture-check: $(PRG)
 	node bridge/scripts/vice-picture-check.js $(PRG)
+
+# The clients in VICE (bridge/vice/: hello, frames, drawing, RESTORE and the bridge itself; a window each,
+# unless VICE was built headless). Also builds a C64 client that dials, for the dial's test.
+# VICE_TESTS=restart.js runs one file.
+VICE_TESTS ?= *.js
+VICE_JOBS ?= 2
+vice-test: all bridge/node_modules
+	$(MAKE) BUILD=$(BUILD)/dial DIAL=petty.test:6400 DIALINIT=ATE0 $(BUILD)/dial/petty.prg
+	PETTY_BUILD=$(abspath $(BUILD)) node --test --test-concurrency=$(VICE_JOBS) $(addprefix bridge/vice/,$(VICE_TESTS))
