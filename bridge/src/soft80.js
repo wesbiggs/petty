@@ -9,6 +9,7 @@
 import { FONT4 } from './font4x8.js';
 import { FONT6 } from './font6x8.js';
 import { SPACE } from './glyphs.js';
+import { IMAGE } from './image.js';
 
 export const MAX_SPRITES = 8;
 const SPRITE_PIXELS = 24; // a 24x21 sprite covers 24 / width characters...
@@ -42,6 +43,8 @@ export function shareColours({ cols, glyph, color }, focusRow, width = 4, max = 
   for (let row = 0; row * cols < glyph.length; row++) {
     for (let x = 0; x < cols; x += group) {
       const start = row * cols + x, end = row * cols + Math.min(x + group, cols);
+      // An image's cells have colours of their own (CELLS draws them).
+      if (glyph.subarray(start, end).some(g => g >= IMAGE)) continue;
       // The colour with the most weight among the group's visible characters;
       // on a tie, or with none visible, the first.
       const total = new Map();

@@ -4,7 +4,7 @@
 import { DISPLAY, VDC, HIRES_UNDERLINE, GAME_SPRITE } from './protocol.js';
 import { toScreenCode, INVERSE, SPACE } from './glyphs.js';
 import { palette, VIC_RGB } from './colors.js';
-import { IMAGE, imageCell, imageKey, imageShade } from './image.js';
+import { IMAGE, imageCell, imageKey, imagePart, imageShade } from './image.js';
 import { shareColours } from './soft80.js';
 import { FONT4 } from './font4x8.js';
 import { EXT, EXT_GLYPHS, extendedGlyph } from './extglyphs.js';
@@ -52,8 +52,9 @@ export function cursorVisible(term) {
 // terminal column and row shown, for terminals larger than the display.
 // On an `ext` display, glyphs from EXT up are extended glyphs (see
 // glyphcache.js). On a `hires` display, colours are foreground << 4 |
-// background, and inline images are glyphs from IMAGE up (image.js); other
-// displays show an image as blocks of its colours. On a display with `pair`
+// background, and inline images are glyphs from IMAGE up (image.js), as they
+// are on the soft screens (where they line up); other displays show an image
+// as blocks of its colours. On a display with `pair`
 // or `quad` cells, the result also has `sprites` (see soft80.js): the hardware sprites
 // that repaint colours, in the numbers the game's sprites (bit n of `gameSprites`, game.js)
 // leave free, and GAME_SPRITE in the others.
@@ -77,7 +78,12 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', 
 
       const key = imageKey(cell.getCode());
       if (key >= 0) {
+        // On the soft screens, a column of a group of cells (image.js toGroups) that lines up with the screen's.
+        const part = imagePart(key), group = display.quad ? 4 : display.pair ? 2 : 0, start = x - (part?.phase ?? 0);
         if (display.hires) {
+          glyph[i] = IMAGE + key;
+          color[i] = imageCell(key)[8];
+        } else if (group && part?.group === group && start >= 0 && start % group === 0 && start + group <= Math.floor(cols / group) * group) {
           glyph[i] = IMAGE + key;
           color[i] = imageCell(key)[8];
         } else {

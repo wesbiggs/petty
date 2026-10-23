@@ -192,8 +192,10 @@ class Session {
     // clients a Koala picture (or any, with imgcat -t koala), and anything
     // petty-view sends, shows full screen until a key is pressed.
     this.images = new InlineImages(term, () => {
-      const vic = paletteFor(DISPLAY.C64_HIRES, this.theme);
-      return { maxCols: this.display.cols, maxRows: this.display.rows, bg: vic.rgb[vic.screenBg] };
+      const vic = paletteFor(DISPLAY.C64_HIRES, this.theme), d = this.display;
+      // The soft screens: in groups of columns that show whole bitmap cells, padded with the screen colour.
+      if (d.pair || d.quad) return { maxCols: d.cols, maxRows: d.rows, bg: vic.screenBg, group: d.quad ? 4 : 2, perGroup: d.quad ? 3 : 1 };
+      return { maxCols: d.cols, maxRows: d.rows, bg: vic.rgb[vic.screenBg] };
     }, this.log, (file, args) => {
       const pic = this.display.picture && this.conn && fullScreenPicture(file, args);
       if (pic) this.conn.showPicture(pic);
@@ -641,7 +643,7 @@ class Connection {
       ? new GlyphCache(display, charset && reservedSlots(charset, display), charset && extRedraws(charset, display)) : null;
     const glyphs = this.glyphs?.place(want, this.state) ?? [];
     const colour = display.hires ? pal.defaultFg << 4 | pal.screenBg : pal.defaultFg;
-    const budget = display.hires ? IMAGE_FRAME_BYTES : Infinity;
+    const budget = display.images ? IMAGE_FRAME_BYTES : Infinity;
     let { bytes, state, partial } = this.state
       ? encodeFrame(this.state, want, budget)
       : encodeReset(want, pal.border, pal.screenBg, colour, budget);

@@ -165,6 +165,9 @@ optable:
         .word op_sound-1, op_probe-1
         .word op_sprdef-1, op_spr-1, op_glide-1, op_move-1
         .word op_sidw-1, op_sidplay-1, op_sidstop-1, op_sidreset-1, op_sprmc-1
+.ifdef MULTI
+        .word cmdloop-1, cmdloop-1      ; (MODE, CELLS: the combined client's table is as long as the others')
+.endif
 
 op_goto:
         jsr rb_get

@@ -55,6 +55,11 @@
 //   18 ch              SIDSTOP  (C64 text, hi-res) stop channel ch (255: all), gates down
 //   19                 SIDRESET (C64 text, hi-res) stop all channels, zero the SID
 //   1A c1 c2           SPRMC    (C64 text, hi-res) the sprites' two shared multicolour colours
+//   1C row cell n (d0..d7 color)*n
+//                      CELLS    (C64 soft 80 and 53 columns) write n cells of the bitmap, 8 bytes and
+//                               a colour each, from cell `cell` (0-39) of text row `row` on: an inline
+//                               image, in whole cells (2 columns a cell at 80; 4 columns 3 cells at 53).
+//                               The write pointer stays where it is
 //   1B display         MODE     (a client that sent MODES) switch to that display: the client clears
 //                               its screen and says HELLO_ON display again, then MODES (HELLO_ON of the
 //                               one it is on, if it has no such screen); the bridge sends it only with
@@ -87,19 +92,19 @@
 // `ext`: characters from 128 up are extended glyphs, loaded with GLYPH.
 // Glyphs from IMAGE up are cells of inline images (image.js), sent with BITS.
 
-import { IMAGE, imageCell } from './image.js';
+import { IMAGE, imageCell, imagePart } from './image.js';
 
 // key: what OSC 8350 `display` tells a program (see displayReport).
 export const DISPLAY = {
   C64: { id: 0, key: 'c64', name: 'C64', cols: 40, rows: 25, sound: true, game: true, picture: true },
   C128: { id: 1, key: 'c128', name: 'C128 VDC', cols: 80, rows: 25, reverse: true, ext: true, sound: true },
-  C64_80: { id: 2, key: 'c64-80', name: 'C64 soft-80', cols: 80, rows: 25, pair: true, sound: true, game: true, picture: true },
-  C64_HIRES: { id: 3, key: 'c64-hires', name: 'C64 hi-res', cols: 40, rows: 25, hires: true, ext: true, sound: true, game: true, picture: true },
-  C64_53: { id: 4, key: 'c64-53', name: 'C64 soft-53', cols: 53, rows: 25, quad: true, sound: true, game: true, picture: true },
+  C64_80: { id: 2, key: 'c64-80', name: 'C64 soft-80', cols: 80, rows: 25, pair: true, sound: true, game: true, picture: true, images: true },
+  C64_HIRES: { id: 3, key: 'c64-hires', name: 'C64 hi-res', cols: 40, rows: 25, hires: true, ext: true, sound: true, game: true, picture: true, images: true },
+  C64_53: { id: 4, key: 'c64-53', name: 'C64 soft-53', cols: 53, rows: 25, quad: true, sound: true, game: true, picture: true, images: true },
 };
 export const displayById = id => Object.values(DISPLAY).find(d => d.id === id);
 export const displayByKey = key => Object.values(DISPLAY).find(d => d.key === key);
-const FLAGS = ['hires', 'ext', 'game', 'sound', 'reverse', 'pair', 'quad', 'picture'];
+const FLAGS = ['hires', 'ext', 'game', 'sound', 'reverse', 'pair', 'quad', 'picture', 'images'];
 
 // A client that can switch displays (MODES) is put on the first of these that has what is asked for:
 // the fastest to draw first (text, then the bitmap screens, the narrowest first).
@@ -138,7 +143,7 @@ export const COLS = DISPLAY.C64.cols;
 export const ROWS = DISPLAY.C64.rows;
 export const CELLS = COLS * ROWS;
 
-export const OP = { GOTO: 1, COLOR: 2, PUT: 3, REPEAT: 4, SCROLL: 5, COLORS: 6, CLS: 7, FRAME: 8, SPRITE: 9, NOSPRITE: 10, GLYPH: 11, UNDERLINE: 12, BITS: 13, VIEW: 14, POKE: 15, SOUND: 16, PROBE: 17, SPRDEF: 18, SPR: 19, GLIDE: 20, MOVE: 21, SIDW: 22, SIDPLAY: 23, SIDSTOP: 24, SIDRESET: 25, SPRMC: 26, MODE: 27 };
+export const OP = { GOTO: 1, COLOR: 2, PUT: 3, REPEAT: 4, SCROLL: 5, COLORS: 6, CLS: 7, FRAME: 8, SPRITE: 9, NOSPRITE: 10, GLYPH: 11, UNDERLINE: 12, BITS: 13, VIEW: 14, POKE: 15, SOUND: 16, PROBE: 17, SPRDEF: 18, SPR: 19, GLIDE: 20, MOVE: 21, SIDW: 22, SIDPLAY: 23, SIDSTOP: 24, SIDRESET: 25, SPRMC: 26, MODE: 27, CELLS: 28 };
 export const VIEW = { TERMINAL: 0, LOAD: 1, SHOW: 2, LOAD_HIRES: 3 };
 // Where SOUND's tables go in the C64 (c64/sound.inc).
 export const SOUND_ADDR = { OUTTAB: 0xCD00, DTAB: 0xCE00, NIDX: 0xCE40 };
@@ -248,14 +253,18 @@ export class ScreenState {
 function encodeDiff(state, want, out, budget = Infinity) {
   const { glyph: wg, color: wc } = want;
   const { cols } = state, cells = state.glyph.length;
+  // On the soft screens images go first, with CELLS; the rest is text (and never runs over an image).
+  const groups = (want.group ?? 1) > 1;
+  if (groups && !encodeGroups(state, want, out, budget)) return false;
+  const image = j => groups && wg[j] >= IMAGE;
   let i = 0;
   while (i < cells) {
-    if (state.matches(i, wg[i], wc[i])) { i++; continue; }
+    if (state.matches(i, wg[i], wc[i]) || image(i)) { i++; continue; }
     if (out.length >= budget) return false;
 
     // Extend the run while changes are no more than MAX_GAP cells apart.
     let last = i;
-    for (let j = i + 1; j < cells && j - last <= MAX_GAP; j++) {
+    for (let j = i + 1; j < cells && j - last <= MAX_GAP && !image(j); j++) {
       if (!state.matches(j, wg[j], wc[j])) last = j;
     }
 
@@ -299,6 +308,32 @@ function encodeDiff(state, want, out, budget = Infinity) {
     flush();
     state.pos = last + 1 === cells ? 0 : last + 1; // C64 wraps the pointer
     i = last + 1;
+  }
+  return true;
+}
+
+// The soft screens' image cells that changed (image.js toGroups): each a column of a group of columns showing
+// whole bitmap cells, drawn with CELLS, a group at once, groups next to each other in one command. Columns of
+// a group that the terminal has put text in become unknown, to be drawn after. False if out of budget.
+function encodeGroups(state, want, out, budget) {
+  const { glyph: wg, color: wc } = want;
+  const { cols } = state, g = want.group, per = g === 4 ? 3 : 1;
+  let cmd = null;
+  for (let i = 0; i < wg.length; i++) {
+    if (wg[i] < IMAGE || state.matches(i, wg[i], wc[i])) continue;
+    const part = imagePart(wg[i] - IMAGE);
+    if (!part) continue;
+    if (out.length >= budget) return false;
+    const row = Math.floor(i / cols), start = i % cols - part.phase, cell = start / g * per;
+    if (cmd && cmd.row === row && cmd.end === cell && out[cmd.at] + per <= 255) out[cmd.at] += per;
+    else { out.push(OP.CELLS, row, cell, per); cmd = { row, at: out.length - 1 }; }
+    out.push(...part.data);
+    cmd.end = cell + per;
+    for (let k = 0; k < g; k++) {
+      const j = row * cols + start + k;
+      const p = wg[j] >= IMAGE ? imagePart(wg[j] - IMAGE) : null;
+      if (p && p.data === part.data && p.phase === k) { state.glyph[j] = wg[j]; state.color[j] = wc[j]; } else state.glyph[j] = -1;
+    }
   }
   return true;
 }
@@ -497,6 +532,7 @@ export class Decoder {
     this.sprites = new Array(SPRITES).fill(null);
     this.glyphs = new Map(); // GLYPH definitions: code -> 8 bytes
     this.bits = new Array(cols * rows).fill(null); // cells drawn by BITS: 8 bytes
+    this.cells = new Array(1000).fill(null); // bitmap cells drawn by CELLS (soft screens): 9 bytes
     this.view = VIEW.TERMINAL;
     this.mem = new Uint8Array(0x10000); // what POKE wrote
     this.sounds = []; // SOUND commands (their data bytes are not decoded)
@@ -534,10 +570,17 @@ export class Decoder {
           this.glyph.fill(SPACE, clear, to);
           this.color.fill(this.cur, clear, to);
           this.bits.fill(null, clear, to);
+          this.cells.copyWithin(top * 40, (top + n) * 40, (bot + 1) * 40);
+          this.cells.fill(null, Math.max(top, bot - n + 1) * 40, (bot + 1) * 40);
           break;
         }
         case OP.COLORS: this.border = next(); this.bg = next(); break;
-        case OP.CLS: this.glyph.fill(SPACE); this.color.fill(this.cur); this.bits.fill(null); this.pos = 0; break;
+        case OP.CLS: this.glyph.fill(SPACE); this.color.fill(this.cur); this.bits.fill(null); this.cells.fill(null); this.pos = 0; break;
+        case OP.CELLS: {
+          const row = next(), cell = next(), n = next();
+          for (let k = 0; k < n; k++) this.cells[row * 40 + cell + k] = Uint8Array.from({ length: 9 }, next);
+          break;
+        }
         case OP.FRAME: this.frames++; break;
         case OP.SPRITE: {
           const n = next(), col = next(), row = next(), color = next();
@@ -598,7 +641,7 @@ export class Decoder {
  * What a program is told when it asks (OSC 8350 ; display): `KEY;COLS;ROWS;FLAGS`, FLAGS a comma-separated list
  * of what the display can do: `hires` (per-cell colours, 128-255 free for glyphs), `ext` (the extended glyphs),
  * `game` (sprites and SID: OSC 8348/8349), `sound`, `reverse` (C128), `pair` (soft 80), `quad` (soft 53),
- * `picture` (full-screen pictures: petty-view).
+ * `picture` (full-screen pictures: petty-view), `images` (imgcat's pictures in pixels, not blocks).
  */
 export function displayReport(d) {
   const flags = FLAGS.filter(f => d[f]);

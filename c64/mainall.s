@@ -66,7 +66,7 @@ MODE        = $0291             ; $80 = disable shift+C= charset toggle
 
 ; protocol
 OP_MODE     = 27                ; display
-NUM_OPS_MULTI = 27              ; the screens' tables: opcodes below OP_MODE
+NUM_OPS_MULTI = 29              ; the screens' tables: opcodes below this (27, MODE, is the core's)
 MSG_ACK     = 1
 MSG_KEY     = 2
 MSG_HELLO_ON = 4
@@ -146,6 +146,7 @@ cmdloop:
         jsr rb_get
         cmp #OP_MODE
         beq op_mode
+        cmp #NUM_OPS_MULTI
         bcs cmdloop
         asl
         tay
@@ -520,6 +521,7 @@ COLRAM      = $5C00
 VIEW_VARS   = 1
 VIEW_BANK0  = 0
 .include "view.inc"
+.include "cells.inc"
 view_cr1:   .byte 0
 view_mem:   .byte 0
 

@@ -81,7 +81,7 @@ OP_CLS      = 7
 OP_FRAME    = 8
 OP_SPRITE   = 9
 OP_NOSPRITE = 10
-NUM_OPS     = GAME_OPS          ; 16 and 17 (SOUND, PROBE) are in sound.inc, 18 up in game.inc
+NUM_OPS     = GAME_OPS + 2      ; 16 and 17 (SOUND, PROBE) are in sound.inc, 18-26 in game.inc; 28 CELLS
 
 MSG_ACK     = 1
 MSG_KEY     = 2
@@ -189,6 +189,7 @@ optable:
         .word op_sound-1, op_probe-1
         .word op_sprdef-1, op_spr-1, op_glide-1, op_move-1
         .word op_sidw-1, op_sidplay-1, op_sidstop-1, op_sidreset-1, op_sprmc-1
+        .word cmdloop-1, op_cells-1     ; (27 is the combined client's MODE)
 
 op_goto:
         jsr rb_get
@@ -391,6 +392,7 @@ VIEW_TERM_CR1 = $3B             ; the terminal: hi-res bitmap (view.inc)
 VIEW_TERM_MEM = ((COLRAM & $3FFF) / $400) << 4 | ((BITMAP & $3FFF) / $2000) << 3
 VIEW_BANK0  = 0
 .include "view.inc"
+.include "cells.inc"
 .endif
 
 .ifndef MULTI                   ; (the combined client's core has this once)

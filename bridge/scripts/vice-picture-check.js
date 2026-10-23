@@ -1,6 +1,6 @@
 // Runs each C64 client in VICE (petty.prg, pettyhires.prg, petty80.prg, petty53.prg, and pettyall.prg on each of
 // its screens) and shows full-screen pictures on it, as petty-view does: a multicolour one (Koala) and a hi-res one
-// (Art Studio). Checks the VIC's set-up and the picture's memory while it shows, that the sprites are hidden and come
+// (Art Studio); on the soft screens, also inline image cells (CELLS, for imgcat). Checks the VIC's set-up and the picture's memory while it shows, that the sprites are hidden and come
 // back, and that VIEW TERMINAL gives the terminal screen back. This script is the bridge. Needs x64sc.
 // --shots DIR: screenshots there, one of each picture on each client.
 //
@@ -74,6 +74,25 @@ for (const client of CLIENTS) {
       await c.frame(encodeReset(want).bytes);
       // A sprite of the game's, which a picture hides.
       await c.frame([...encodeSprDef(0, new Array(63).fill(255)), ...encodeSpr(1, 0, 2, 2, 100, 100), OP.FRAME]);
+    });
+
+    if (client.display.images && !client.display.hires) await check(`${client.name}: inline image cells (CELLS), the text around them kept`, async () => {
+      const data = n => Array.from({ length: n * 9 }, (_, k) => (k * 37 + n) & 255);
+      const runs = [[3, 5, 4], [24, 36, 4], [10, 0, 1]]; // row, cell, n: one at the end of the last row
+      const before = await c.machine();
+      for (const [row, cell, n] of runs) await c.frame([OP.CELLS, row, cell, n, ...data(n), OP.FRAME]);
+      const { ram } = await c.machine();
+      const bits = [...before.ram.subarray(0x6000, 0x6000 + 8000)], cols = [...before.ram.subarray(0x5C00, 0x5C00 + 1000)];
+      for (const [row, cell, n] of runs) {
+        const d = data(n);
+        for (let k = 0; k < n; k++) {
+          const at = row * 40 + cell + k;
+          bits.splice(at * 8, 8, ...d.slice(k * 9, k * 9 + 8));
+          cols[at] = d[k * 9 + 8];
+        }
+      }
+      same([...ram.subarray(0x6000, 0x6000 + 8000)], bits, 'bitmap');
+      same([...ram.subarray(0x5C00, 0x5C00 + 1000)], cols, 'colours');
     });
 
     for (const [kind, pic] of [['multicolour', KOALA], ['hi-res', HIRES]]) {

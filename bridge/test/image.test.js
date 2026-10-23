@@ -326,3 +326,58 @@ test('flat forced on a photograph with more than 32767 colours keeps them all', 
   for (let i = 0; i < 1000; i++) if (cellPixels(cells.subarray(i * 9, i * 9 + 9)).every(c => c === 0)) black.push(i);
   assert.deepEqual(black, [], 'no cell is all black: the gradient has none');
 });
+
+// --- inline images on the soft screens --------------------------------------------
+
+function softTerminal(display) {
+  const term = new xterm.Terminal({ cols: display.cols, rows: display.rows, allowProposedApi: true });
+  const group = display.quad ? 4 : 2, perGroup = display.quad ? 3 : 1;
+  const images = new InlineImages(term, () => ({ maxCols: display.cols, maxRows: display.rows, bg: 0, group, perGroup }));
+  term.parser.registerOscHandler(1337, data => images.osc(data));
+  return { term, group, perGroup };
+}
+
+for (const display of [DISPLAY.C64_80, DISPLAY.C64_53]) {
+  test(`imgcat on the ${display.name} screen: whole bitmap cells, lined up with its groups, drawn with CELLS`, async () => {
+    const { term, group, perGroup } = softTerminal(display);
+    const file = doodle(9);
+    // After "abc", so the image has to move to the next whole group; 4 cells wide (padded to 6 on 53 columns).
+    await write(term, `abc${osc(file, 'width=32px;height=16px;preserveAspectRatio=0;')}\r\nz`);
+    const want = snapshot(term, 0, display);
+    const start = Math.ceil(3 / group) * group; // the first whole group from column 3 on
+    const cellsWide = Math.ceil(4 / perGroup) * perGroup, cols = cellsWide / perGroup * group;
+    for (let x = 0; x < display.cols; x++) {
+      assert.equal(want.glyph[x] >= IMAGE, x >= start && x < start + cols, `column ${x}`);
+    }
+    const dec = new Decoder(display.cols, display.rows);
+    const { bytes } = encodeReset(want, 0, 0, 1);
+    dec.feed(bytes);
+    const cell0 = start / group * perGroup;
+    for (const row of [0, 1]) {
+      for (let c = 0; c < cellsWide; c++) {
+        const got = dec.cells[row * 40 + cell0 + c];
+        assert.ok(got, `cell ${c} of row ${row} drawn`);
+        if (c >= 4) assert.ok(got.subarray(0, 8).every(b => b === 0), 'padding is blank');
+        else assert.equal(got.length, 9);
+      }
+    }
+    assert.ok(dec.cells.filter(Boolean).length === cellsWide * 2, 'nothing else');
+    for (let x = start; x < start + cols; x++) assert.equal(dec.glyph[x], 32, 'no characters where the image is');
+    assert.equal(dec.glyph[0], 1, 'a');
+  });
+}
+
+test('imgcat on the soft 80-column screen: text over half a cell is drawn after the cell', async () => {
+  const { term } = softTerminal(DISPLAY.C64_80);
+  await write(term, osc(doodle(5), 'width=16px;height=8px;preserveAspectRatio=0;'));
+  await write(term, '\x1b[1;2Hq'); // over the right half of the first cell
+  const want = snapshot(term, 0, DISPLAY.C64_80);
+  assert.ok(want.glyph[0] >= IMAGE && want.glyph[1] === 17 && want.glyph[2] >= IMAGE);
+  const { bytes } = encodeReset(want, 0, 0, 1);
+  const cells = bytes.indexOf(OP.CELLS), put = bytes.lastIndexOf(17);
+  assert.ok(cells >= 0 && put > cells, 'the cell, then the q over it');
+  const dec = new Decoder(80, 25);
+  dec.feed(bytes);
+  assert.equal(dec.glyph[1], 17);
+  assert.ok(dec.cells[0] && dec.cells[1]);
+});
