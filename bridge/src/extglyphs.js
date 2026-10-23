@@ -1,4 +1,4 @@
-// Extended glyphs for the C64 hi-res client, which has 256 glyph slots and
+// Extended glyphs for the C64's hi-res screen, which has 256 glyph slots and
 // colours per cell, so it needs no inverse half: screen codes 0-127 are the
 // usual character set (glyphs.js), and the bridge loads these into 128-255 as
 // they appear on screen (glyphcache.js). Every other display keeps using the

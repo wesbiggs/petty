@@ -1,4 +1,4 @@
-// --charset FILE: redefines glyphs on the C64 text and hi-res clients.
+// --charset FILE: redefines glyphs on the C64's text and hi-res screens.
 //
 // The file is JSON, characters to glyphs. A glyph is 8 rows, each a string of
 // 8 pixels ('#' set, '.' clear) or a number 0-255:
@@ -6,13 +6,13 @@
 //   { "#": ["########", "#...#...", ...],               redraws the glyph '#' has
 //     "": { "slot": 112, "rows": [...] } }         a new character, in screen code 112
 //
-// Text client: it has no spare screen codes. 0-127 are the ROM's lowercase set
+// Text screen: it has no spare screen codes. 0-127 are the ROM's lowercase set
 // plus the glyphs in glyphs.js, so a new character takes over one of them
 // (112 is ✻, 109 is ⏺, 97-108 are box corners and tees). The client makes
 // 128-255 the inverse of 0-127 when it starts, so the inverse of each glyph is
 // sent too, with POKE. A "slot" of 128 or more is not for this client.
 //
-// Hi-res client: the same slots 0-127, loaded with GLYPH (it needs no inverse
+// Hi-res screen: the same slots 0-127, loaded with GLYPH (it needs no inverse
 // half), and slots 128-255, which are the extended glyphs' (glyphcache.js):
 // a slot given here is kept out of that cache, which has that many fewer to share.
 // A character drawn from the extended glyphs (●, ═, braille ...) is redrawn by
@@ -28,7 +28,7 @@ import { OP, encodePoke } from './protocol.js';
 export const CHARSET_ADDR = 0x4000; // c64/text.s CHARSET: 2K, 8 bytes a screen code
 const INVERSE_ADDR = CHARSET_ADDR + 0x400;
 
-// snapshot() glyph numbers 0x8000 + slot are the hi-res client's slots 128-255, which
+// snapshot() glyph numbers 0x8000 + slot are the hi-res screen's slots 128-255, which
 // are not inverse screen codes (and not extended glyphs: those start at EXT).
 export const FIXED = 0x8000;
 
@@ -77,7 +77,7 @@ export function loadCharset(file) {
   }
 }
 
-// What a display can load: slots 0-127 on the text client; 0-255 on the hi-res one.
+// What a display can load: slots 0-127 on the text screen; 0-255 on the hi-res one.
 const slotsOf = display => display.hires ? 256 : display.ext || display.pair || display.quad ? 0 : 128;
 const usable = (cs, display) => [...cs.glyphs].filter(([code]) => code < slotsOf(display));
 
@@ -102,7 +102,7 @@ export function extRedraws(cs, display) {
 export function charsetCommands(cs, display) {
   if (display.hires) return usable(cs, display).flatMap(([code, bytes]) => [OP.GLYPH, code & 0xFF, code >> 8, ...bytes]);
   if (slotsOf(display) === 0) return [];
-  // The text client: POKE, neighbouring screen codes in one command, and the inverse half.
+  // The text screen: POKE, neighbouring screen codes in one command, and the inverse half.
   const glyphs = new Map(usable(cs, display));
   const out = [];
   for (const base of [CHARSET_ADDR, INVERSE_ADDR]) {

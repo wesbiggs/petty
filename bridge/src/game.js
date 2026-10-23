@@ -1,8 +1,8 @@
 // Game hardware for a program running in the bridge's terminal: hardware
-// sprites (OSC 8348) and the SID (OSC 8349) on the C64 clients. Where
+// sprites (OSC 8348) and the SID (OSC 8349) on the C64 client. Where
 // say and play (OSC 8347) are about sound files, these are about the machine:
 // a program that runs on the host and uses the C64 as its screen, keyboard,
-// sprite chip and sound chip. (Every C64 client; on the soft 80- and 53-column
+// sprite chip and sound chip. (Every C64 screen; on the soft 80- and 53-column
 // screens the sprites the program uses are taken from the ones that repaint
 // colours, and MOVE moves whole groups of columns.)
 //
@@ -51,7 +51,7 @@
 
 import { OP, SPR, SPRITE_SLOTS, encodeSprDef, encodeSpr, encodeGlide, encodeSidW, encodeSidPlay, encodeSidStop, encodePoke } from './protocol.js';
 
-// Where the C64 clients have room for scripts: after the bitmap clients' receive ring, before the glyph tables
+// Where the C64 client has room for scripts: after its receive ring, before the glyph tables
 // under BASIC's ROM.
 export const SCRIPT_BASE = 0x9000;
 export const SCRIPT_END = 0xA000;

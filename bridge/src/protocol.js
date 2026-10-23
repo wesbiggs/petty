@@ -153,7 +153,7 @@ export const encodeSound = (variant, delay, latch, n) => {
   return [OP.SOUND, variant, delay, latch & 0xFF, latch >> 8, n & 0xFF, (n >> 8) & 0xFF, n >> 16];
 };
 export const encodePoke = (addr, data) => [OP.POKE, addr & 0xFF, addr >> 8, data.length & 0xFF, ...data];
-// Game hardware (the C64 text client; game.js): sprites, SID scripts, rectangle moves.
+// Game hardware (the C64 client; game.js): sprites, SID scripts, rectangle moves.
 export const SPRITE_SLOTS = 64;
 export const SPR = { ON: 2, MULTI: 4, WIDE: 8, TALL: 16, BEHIND: 32 }; // SPR flags above bit 0, which is x's bit 8
 export const encodeSprDef = (slot, data) => [OP.SPRDEF, slot, ...Array.from({ length: 63 }, (_, i) => data[i] ?? 0)];
@@ -491,7 +491,7 @@ export function encodeReset(want, border = 0, bg = 0, color = 15, budget = Infin
   return { bytes: out.concat(frame.bytes), state: frame.state, partial: frame.partial };
 }
 
-// Where the C64 clients keep a picture shown with VIEW (in the VIC's second
+// Where the C64 client keeps a picture shown with VIEW (in the VIC's second
 // bank: the bitmap screens' own bitmap and colours), and the VIC's colour RAM.
 const PICTURE = { bitmap: 0x6000, screen: 0x5C00, colram: 0xD800 };
 

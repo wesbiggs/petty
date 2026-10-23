@@ -212,32 +212,6 @@ set_screen_done:
 display:        .byte $FF           ; its id
 screen:         .byte 0             ; its index in the tables below
 
-NUM_SCREENS = 4
-screen_ids:     .byte DISPLAY_C64, DISPLAY_C64_HIRES, DISPLAY_C64_80, DISPLAY_C64_53
-screen_ops_lo:  .byte <text::optable, <hires::optable, <s80::optable, <s53::optable
-screen_ops_hi:  .byte >text::optable, >hires::optable, >s80::optable, >s53::optable
-screen_init_lo: .byte <(init_text-1), <(init_hires-1), <(init_s80-1), <(init_s53-1)
-screen_init_hi: .byte >(init_text-1), >(init_hires-1), >(init_s80-1), >(init_s53-1)
-screen_cr1:     .byte $1B, $3B, $3B, $3B
-screen_mem:     .byte $70, $78, $78, $78
-
-init_text:
-        jsr text::init_charset
-        jsr text::init_screen
-        jmp set_screen_done
-init_hires:
-        jsr hires::init_font
-        jsr hires::init_screen
-        jmp set_screen_done
-init_s80:
-        jsr s80::init_tables
-        jsr s80::init_screen
-        jmp set_screen_done
-init_s53:
-        jsr s53::init_tables
-        jsr s53::init_screen
-        jmp set_screen_done
-
 ; The sprites off, as the KERNAL leaves them, and the game's glides and scripts stopped
 ; (its variables zeroed, but for the KERNAL's interrupt vector, which it chains to).
 game_reset:
@@ -535,6 +509,34 @@ view_mem:   .byte 0
 .scope s53
 .include "soft53.s"
 .endscope
+
+; Each screen's opcode table, set-up and VIC registers (for VIEW TERMINAL), by its index. (After the screens: an
+; older ca65 can't refer to a scope before it.)
+NUM_SCREENS = 4
+screen_ids:     .byte DISPLAY_C64, DISPLAY_C64_HIRES, DISPLAY_C64_80, DISPLAY_C64_53
+screen_ops_lo:  .byte <text::optable, <hires::optable, <s80::optable, <s53::optable
+screen_ops_hi:  .byte >text::optable, >hires::optable, >s80::optable, >s53::optable
+screen_init_lo: .byte <(init_text-1), <(init_hires-1), <(init_s80-1), <(init_s53-1)
+screen_init_hi: .byte >(init_text-1), >(init_hires-1), >(init_s80-1), >(init_s53-1)
+screen_cr1:     .byte $1B, $3B, $3B, $3B
+screen_mem:     .byte $70, $78, $78, $78
+
+init_text:
+        jsr text::init_charset
+        jsr text::init_screen
+        jmp set_screen_done
+init_hires:
+        jsr hires::init_font
+        jsr hires::init_screen
+        jmp set_screen_done
+init_s80:
+        jsr s80::init_tables
+        jsr s80::init_screen
+        jmp set_screen_done
+init_s53:
+        jsr s53::init_tables
+        jsr s53::init_screen
+        jmp set_screen_done
 
 ; The dial's progress, and asking for its settings (dialask.inc), are on the text screen.
 UI_COLS     = 40

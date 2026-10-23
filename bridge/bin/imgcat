@@ -2,7 +2,7 @@
 # imgcat: show pictures as iTerm2 inline images (OSC 1337), for hosts
 # without iTerm2's own imgcat. The bridge puts this at the end of the PATH
 # of the program it runs, so a real imgcat comes first. The bridge draws the
-# files in pixels (as blocks on the C64 text client): PNG, or the C64's own
+# files in pixels (as blocks on the C64's text screen): PNG, or the C64's own
 # Koala Painter, Doodle! and Art Studio pictures. The options are a subset of
 # iTerm2's imgcat. (petty-view shows a picture full screen.)
 #

@@ -128,7 +128,7 @@ try { soundLut = loadLut(opt['sound-lut']); } catch (e) { console.error(`[bridge
 const soundOn = opt.sound !== 'off';
 if (!['on', 'off'].includes(opt.sound)) { console.error('[bridge] --sound on or off'); process.exit(1); }
 
-// --charset FILE: glyphs for the C64 text and hi-res clients (charset.js), sent after each of its resets.
+// --charset FILE: glyphs for the C64's text and hi-res screens (charset.js), sent after each of its resets.
 let charset = null;
 if (opt.charset) {
   try { charset = loadCharset(opt.charset); } catch (e) { console.error(`[bridge] ${e.message}`); process.exit(1); }
