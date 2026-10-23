@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **VICE tests in CI**: `make vice-test` runs the clients in VICE (`bridge/vice/`) against a pretend bridge, the real
+  bridge and a pretend modem, and CI runs them with a headless VICE. They replace `bridge/scripts/vice-game-check.js`
+  (`make game-check` runs their game hardware file).
 - **Soft 53-column C64 client** (`petty53.prg`, `make vice53`): 53×25 in the hi-res bitmap with a 6×8 font
   (`bridge/src/font6x8.js`, generated into `c64/font6x8.inc`), announced as `HELLO_ON 4`. Each group of four characters
   (three bitmap cells) shares a colour, and sprites repaint the characters that lost theirs, as on the soft 80-column screen
