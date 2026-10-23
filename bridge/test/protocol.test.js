@@ -555,3 +555,26 @@ test('emoji take two cells, the middot and a space, so the line keeps its column
   assert.deepEqual([...g.slice(0, 15)], want.map(x => typeof x === 'number' ? x : x === ' ' ? 32 : x === '❤' ? dot : toScreenCode(x)));
   assert.equal(term.buffer.active.cursorX, 15);
 });
+
+test('soft 80 and 53 columns: underline goes with UNDERLINE, per character, kept through colour sharing', async () => {
+  for (const [helper, cols] of [[soft80, 80], [soft53, 53]]) {
+    const { glyph, color } = await helper('a\x1b[4mb\x1b[24mc');
+    assert.equal(color[0] & HIRES_UNDERLINE, 0);
+    assert.equal(color[1] & HIRES_UNDERLINE, HIRES_UNDERLINE, 'b is underlined');
+    assert.equal(color[1] & 15, color[0] & 15, 'and shares its colour with a');
+    const display = cols === 80 ? DISPLAY.C64_80 : DISPLAY.C64_53;
+    const { bytes } = encodeReset({ cols, rows: 25, glyph, color, underline: true });
+    const dec = new Decoder(cols, 25);
+    dec.feed(bytes);
+    assert.deepEqual([...dec.color.subarray(0, 3)].map(c => c & HIRES_UNDERLINE), [0, HIRES_UNDERLINE, 0], display.name);
+    assert.ok(bytes.includes(OP.UNDERLINE));
+  }
+});
+
+test('the C64 text client and the C128 never get UNDERLINE', async () => {
+  const term = new xterm.Terminal({ cols: 40, rows: 25, allowProposedApi: true });
+  await new Promise(done => term.write('\x1b[4mx', done));
+  const want = snapshot(term, 0, DISPLAY.C64);
+  assert.equal(want.color[0] & HIRES_UNDERLINE, 0);
+  assert.ok(!encodeReset(want).bytes.includes(OP.UNDERLINE));
+});

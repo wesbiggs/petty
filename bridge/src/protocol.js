@@ -20,7 +20,7 @@
 //                               pixels: 128-255 on the C64 hi-res screen (cells
 //                               already drawn keep their pixels), 128-511 on the
 //                               C128 (cells showing it change)
-//   0C on              UNDERLINE (C64 hi-res) underline what PUT and REPEAT
+//   0C on              UNDERLINE (C64 hi-res, soft 80 and 53) underline what PUT and REPEAT
 //                               write from now on (0 = off)
 //   0D n (d0..d7 color)*n  BITS (C64 hi-res) write n cells of raw pixels, each
 //                               8 bitmap bytes and its colour, advancing
@@ -98,9 +98,9 @@ import { IMAGE, imageCell, imagePart } from './image.js';
 export const DISPLAY = {
   C64: { id: 0, key: 'c64', name: 'C64', cols: 40, rows: 25, sound: true, game: true, picture: true },
   C128: { id: 1, key: 'c128', name: 'C128 VDC', cols: 80, rows: 25, reverse: true, ext: true, sound: true, images: true },
-  C64_80: { id: 2, key: 'c64-80', name: 'C64 soft-80', cols: 80, rows: 25, pair: true, sound: true, game: true, picture: true, images: true },
+  C64_80: { id: 2, key: 'c64-80', name: 'C64 soft-80', cols: 80, rows: 25, pair: true, sound: true, game: true, picture: true, images: true, underline: true },
   C64_HIRES: { id: 3, key: 'c64-hires', name: 'C64 hi-res', cols: 40, rows: 25, hires: true, ext: true, sound: true, game: true, picture: true, images: true },
-  C64_53: { id: 4, key: 'c64-53', name: 'C64 soft-53', cols: 53, rows: 25, quad: true, sound: true, game: true, picture: true, images: true },
+  C64_53: { id: 4, key: 'c64-53', name: 'C64 soft-53', cols: 53, rows: 25, quad: true, sound: true, game: true, picture: true, images: true, underline: true },
 };
 export const displayById = id => Object.values(DISPLAY).find(d => d.id === id);
 export const displayByKey = key => Object.values(DISPLAY).find(d => d.key === key);
@@ -180,13 +180,13 @@ export const HIRES_UNDERLINE = 0x100; // hi-res colour bit: sent with UNDERLINE,
 // any colour, unless an attribute such as underline shows on it, or (`hires`)
 // in any foreground on the same background.
 export const sameLook = (g, a, b, hires = false) => a === b || (g === SPACE &&
-  (hires ? a >= 0 && b >= 0 && (a & 0x10F) === (b & 0x10F) : ((a | b) & ATTRS) === 0));
+  (hires ? a >= 0 && b >= 0 && (a & 0x10F) === (b & 0x10F) : ((a | b) & (ATTRS | HIRES_UNDERLINE)) === 0));
 
 // Commands that change the client's current colour from state.cur to c.
 function setColour(out, state, c) {
   const cur = state.cur;
   if (cur < 0 || (cur & 0xFF) !== (c & 0xFF)) out.push(OP.COLOR, c & 0xFF);
-  if (state.hires && (cur < 0 || (cur & HIRES_UNDERLINE) !== (c & HIRES_UNDERLINE))) {
+  if (state.uline && (cur < 0 || (cur & HIRES_UNDERLINE) !== (c & HIRES_UNDERLINE))) {
     out.push(OP.UNDERLINE, c & HIRES_UNDERLINE ? 1 : 0);
   }
   state.cur = c;
@@ -194,10 +194,12 @@ function setColour(out, state, c) {
 
 // Mirror of what the C64 is displaying, plus its write pointer and colour.
 export class ScreenState {
-  constructor(cols = COLS, rows = ROWS, hires = false) {
+  // `uline`: underline goes with UNDERLINE, as a colour's bit 8 (hi-res, soft 80 and 53 columns).
+  constructor(cols = COLS, rows = ROWS, hires = false, uline = hires) {
     this.cols = cols;
     this.rows = rows;
     this.hires = hires;
+    this.uline = uline;
     this.glyph = new Int32Array(cols * rows).fill(-1); // -1 = unknown
     this.color = new Int16Array(cols * rows).fill(-1);
     this.pos = -1;
@@ -206,7 +208,7 @@ export class ScreenState {
   }
 
   clone() {
-    const s = new ScreenState(this.cols, this.rows, this.hires);
+    const s = new ScreenState(this.cols, this.rows, this.hires, this.uline);
     s.glyph.set(this.glyph);
     s.color.set(this.color);
     s.pos = this.pos;
@@ -477,7 +479,7 @@ function rowMatches(state, want, fromRow, toRow) {
 // Full reset: colours, clear screen, then everything that isn't a space.
 // `want` may carry {cols, rows, hires}; otherwise it is a C64 screen.
 export function encodeReset(want, border = 0, bg = 0, color = 15, budget = Infinity) {
-  const state = new ScreenState(want.cols ?? COLS, want.rows ?? ROWS, want.hires);
+  const state = new ScreenState(want.cols ?? COLS, want.rows ?? ROWS, want.hires, want.hires || want.underline);
   const out = [OP.COLORS, border, bg];
   setColour(out, state, color);
   out.push(OP.CLS);

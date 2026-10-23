@@ -49,15 +49,16 @@ export function shareColours({ cols, glyph, color }, focusRow, width = 4, max = 
       // on a tie, or with none visible, the first.
       const total = new Map();
       for (let i = start; i < end; i++) {
-        if (glyph[i] !== SPACE) total.set(color[i], (total.get(color[i]) ?? 0) + weight[glyph[i]]);
+        if (glyph[i] !== SPACE) total.set(color[i] & 15, (total.get(color[i] & 15) ?? 0) + weight[glyph[i]]);
       }
-      let keep = color[start], most = -1;
+      let keep = color[start] & 15, most = -1;
       for (const [c, n] of total) if (n > most) [keep, most] = [c, n];
       for (let i = start; i < end; i++) {
-        if (glyph[i] !== SPACE && color[i] !== keep) {
-          losers.push({ col: i % cols, row, color: color[i], glyph: glyph[i], word: WORD.has(glyph[i] & 0x7f) });
+        // (Bit 8 is underline: each character's own, not the cell's.)
+        if (glyph[i] !== SPACE && (color[i] & 15) !== keep) {
+          losers.push({ col: i % cols, row, color: color[i] & 15, glyph: glyph[i], word: WORD.has(glyph[i] & 0x7f) });
         }
-        color[i] = keep;
+        color[i] = keep | (color[i] & ~15);
       }
     }
   }

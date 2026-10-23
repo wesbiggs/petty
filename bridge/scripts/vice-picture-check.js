@@ -95,6 +95,23 @@ for (const client of CLIENTS) {
       same([...ram.subarray(0x5C00, 0x5C00 + 1000)], cols, 'colours');
     });
 
+    if (client.display.underline) await check(`${client.name}: UNDERLINE sets the bottom row of what is written, in its own pixels`, async () => {
+      // "a" underlined, then "b" and "c" not: at 80 columns a and b share cell 0, c is in cell 1; at 53, a is
+      // cell 0's first 6 pixels, b its last 2 and cell 1's first 4, c cell 1's next 4 and cell 2's first 2.
+      await c.frame([OP.COLOR, 1, OP.GOTO, 20, 0, OP.UNDERLINE, 1, OP.PUT, 1, 1, OP.UNDERLINE, 0, OP.PUT, 2, 2, 3, OP.FRAME]);
+      const { ram } = await c.machine();
+      const row7 = cell => ram[0x6000 + 20 * 320 + cell * 8 + 7];
+      if (client.display.pair) {
+        assert.equal(row7(0) & 0xF0, 0xF0, 'a underlined');
+        assert.equal(row7(0) & 0x0F, 0, 'b not');
+        assert.equal(row7(1), 0, 'c not');
+      } else {
+        assert.equal(row7(0) & 0xFC, 0xFC, 'a underlined');
+        assert.equal(row7(0) & 0x03, 0, 'b not');
+        assert.equal(row7(1), 0, 'b and c not');
+      }
+    });
+
     for (const [kind, pic] of [['multicolour', KOALA], ['hi-res', HIRES]]) {
       await check(`${client.name}: a ${kind} picture full screen, then the terminal back`, async () => {
         for (const f of encodePicture(pic, 2048)) await c.frame(f);

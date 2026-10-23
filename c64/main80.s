@@ -112,6 +112,7 @@ scol        = $2C
 srow        = $2D
 sidx        = $2E
 
+uline       = $39               ; $FF: underline what is written, else 0 (after sound.inc's)
 CLIENT_ASK  = 1                 ; this client can ask for the dial's settings (dialask.inc)
 
 .ifndef MULTI
@@ -171,7 +172,7 @@ cmdloop:
 optable:
         .word cmdloop-1, op_goto-1, op_color-1, op_put-1, op_repeat-1
         .word op_scroll-1, op_colors-1, op_cls-1, op_frame-1
-        .word op_sprite-1, op_nosprite-1, cmdloop-1, cmdloop-1
+        .word op_sprite-1, op_nosprite-1, cmdloop-1, op_underline-1
         .word cmdloop-1, op_view-1, op_poke-1
         .word op_sound-1, op_probe-1
         .word op_sprdef-1, op_spr-1, op_glide-1, op_move-1
@@ -265,6 +266,14 @@ op_colors:
 
 op_cls:
         jsr clear_screen
+        jmp cmdloop
+
+; UNDERLINE on: underline what PUT and REPEAT write from now on (0 = off).
+op_underline:
+        jsr rb_get
+        beq :+
+        lda #$FF
+:       sta uline
         jmp cmdloop
 
 op_frame:
@@ -532,23 +541,39 @@ putcell:
         sta (cp),y
 :       lda half
         bne @right
-.repeat 8, r
+.repeat 7, r
         lda (bp),y
         and #$0F
         ora TBL_L + r * 256,x
         sta (bp),y
         iny
 .endrep
+        lda uline               ; the bottom row: underlined, in this half
+        and #$F0
+        ora TBL_L + 7 * 256,x
+        sta tmp2
+        lda (bp),y
+        and #$0F
+        ora tmp2
+        sta (bp),y
         inc half
         rts
 @right:
-.repeat 8, r
+.repeat 7, r
         lda (bp),y
         and #$F0
         ora TBL_R + r * 256,x
         sta (bp),y
         iny
 .endrep
+        lda uline
+        and #$0F
+        ora TBL_R + 7 * 256,x
+        sta tmp2
+        lda (bp),y
+        and #$F0
+        ora tmp2
+        sta (bp),y
         lda #0                  ; next cell
         sta half
         lda bp
@@ -844,6 +869,8 @@ init_screen:
         sta BLNSW
         lda #15
         sta curcolor
+        lda #0
+        sta uline
         jsr set_cellcol
         jsr clear_screen
         ldx #0

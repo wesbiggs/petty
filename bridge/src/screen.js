@@ -145,14 +145,15 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', 
         inv = !inv;
         fg = bg;
       }
-      const c = cell.isUnderline() ? fg | pal.underline : fg;
+      // Underline: the C128's attribute bit, or (the soft screens) bit 8, sent with UNDERLINE.
+      const c = cell.isUnderline() ? fg | (display.underline ? HIRES_UNDERLINE : pal.underline) : fg;
       // The VDC inverts a cell with an attribute; the C64 needs an inverse glyph.
       glyph[i] = display.reverse || !inv ? g : g | INVERSE;
       color[i] = display.reverse && inv ? c | VDC.RVS : c;
     }
   }
   // MOVE on the soft screens moves whole groups of columns (the cells that share a colour).
-  const screen = { cols, rows, glyph, color, hires: !!display.hires, move: !!display.game, group: display.quad ? 4 : display.pair ? 2 : 1 };
+  const screen = { cols, rows, glyph, color, hires: !!display.hires, underline: !!display.underline, move: !!display.game, group: display.quad ? 4 : display.pair ? 2 : 1 };
   if (display.pair || display.quad) {
     const focus = cursorRow >= 0 && cursorRow < rows ? cursorRow : rows - 1;
     const free = [...Array(8).keys()].filter(n => !(gameSprites >> n & 1));
