@@ -294,15 +294,21 @@ send:
         rts
 
 ; The byte is stored before wp moves on, so rb_get never reads ahead of it.
+; A byte waiting is taken whatever bit 7 says: send reads the status too,
+; which clears that bit, and one that did so just as the byte came in would
+; leave this NMI looking like RESTORE, and the byte to be lost.
 nmi:
         pha
         tya
         pha
         lda ACIA_STATUS         ; also acknowledges the interrupt
-        bpl @restore            ; bit 7: the ACIA's interrupt, else RESTORE
+        tay
         and #$08                ; receive register full?
-        beq @out
-        lda ACIA_DATA
+        bne @byte
+        tya
+        bpl @restore            ; bit 7: the ACIA's interrupt, else RESTORE
+        bmi @out
+@byte:  lda ACIA_DATA
         ldy #0
         sta (wp),y
         inc wp
