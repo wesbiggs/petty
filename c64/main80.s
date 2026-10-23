@@ -11,6 +11,9 @@
 ; $4000-$4FFF, sprite data $5000-$51FF, cell colours $5C00 (sprite pointers
 ; $5FF8), bitmap $6000-$7F3F, receive ring $8000-$8FFF (4K: a bitmap scroll
 ; takes ~90 ms).
+;
+; The combined client (mainall.s) also assembles this file, in a scope with MULTI
+; defined: then only the screen's own part is here (.ifndef MULTI marks the rest).
 
 ; --- hardware ---------------------------------------------------------------
 TBL_L       = $4000             ; 8 pages: glyph row r of code c, left half
@@ -19,8 +22,10 @@ SPRDATA     = $5000             ; 8 sprites of 64 bytes
 COLRAM      = $5C00             ; bitmap colours: high nibble fg, low nibble bg
 SPRPTR      = COLRAM + $3F8
 BITMAP      = $6000
+.ifndef MULTI
 RBUF        = $8000
 RBUF_END    = $9000
+.endif
 
 ACIA_DATA   = $DE00
 ACIA_STATUS = $DE01
@@ -108,6 +113,7 @@ sidx        = $2E
 
 CLIENT_ASK  = 1                 ; this client can ask for the dial's settings (dialask.inc)
 
+.ifndef MULTI
 ; --- BASIC stub: 10 SYS2061 -------------------------------------------------
 .segment "LOADADDR"
         .word $0801
@@ -156,6 +162,7 @@ cmdloop:
         lda optable,x
         pha
         rts
+.endif
 
 optable:
         .word cmdloop-1, op_goto-1, op_color-1, op_put-1, op_repeat-1
@@ -163,6 +170,11 @@ optable:
         .word op_sprite-1, op_nosprite-1, cmdloop-1, cmdloop-1
         .word cmdloop-1, cmdloop-1, op_poke-1
         .word op_sound-1, op_probe-1
+.ifdef MULTI
+.repeat ::NUM_OPS_MULTI - NUM_OPS           ; the game's opcodes, which this screen does without
+        .word cmdloop-1
+.endrep
+.endif
 
 op_goto:
         jsr rb_get
@@ -605,6 +617,7 @@ fill:
         bne @byte
 @done:  rts
 
+.ifndef MULTI
 ; --- serial ------------------------------------------------------------------
 
 ; Next received byte in A, flags set from it; polls the keyboard while
@@ -708,11 +721,12 @@ dial_rx:
         rts
 @none:  clc
         rts
+.endif
 
 ; The dial's progress, and asking for its settings (dialask.inc), draw through this.
 UI_COLS     = 80
 CFG         = $0334             ; the cassette buffer
-.if DIAL_DBGCODE
+.if ::DIAL_DBGCODE              ; (:: as these are also assembled in a scope: mainall.s)
 ; A = screen code, X = column, Y = row.
 ui_cell:
         sta ui_code
@@ -727,6 +741,7 @@ ui_code: .byte 0
 ui_clear:
         jmp clear_screen
 .endif
+.ifndef MULTI
 .include "dialask.inc"
 
 ; --- keyboard ----------------------------------------------------------------
@@ -762,6 +777,7 @@ keypoll:
 @out:   rts
 @none:  sta lastkey
         rts
+.endif
 
 ; --- setup -------------------------------------------------------------------
 
@@ -892,6 +908,7 @@ o40hi:
         .byte >(i * 40)
 .endrep
 
+.ifndef MULTI
 .macro RX_PENDING target
         lda rp
         cmp wp
@@ -901,4 +918,5 @@ o40hi:
         bne target
 .endmacro
 .include "sound.inc"
+.endif
 .include "font4x8.inc"

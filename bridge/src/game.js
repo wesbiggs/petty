@@ -49,7 +49,8 @@
 
 import { OP, SPR, SPRITE_SLOTS, encodeSprDef, encodeSpr, encodeGlide, encodeSidW, encodeSidPlay, encodeSidStop, encodePoke } from './protocol.js';
 
-export const SCRIPT_BASE = 0x9000; // where the C64 clients have room for scripts (the hi-res one's ring ends there)
+export const SCRIPT_BASE = 0x9000; // where the C64 clients have room for scripts (the hi-res one's ring ends there; the
+// combined client's soft 53-column screen keeps its tables there, and they are sent again when it is back on a game screen)
 export const SCRIPT_END = 0xC000;
 const SCREEN_X = 24, SCREEN_Y = 50; // the VIC's coordinates of the text's top left
 const MAX_QUEUE = 32768; // bytes held for a client that is not taking them

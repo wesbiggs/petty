@@ -11,14 +11,19 @@
 ; Memory (the VIC uses its second bank, $4000-$7FFF): font $4000-$47FF, cell
 ; colours $5C00, bitmap $6000-$7F3F, receive ring $8000-$8FFF (4K: a bitmap
 ; scroll takes ~90 ms). Sound (sound.inc) keeps its buffer and tables at $CD00-$CFFF.
+;
+; The combined client (mainall.s) also assembles this file, in a scope with MULTI
+; defined: then only the screen's own part is here (.ifndef MULTI marks the rest).
 
 ; --- hardware ---------------------------------------------------------------
 FONT        = $4000             ; 8 pages: row r of screen code c at FONT + r*256 + c
 COLRAM      = $5C00             ; bitmap colours: high nibble fg, low nibble bg
 BITMAP      = $6000
+.ifndef MULTI
 RBUF        = $8000
 RBUF_END    = $9000
 ROMCHARS    = $D800             ; lowercase half of the character ROM
+.endif
 
 ACIA_DATA   = $DE00
 ACIA_STATUS = $DE01
@@ -101,6 +106,7 @@ uline       = $2B               ; $FF: underline what is written, else 0
 
 CLIENT_ASK  = 1                 ; this client can ask for the dial's settings (dialask.inc)
 
+.ifndef MULTI
 ; --- BASIC stub: 10 SYS2061 -------------------------------------------------
 .segment "LOADADDR"
         .word $0801
@@ -150,6 +156,7 @@ cmdloop:
         lda optable,x
         pha
         rts
+.endif
 
 optable:
         .word cmdloop-1, op_goto-1, op_color-1, op_put-1, op_repeat-1
@@ -568,6 +575,7 @@ fill:
         bne @byte
 @done:  rts
 
+.ifndef MULTI
 ; --- serial ------------------------------------------------------------------
 
 ; Next received byte in A, flags set from it; polls the keyboard while
@@ -671,11 +679,12 @@ dial_rx:
         rts
 @none:  clc
         rts
+.endif
 
 ; The dial's progress, and asking for its settings (dialask.inc), draw through this.
 UI_COLS     = 40
 CFG         = $0334             ; the cassette buffer
-.if DIAL_DBGCODE
+.if ::DIAL_DBGCODE              ; (:: as these are also assembled in a scope: mainall.s)
 ; A = screen code, X = column, Y = row.
 ui_cell:
         sta ui_code
@@ -690,6 +699,7 @@ ui_code: .byte 0
 ui_clear:
         jmp clear_screen
 .endif
+.ifndef MULTI
 .include "dialask.inc"
 
 ; --- keyboard ----------------------------------------------------------------
@@ -726,6 +736,7 @@ keypoll:
 @out:   rts
 @none:  sta lastkey
         rts
+.endif
 
 ; --- setup -------------------------------------------------------------------
 
@@ -768,7 +779,8 @@ banner:
 
 ; FONT: codes 0-127 from the character ROM's lowercase half with the custom
 ; glyphs patched over it, turned into one page per pixel row; 128-255 blank
-; until the bridge loads them. Called with interrupts off.
+; until the bridge loads them. Called with interrupts off (the combined client: from
+; its copy of the ROM's font).
 init_font:
         ldx #0
         txa
@@ -782,10 +794,12 @@ init_font:
         sta FONT+$700,x
         inx
         bne :-
+.ifndef MULTI
         lda $01
         pha
         lda #$33                ; character ROM visible at $D000
         sta $01
+.endif
         lda #<ROMCHARS
         sta src
         lda #>ROMCHARS
@@ -794,8 +808,10 @@ init_font:
 @rom:   jsr store_glyph
         inx
         bpl @rom
+.ifndef MULTI
         pla
         sta $01
+.endif
 
         lda #<glyph_data
         sta src
@@ -845,6 +861,10 @@ o40hi:
         .byte >(i * 40)
 .endrep
 
+.ifdef MULTI
+MOVE_BITMAP = 1
+.include "move.inc"
+.else
 .macro RX_PENDING target
         lda rp
         cmp wp
@@ -857,3 +877,4 @@ o40hi:
 GAME_HIRES = 1
 .include "game.inc"
 .include "glyphs.inc"
+.endif

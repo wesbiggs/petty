@@ -55,8 +55,9 @@
 //   19                 SIDRESET (C64 text, hi-res) stop all channels, zero the SID
 //   1A c1 c2           SPRMC    (C64 text, hi-res) the sprites' two shared multicolour colours
 //   1B display         MODE     (a client that sent MODES) switch to that display: the client clears
-//                               its screen and says HELLO_ON display again, then MODES; the bridge
-//                               sends nothing from MODE until that HELLO_ON. Sent only between frames
+//                               its screen and says HELLO_ON display again, then MODES (HELLO_ON of the
+//                               one it is on, if it has no such screen); the bridge sends it only with
+//                               no frame in flight, and nothing more until that HELLO_ON
 //   (opcodes are in hexadecimal above 9; the numbers are in OP below)
 //
 // C64 -> host:

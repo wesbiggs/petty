@@ -3,9 +3,12 @@
 # switch between them. The bridge puts this at the end of the PATH of the
 # program it runs.
 #
-# usage: petty-mode SPEC                 switch, and print what the display is
-#        petty-mode SPEC command [args]  switch, run the command, switch back
-#        petty-mode restore              take back an earlier request
+# usage: petty-mode SPEC                 switch, and print what the display is; the
+#                                        request holds until restore (or the bridge's
+#                                        program exits)
+#        petty-mode SPEC command [args]  switch, run the command, then restore
+#        petty-mode restore              take back the request: back to the display
+#                                        the user chose, or the one before it
 #
 # SPEC is a comma-separated list of display keys (any of them: c64, c64-hires,
 # c64-53, c64-80), flags (all of them: hires, ext, game, sound, pair, quad)

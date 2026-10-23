@@ -3,13 +3,24 @@
 ; Receives screen updates from the bridge over a SwiftLink (6551 ACIA
 ; at $DE00, NMI) and sends keyboard matrix codes back. See
 ; bridge/src/protocol.js for the wire format.
+;
+; The combined client (mainall.s) also assembles this file, in a scope with MULTI
+; defined: then only the screen's own part is here (.ifndef MULTI marks the rest).
 
 ; --- hardware ---------------------------------------------------------------
-SCREEN      = $0400
 COLRAM      = $D800
+.ifdef MULTI
+; In the combined client (mainall.s) the VIC uses its second bank, as on the bitmap
+; screens: the font at $4000, sprite shapes $4800-$57FF, the screen where their
+; colours are, and the receive ring is the core's.
+SCREEN      = $5C00
+CHARSET     = $4000
+.else
+SCREEN      = $0400
 CHARSET     = $3800             ; 2K: 0-127 ROM lowercase + patches, 128-255 inverse
 RBUF        = $3700             ; 256-byte receive ring buffer
 ROMCHARS    = $D800             ; lowercase half of the character ROM
+.endif
 
 ACIA_DATA   = $DE00
 ACIA_STATUS = $DE01
@@ -55,6 +66,16 @@ src         = $10               ; generic pointers
 dst         = $12
 srcc        = $14
 dstc        = $16
+.ifdef MULTI
+; clear of the core's ring pointers, keyboard state and tmp (mainall.s)
+count       = $1C
+curcolor    = $1D
+top         = $23
+bot         = $24
+lines       = $25
+row         = $26
+glyph       = $27
+.else
 count       = $18
 rptr        = $19               ; ring buffer read index
 wptr        = $1A               ; ring buffer write index (NMI)
@@ -67,9 +88,11 @@ bot         = $20
 lines       = $21
 row         = $22
 glyph       = $23
+.endif
 
 CLIENT_ASK  = 1                 ; this client can ask for the dial's settings (dialask.inc)
 
+.ifndef MULTI
 ; --- BASIC stub: 10 SYS2061 -------------------------------------------------
 .segment "LOADADDR"
         .word $0801
@@ -114,6 +137,7 @@ cmdloop:
         lda optable,x
         pha
         rts
+.endif
 
 optable:
         .word cmdloop-1, op_goto-1, op_color-1, op_put-1, op_repeat-1
@@ -327,6 +351,7 @@ clear_screen:
         bne :-
         jmp home
 
+.ifndef MULTI
 ; --- serial ------------------------------------------------------------------
 
 ; Next received byte in A, flags set from it; polls the keyboard while
@@ -396,11 +421,12 @@ dial_rx:
         rts
 @none:  clc
         rts
+.endif
 
 ; The dial's progress, and asking for its settings (dialask.inc), draw through this.
 UI_COLS     = 40
 CFG         = $0334             ; the cassette buffer
-.if DIAL_DBGCODE
+.if ::DIAL_DBGCODE              ; (:: as these are also assembled in a scope: mainall.s)
 ; A = screen code, X = column, Y = row.
 ui_cell:
         pha
@@ -419,6 +445,7 @@ ui_cell:
 ui_clear:
         jmp clear_screen
 .endif
+.ifndef MULTI
 .include "dialask.inc"
 
 ; --- keyboard ----------------------------------------------------------------
@@ -455,11 +482,24 @@ keypoll:
 @out:   rts
 @none:  sta lastkey
         rts
+.endif
 
 ; --- setup -------------------------------------------------------------------
 
 init_screen:
+.ifdef MULTI
+        lda CIA2_PRA            ; VIC bank 1, $4000-$7FFF
+        and #$FC
+        ora #$02
+        sta CIA2_PRA
+        lda #$1B                ; text, screen on, 25 rows
+        sta VIC_CR1
+        lda #$C8                ; no multicolour, 40 columns
+        sta VIC_CR2
+        lda #((SCREEN & $3FFF) / $400) << 4 | ((CHARSET & $3FFF) / $800) << 1
+.else
         lda #$1E                ; screen $0400, charset $3800
+.endif
         sta VIC_MEM
         lda #0
         sta BORDER
@@ -483,12 +523,14 @@ init_screen:
 banner:
         .byte 16,5,20,20,25,": ",23,1,9,20,9,14,7," ",6,15,18," ",2,18,9,4,7,5,"...",0
 
-; Called with interrupts off.
+; Called with interrupts off (the combined client: from its copy of the ROM's font).
 init_charset:
+.ifndef MULTI
         lda $01
         pha
         lda #$33                ; character ROM visible at $D000
         sta $01
+.endif
         ldx #0
 :       lda ROMCHARS,x
         sta CHARSET,x
@@ -500,8 +542,10 @@ init_charset:
         sta CHARSET+$300,x
         inx
         bne :-
+.ifndef MULTI
         pla
         sta $01
+.endif
 
         lda #<glyph_data        ; patch custom glyphs
         sta src
@@ -565,6 +609,10 @@ rowhi:
         .byte >(SCREEN + i * 40)
 .endrep
 
+.ifdef MULTI
+MOVE_BITMAP = 0
+.include "move.inc"
+.else
 .macro RX_PENDING target
         lda rptr
         cmp wptr
@@ -573,3 +621,4 @@ rowhi:
 .include "sound.inc"
 .include "game.inc"
 .include "glyphs.inc"
+.endif

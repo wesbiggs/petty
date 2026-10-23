@@ -15,22 +15,39 @@
 ; uses its second bank, $4000-$7FFF, sprite data $5000-$51FF, cell colours
 ; $5C00 (sprite pointers $5FF8), bitmap $6000-$7F3F, receive ring
 ; $8000-$8FFF (4K: a bitmap scroll takes ~90 ms).
+;
+; The combined client (mainall.s) also assembles this file, in a scope with MULTI
+; defined: then only the screen's own part is here (.ifndef MULTI marks the rest).
 
 ; --- hardware ---------------------------------------------------------------
 ; Glyph tables, 8 pages each: row r of screen code c at table + r * 256 + c,
 ; codes 128-255 inverted. G is the glyph row in the top 6 bits.
+.ifdef MULTI
+; The combined client has its code at $2000-$3FFF: the tables go where the game's
+; scripts would be ($9000-$BFFF, under BASIC's ROM, which it switches out), as this
+; screen has no game hardware.
+TBL_0       = $9000
+TBL_1A      = $9800
+TBL_1B      = $A000
+TBL_2A      = $A800
+TBL_2B      = $B000
+TBL_3       = $B800
+.else
 TBL_0       = $2000             ; phase 0: G, in cell 0
 TBL_1A      = $2800             ; phase 1: G >> 6, in cell 0's last 2 pixels
 TBL_1B      = $3000             ;          G << 2, in cell 1's first 4
 TBL_2A      = $3800             ; phase 2: G >> 4, in cell 1's last 4
 TBL_2B      = $4000             ;          G << 4, in cell 2's first 2
 TBL_3       = $4800             ; phase 3: G >> 2, in cell 2's last 6
+.endif
 SPRDATA     = $5000             ; 8 sprites of 64 bytes
 COLRAM      = $5C00             ; bitmap colours: high nibble fg, low nibble bg
 SPRPTR      = COLRAM + $3F8
 BITMAP      = $6000
+.ifndef MULTI
 RBUF        = $8000
 RBUF_END    = $9000
+.endif
 
 ACIA_DATA   = $DE00
 ACIA_STATUS = $DE01
@@ -119,6 +136,7 @@ inv         = $2F               ; init_tables: 0, or $FC for the inverse half
 
 CLIENT_ASK  = 1                 ; this client can ask for the dial's settings (dialask.inc)
 
+.ifndef MULTI
 ; --- BASIC stub: 10 SYS2061 -------------------------------------------------
 .segment "LOADADDR"
         .word $0801
@@ -167,6 +185,7 @@ cmdloop:
         lda optable,x
         pha
         rts
+.endif
 
 optable:
         .word cmdloop-1, op_goto-1, op_color-1, op_put-1, op_repeat-1
@@ -174,6 +193,11 @@ optable:
         .word op_sprite-1, op_nosprite-1, cmdloop-1, cmdloop-1
         .word cmdloop-1, cmdloop-1, op_poke-1
         .word op_sound-1, op_probe-1
+.ifdef MULTI
+.repeat ::NUM_OPS_MULTI - NUM_OPS           ; the game's opcodes, which this screen does without
+        .word cmdloop-1
+.endrep
+.endif
 
 op_goto:
         jsr rb_get
@@ -667,6 +691,7 @@ fill:
         bne @byte
 @done:  rts
 
+.ifndef MULTI
 ; --- serial ------------------------------------------------------------------
 
 ; Next received byte in A, flags set from it; polls the keyboard while
@@ -770,11 +795,12 @@ dial_rx:
         rts
 @none:  clc
         rts
+.endif
 
 ; The dial's progress, and asking for its settings (dialask.inc), draw through this.
 UI_COLS     = 53
 CFG         = $0334             ; the cassette buffer
-.if DIAL_DBGCODE
+.if ::DIAL_DBGCODE              ; (:: as these are also assembled in a scope: mainall.s)
 ; A = screen code, X = column, Y = row.
 ui_cell:
         sta ui_code
@@ -789,6 +815,7 @@ ui_code: .byte 0
 ui_clear:
         jmp clear_screen
 .endif
+.ifndef MULTI
 .include "dialask.inc"
 
 ; --- keyboard ----------------------------------------------------------------
@@ -824,6 +851,7 @@ keypoll:
 @out:   rts
 @none:  sta lastkey
         rts
+.endif
 
 ; --- setup -------------------------------------------------------------------
 
@@ -932,6 +960,7 @@ o40hi:
         .byte >(i * 40)
 .endrep
 
+.ifndef MULTI
 .macro RX_PENDING target
         lda rp
         cmp wp
@@ -941,4 +970,5 @@ o40hi:
         bne target
 .endmacro
 .include "sound.inc"
+.endif
 .include "font6x8.inc"

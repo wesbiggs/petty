@@ -6,7 +6,9 @@ screen, and one for the C64 that draws 80 columns in the hi-res bitmap. A
 third C64 client draws 53 columns in the hi-res bitmap, with a 6-pixel font
 that is easier to read than the 80-column one's. A fourth draws 40 columns in
 the hi-res bitmap, for colours per cell and several hundred more glyphs,
-which the C128 client has too.
+which the C128 client has too. One more C64 program has all four of the C64's
+screens, and the bridge switches between them: see
+[Switching screens](#switching-screens-the-combined-c64-client).
 
 A bridge on a Mac or Linux host runs the program in a pty the size of the
 client's screen (40×25, 53×25 or 80×25) and emulates the terminal headlessly
@@ -54,18 +56,19 @@ the tarball; the `make` targets only build the clients and start VICE.
 ## Run it in VICE
 
 ```bash
-make                  # builds build/petty.prg, petty128.prg, petty80.prg, petty53.prg and pettyhires.prg (regenerates c64/*.inc)
+make                  # builds build/petty.prg, petty128.prg, petty80.prg, petty53.prg, pettyhires.prg and pettyall.prg (regenerates c64/*.inc)
 make bridge           # terminal 1: listens on 127.0.0.1:6464, spawns your $SHELL on connect
 make vice             # terminal 2: VICE with an emulated SwiftLink on TCP 6464
 make vice128          # ...or a C128 in 80 columns: watch VICE's VDC window
 make vice80           # ...or the C64 with the soft 80-column screen
 make vice53           # ...or the C64 with the soft 53-column screen
 make vicehires        # ...or the C64 with the 40-column hi-res screen
+make viceall          # ...or the C64 with all four of those, switched by the bridge (C=+F3)
 ```
 
 Start the bridge first, because VICE connects when the client enables the ACIA.
 To run Claude Code directly: `make bridge CMD="-- claude"`, or
-`node bridge/src/bridge.js [--port N | --serial DEV [--baud N]] [--host H] [--fps N] [--cols N] [--rows N] [--scroll N] [--theme T] [--control N] [--title FILE] [--charset FILE] [--max-sessions N] [--idle-timeout S] [--on-exit restart|close] [--control-host H] [-v] -- <cmd> [args...]`.
+`node bridge/src/bridge.js [--port N | --serial DEV [--baud N]] [--host H] [--fps N] [--cols N] [--rows N] [--scroll N] [--theme T] [--mode SPEC] [--control N] [--title FILE] [--charset FILE] [--max-sessions N] [--idle-timeout S] [--on-exit restart|close] [--control-host H] [-v] -- <cmd> [args...]`.
 
 When a client first connects, the bridge shows a start screen,
 [bridge/title.ans](bridge/title.ans), for four seconds before it starts the
@@ -133,6 +136,7 @@ sound plays (RUN/STOP stops that; then press it again). RESTORE alone does nothi
 | F5 / F7 | Ctrl+R / Ctrl+O | history search / transcript |
 | F2 / F4 | PgUp / PgDn | |
 | C=+F1 / C=+F2 | next / previous theme | |
+| C=+F3 / C=+F4 | next / previous screen, on the combined C64 client | |
 | CRSR keys (+SHIFT) | arrows | |
 | C=+CRSR↔ (+SHIFT) | pan right (left) by half a screen when `--cols` is wider than the screen | |
 | CTRL+CRSR↕ (+SHIFT) | pan down (up) by half a screen when `--rows` is taller than the screen | |
@@ -337,7 +341,8 @@ on the 40-column text and hi-res clients; the others ignore them. The parts are 
 [bridge/examples/game-demo.py](bridge/examples/game-demo.py) is a small game (a hero walking over a scrolling map,
 shooting arrows, with a tune): `make bridge CMD="-- python3 bridge/examples/game-demo.py"`, then `make vice`.
 
-**Sprites.** Eight hardware sprites, 64 shapes kept in the C64 (`$2000-$2FFF` on the text client, `$4800-$57FF` on the hi-res one):
+**Sprites.** Eight hardware sprites, 64 shapes kept in the C64 (`$2000-$2FFF` on the text client, `$4800-$57FF` on the hi-res one and on both screens of the
+combined client):
 
 ```
 ESC ] 8348 ; def ; SLOT ; BASE64(63 bytes) BEL          a shape (24x21, 3 bytes a row)
@@ -374,7 +379,8 @@ few cells (a map as the camera follows the hero) and sends one `MOVE` (copy a re
 each direction) and the cells that are new, rather than the whole viewport again: about 150 bytes for a one-cell pan of 21x19 cells
 instead of 2 KB. Vertical scrolls of the whole screen still use `SCROLL`.
 
-`node bridge/scripts/vice-game-check.js` (or `make game-check`) runs the text client (`--hires`: the hi-res one) in VICE and checks all of this against the
+`node bridge/scripts/vice-game-check.js` (or `make game-check`) runs the text client (`--hires`: the hi-res one; `--all`: the combined
+client, switched to either) in VICE and checks all of this against the
 emulated machine: shapes, positions, flags, glides across x = 256, random `MOVE`s against the reference decoder, and script timing and
 masking in VICE's SID dump.
 
@@ -392,6 +398,42 @@ FLAGS is a comma-separated list of `hires`, `ext`, `game`, `sound`, `reverse`, `
 above; `pair` and `quad`: 2 or 4 neighbouring cells share a colour). The answer waits for the client's HELLO, so asking as the program starts is fine: it comes when the client arrives, and
 is never a guess. A bridge without this answers nothing, so a program should give up after a second or two.
 `node bridge/scripts/ask-display.js` is a program that asks and prints the answer.
+
+## Switching screens (the combined C64 client)
+
+`build/pettyall.prg` is the text, hi-res, soft 53-column and soft 80-column clients in one program (about 11 KB), and the
+bridge says which screen it should be on. The text screen draws fastest, the hi-res one has a colour per cell and
+the extra glyphs, and the soft 53- and 80-column ones fit wider programs. The game hardware works on the text and
+hi-res screens, as in their own clients. A switch clears the screen, resizes the program's terminal (the program gets a
+SIGWINCH, and a shell rewraps its lines) and redraws it all: quick on the text screen, about a second at 80 columns.
+
+The client starts on hi-res (`make START=c64-80`: another; `c64`, `c64-hires`, `c64-53` or `c64-80`). Then the
+screen is chosen by, last word first:
+
+- **A program,** with `ESC ] 8350 ; mode ; SPEC BEL`, until it sends `ESC ] 8350 ; mode ; restore BEL` or exits. It
+  is answered as `display` is (above), once the client is on the new screen, so the program can wait for the answer and
+  then draw at the new size. `restore` is not answered.
+- **The user:** C=+F3 steps to the next screen, C=+F4 (C=+SHIFT+F3) to the previous one; or the control port,
+  `node bridge/scripts/petty-ctl.js mode c64-80` (`mode next`, `mode prev`, `mode auto` to leave it to the client and
+  programs, and `mode` alone shows the screen and the choices). Either takes back a program's request.
+- **`--mode SPEC`** when the bridge starts.
+
+SPEC is a comma-separated list of display keys (any of them), flags (all of them; see
+[OSC 8350](#asking-what-you-are-drawing-on-osc-8350)) and a number (at least that many columns): `c64-80`, `game`,
+`ext,game`, `80`. The client stays on its screen if that will do, and otherwise goes to the fastest that will (text,
+hi-res, 53 columns, 80 columns): `game` on the hi-res screen stays there, and from 80 columns it goes to text.
+
+`petty-mode` (on the program's PATH, after everything else) does it for programs that know nothing of PETTY:
+
+```bash
+petty-mode 80 rogue          # rogue on 80 columns, then back to what was there before
+petty-mode game ./mygame     # a screen with sprites and the SID
+petty-mode c64               # just switch, and print the display (KEY;COLS;ROWS;FLAGS)
+```
+
+The single-screen clients are still built (they are smaller, and leave more memory free), and they and the C128 client
+don't switch: a request they can't meet is answered with the display they are on. On the wire the combined client says
+`MODES` after its HELLO_ON, and the bridge sends `MODE` between frames (see [Protocol](#protocol)).
 
 ## Sound (the C64 and C128 clients)
 
@@ -473,6 +515,10 @@ merges into fewer frames instead of overflowing the client's receive buffer (256
 bytes; 4 KB on the bitmap C64 clients).
 (The program-facing escape sequences, OSC 8347-8350, are not part of this wire protocol: they are between the program and the
 bridge, and the bridge turns them into the commands above. OSC 8350 `display` needs none, and the client is unchanged.)
+The combined C64 client sends `MODES mask` after its HELLO_ON (bit n set: it can show display n; bit 7 is always set,
+so an older bridge skips both bytes), and the bridge may then send `MODE id` once no frame is in flight. The client
+clears its screen, stops its sprites and SID scripts, and answers `HELLO_ON id` and MODES again; the bridge sends
+nothing in between, then redraws everything. For a display it has no screen for, it answers with the one it is on.
 C64→host messages are ACK, `KEY code mods` and HELLO (and, for sound, CREDIT, DONE, ABORT and PROBE). A client on another
 display sends `HELLO_ON id` instead (1 = C128 VDC, 2 = C64 soft 80 columns,
 both 80×25; 3 = C64 hi-res, 40×25; 4 = C64 soft 53 columns, 53×25), and the bridge
@@ -495,6 +541,7 @@ node bridge/scripts/fake-c64.js --c128 6464 $'echo hi\r'     # same, as an 80-co
 node bridge/scripts/fake-c64.js --soft80 6464 $'echo hi\r'   # same, as the soft 80-column C64
 node bridge/scripts/fake-c64.js --soft53 6464 $'echo hi\r'   # same, as the soft 53-column C64
 node bridge/scripts/fake-c64.js --hires 6464 $'echo hi\r'    # same, as the hi-res C64
+node bridge/scripts/fake-c64.js --modes 6464 $'echo hi\r'    # same, switching screens as the combined C64 client does
 node bridge/scripts/fake-c64.js --serial /dev/ttys005 0 $'echo hi\r'  # to a bridge on --serial
 ```
 
@@ -526,11 +573,16 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `c64/petty53.cfg` | linker config (program must end below `$2000`, where its glyph tables start) |
 | `c64/mainhires.s` | hi-res 40-column C64 client |
 | `c64/pettyhires.cfg` | linker config (program must end below `$2000`) |
+| `c64/mainall.s` | the combined C64 client: the four files above, each assembled in a scope with `MULTI`, and what they share |
+| `c64/pettyall.cfg` | linker config (program must end below `$4000`) |
+| `c64/move.inc` | MOVE, for the text and hi-res clients (both in the combined one) |
+| `bridge/bin/petty-mode` | asks for a screen (OSC 8350 `mode`) around a command |
+| `bridge/scripts/vice-mode-check.js` | runs the combined client in VICE and checks each screen against its own client's (`make mode-check`) |
 | `c64/staircase.s` | standalone program for calibrating a real SID (`make build/staircase.prg`) |
 | `c64/game.inc` | game hardware for the text and hi-res clients: sprites, glides, MOVE, the SID script player (OSC 8348, 8349) |
 | `bridge/src/game.js` | those OSCs: the program's sprites and scripts, kept for a client that restarts |
 | `bridge/lib/pettygame.py` | prints them from Python; `bridge/examples/game-demo.py` is a small game |
-| `bridge/scripts/vice-game-check.js` | runs the text client in VICE and checks the game hardware against the machine |
+| `bridge/scripts/vice-game-check.js` | runs the text client in VICE and checks the game hardware against the machine (`--hires`, `--all`: the hi-res, the combined one) |
 | `c64/sound.inc` | sound for all the clients: SOUND and PROBE, the 2-bit decoder and the playback loop |
 | `c128/main.s` | C128 client: the same, drawing on the VDC at 2 MHz |
 | `c128/petty128.cfg` | linker config (program must end below `$3800`) |
@@ -577,6 +629,14 @@ ring `$8000–$8FFF`.
 Hi-res 40 columns: code `$0801–$0FB2`; the VIC uses its second bank, with the
 font `$4000–$47FF` (one page per pixel row), colours `$5C00` and the bitmap
 `$6000–$7F3F`; receive ring `$8000–$8FFF`.
+
+Combined (`pettyall.prg`): code `$0801–$3408` (`$394D` with `DIALASK=1`). The VIC uses its second bank on every
+screen: the screen's font `$4000–$47FF` (text, hi-res; with sprite shapes `$4800–$57FF`) or tables `$4000–$4FFF`
+(80 columns), sprite data `$5000–$51FF` (80 and 53 columns), the text screen or the bitmap's colours `$5C00`, the
+bitmap `$6000–$7F3F`; receive ring `$8000–$8FFF`. `$9000–$BFFF` holds the game's scripts, or on the 53-column screen
+(which has no game hardware) its six tables: BASIC's ROM is switched out, and the bridge loads the scripts again when
+the client comes back to a game screen. The character ROM's lowercase half is copied to `$C800–$CBFF` once, at start;
+game variables `$C000`, sound `$CD00–$CFFF`.
 
 C128 (bank 15): code `$1C01–$231F`, font build buffer `$3800–$3BFF` (startup
 only), receive ring `$3F00`. VDC RAM: screen `$0000`, attributes `$0800`, font
