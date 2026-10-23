@@ -34,8 +34,9 @@ From a code review. Not fixed on purpose or for lack of a way to test; pick them
   on the single-screen C64 clients this one replaced and on the C128, never on hardware; on today's C64 client (it asks on its text screen)
   only the setup screen was looked at. The dial reads the modem through each client's RX ring (`dial_rx`), so a client's NMI must stay as it is.
 - **RUN/STOP+RESTORE (`c64/restart.inc`) is untested with a real RESTORE key.** VICE cannot press it: the checks jumped to the
-  KERNAL's NMI routine (C64) or the client's `nmi` (C128) with RUN/STOP faked in the keyboard variable. It takes an NMI the ACIA did
-  not raise (status bit 7 clear) for RESTORE, so a RESTORE that arrives with a byte pending is missed. The modem hang-up (`+++`, `ATH`)
+  KERNAL's NMI routine (C64) or the client's `nmi` (C128) with RUN/STOP faked in the keyboard variable. It takes an NMI with no byte
+  waiting and status bit 7 clear for RESTORE, so a RESTORE that arrives with a byte pending is missed. (A byte waiting is always
+  taken: `send`'s status reads clear bit 7 too, and lost a byte now and then while the client was sending, e.g. keys repeated fast.) The modem hang-up (`+++`, `ATH`)
   was tried only against `fake-modem.js`.
 - **The C64 client (`petty.prg`, four screens) is tested in VICE only.** Each screen matches the reference decoder after random frames
   (`make screen-check`), the game and picture checks pass on every screen, and the dial, `DIALASK`'s setup screen and RUN/STOP+RESTORE

@@ -582,12 +582,18 @@ send:
         sta ACIA_DATA
         rts
 
+; A byte waiting is taken whatever bit 7 says: send reads the status too,
+; which clears that bit, and one that did so just as the byte came in would
+; leave this NMI looking like RESTORE, and the byte to be lost.
 nmi:
         lda ACIA_STATUS         ; also acknowledges the interrupt
-        bpl @restore            ; bit 7: the ACIA's interrupt, else RESTORE
+        tax
         and #$08                ; receive register full?
-        beq :+
-        lda ACIA_DATA
+        bne @byte
+        txa
+        bpl @restore            ; bit 7: the ACIA's interrupt, else RESTORE
+        bmi :+
+@byte:  lda ACIA_DATA
         ldx wptr
         sta RBUF,x
         inc wptr
