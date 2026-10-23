@@ -1,6 +1,6 @@
-; --- the dial's progress, and asking for its settings (all five clients) --------------
+; --- the dial's progress, and asking for its settings (both clients) ------------------
 ;
-; Included by each client after dial.inc, which says when each part is built:
+; Included by the C64 and C128 clients after dial.inc, which says when each part is built:
 ;
 ;   DIAL_DBGCODE   DIALDEBUG=1, or DIALASK=1: the dial's progress at the bottom of the screen (rows 21-24).
 ;   DIAL_ASKING    DIALASK=1: the modem's start-up command (DIALINIT), the bridge's address (DIAL) and whether to
@@ -9,10 +9,10 @@
 ;                  built-in DIAL, DIALINIT and DIALDEBUG as what is shown, and saves the answers. If the call does not
 ;                  come in 9-13 seconds the screen asks again, with the current values shown.
 ;
-; Everything is drawn one character at a time through the client's own routine, so one engine serves the text,
-; 80-column VDC, soft 80- and 53-column and hi-res clients. A client provides:
+; Everything is drawn one character at a time through the client's own routine, so one engine serves the C64
+; client (on its text screen) and the C128's 80-column VDC. A client provides:
 ;
-;   UI_COLS      its width (40, 53 or 80); the height is 25
+;   UI_COLS      its width (40 or 80); the height is 25
 ;   CFG          where the settings live (RAM the KERNAL's tape code would use): 71 bytes
 ;   ui_cell      A = screen code, X = column, Y = row: draw it there. May clobber anything but the stack.
 ;   ui_clear     clear the screen

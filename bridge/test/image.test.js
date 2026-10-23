@@ -2,10 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { deflateSync } from 'node:zlib';
 import xterm from '@xterm/headless';
-import { DISPLAY, OP, VIEW, Decoder, encodeFrame, encodeReset, encodePicture } from '../src/protocol.js';
+import { DISPLAY, OP, VIEW, VDC, Decoder, encodeFrame, encodeReset, encodePicture } from '../src/protocol.js';
+import { GlyphCache } from '../src/glyphcache.js';
 import { snapshot } from '../src/screen.js';
 import { INVERSE } from '../src/glyphs.js';
-import { IMAGE, InlineImages, decodePNG, decodeImage, fitSize, imageCell, koala, multicolourPicture, toCells, toKoala } from '../src/image.js';
+import { IMAGE, InlineImages, decodePNG, decodeImage, fitSize, imageCell, koala, fullScreenPicture, hiresCells, toCells, toKoala } from '../src/image.js';
 import { VIC_RGB } from '../src/colors.js';
 
 // A PNG from unfiltered rows of raw samples.
@@ -241,16 +242,16 @@ test('a blue close to the VIC blue stays blue, not purple', () => {
 test('imgcat -t koala:flat and koala:dither pick the conversion', () => {
   const file = png(8, 8, 2, 8, Array.from({ length: 8 }, (_, y) => Array.from({ length: 24 }, (_, k) => (k % 3 === 0 ? y * 32 : 90))));
   for (const type of ['koala:flat', 'multicolour:dither', 'KOALA']) {
-    assert.equal(multicolourPicture(file, { type }).bitmap.length, 8000, type);
+    assert.equal(fullScreenPicture(file, { type }).bitmap.length, 8000, type);
   }
 });
 
 test('imgcat -t koala shows any picture in multicolour; otherwise only Koala files', () => {
   const file = png(16, 8, 2, 8, Array.from({ length: 8 }, () => Array(48).fill(255)));
-  assert.equal(multicolourPicture(file, {}), null);
-  const k = multicolourPicture(file, { type: 'Koala' });
+  assert.equal(fullScreenPicture(file, {}), null);
+  const k = fullScreenPicture(file, { type: 'Koala' });
   assert.deepEqual([k.bitmap.length, k.screen.length, k.colram.length], [8000, 1000, 1000]);
-  assert.ok(multicolourPicture(koalaFile(), {}));
+  assert.ok(fullScreenPicture(koalaFile(), {}));
 });
 
 test('a picture shown full screen leaves the terminal alone', async () => {
@@ -270,4 +271,167 @@ test('an unsupported file says so in the terminal', async () => {
   const term = terminal();
   await write(term, osc(Buffer.from('hello'), `name=${Buffer.from('x.txt').toString('base64')};`));
   assert.match(term.buffer.active.getLine(0).translateToString(true), /^\[x\.txt: unsupported image/);
+});
+
+// --- full-screen hi-res pictures (petty-view) ------------------------------------
+
+test('petty-view: a Doodle! or Art Studio picture shows full screen in hi-res, as it is', () => {
+  const file = doodle(3);
+  assert.equal(fullScreenPicture(file, {}), null, 'imgcat keeps it in the terminal');
+  const pic = fullScreenPicture(file, { view: '1' });
+  assert.equal(pic.hires, true);
+  assert.ok(Buffer.from(pic.bitmap).equals(file.subarray(1026, 9026)));
+  assert.ok(Buffer.from(pic.screen).equals(file.subarray(2, 1002)));
+  // Art Studio: bitmap, then screen, then the border.
+  const art = Buffer.alloc(9009);
+  for (let i = 2; i < 9002; i++) art[i] = (i * 13) & 0xff;
+  art[9002] = 14;
+  const a = fullScreenPicture(art, { view: '1' });
+  assert.deepEqual([a.hires, a.bg], [true, 14]);
+  assert.ok(Buffer.from(a.screen).equals(art.subarray(8002, 9002)));
+});
+
+test('petty-view: a hi-res picture loads with VIEW LOAD_HIRES, bitmap and screen only', () => {
+  const pic = fullScreenPicture(doodle(4), { view: '1' });
+  const frames = encodePicture(pic, 2048);
+  const dec = new Decoder(40, 25);
+  for (const [k, f] of frames.entries()) {
+    dec.feed(f);
+    if (k === 0) assert.equal(dec.view, VIEW.LOAD_HIRES);
+  }
+  assert.equal(dec.view, VIEW.SHOW);
+  assert.ok(Buffer.from(dec.mem.subarray(0x6000, 0x6000 + 8000)).equals(Buffer.from(pic.bitmap)));
+  assert.ok(Buffer.from(dec.mem.subarray(0x5c00, 0x5c00 + 1000)).equals(Buffer.from(pic.screen)));
+  assert.ok(dec.mem.subarray(0xd800, 0xd800 + 1000).every(b => b === 0), 'no colour RAM for hi-res');
+  assert.ok(frames.reduce((n, f) => n + f.length, 0) < 9500, "no colour RAM sent (a Koala picture is over 10000)");
+});
+
+test('petty-view: a PNG goes to multicolour, or with -t hires to hi-res, in the middle on black', () => {
+  const file = png(16, 8, 2, 8, Array.from({ length: 8 }, () => Array(48).fill(255)));
+  const m = fullScreenPicture(file, { view: '1' });
+  assert.ok(m.colram && !m.hires, 'multicolour');
+  const h = fullScreenPicture(file, { view: '1', type: 'hires' });
+  assert.ok(h.hires && !h.colram);
+  // 16x8 white pixels: 2 cells in the middle of the screen, white on whatever; the rest black.
+  const lit = [];
+  for (let i = 0; i < 1000; i++) if (h.bitmap.subarray(i * 8, i * 8 + 8).some(b => b) || h.screen[i]) lit.push(i);
+  assert.deepEqual(lit, [12 * 40 + 19, 12 * 40 + 20]);
+  for (const i of lit) assert.deepEqual(cellPixels([...h.bitmap.subarray(i * 8, i * 8 + 8), h.screen[i]]), new Array(64).fill(1));
+});
+
+test('flat forced on a photograph with more than 32767 colours keeps them all', () => {
+  const img = { width: 320, height: 200, rgba: new Uint8Array(320 * 200 * 4) };
+  for (let y = 0; y < 200; y++) for (let x = 0; x < 320; x++) img.rgba.set([x * 0.8 | 0, y * 1.2 | 0, 255 - x * 0.7 | 0, 255], (y * 320 + x) * 4);
+  const { cells } = hiresCells(img, { type: 'flat' }, 40, 25, 0);
+  const black = [];
+  for (let i = 0; i < 1000; i++) if (cellPixels(cells.subarray(i * 9, i * 9 + 9)).every(c => c === 0)) black.push(i);
+  assert.deepEqual(black, [], 'no cell is all black: the gradient has none');
+});
+
+// --- inline images on the soft screens --------------------------------------------
+
+function softTerminal(display) {
+  const term = new xterm.Terminal({ cols: display.cols, rows: display.rows, allowProposedApi: true });
+  const group = display.quad ? 4 : 2, perGroup = display.quad ? 3 : 1;
+  const images = new InlineImages(term, () => ({ maxCols: display.cols, maxRows: display.rows, bg: 0, group, perGroup }));
+  term.parser.registerOscHandler(1337, data => images.osc(data));
+  return { term, group, perGroup };
+}
+
+for (const display of [DISPLAY.C64_80, DISPLAY.C64_53]) {
+  test(`imgcat on the ${display.name} screen: whole bitmap cells, lined up with its groups, drawn with CELLS`, async () => {
+    const { term, group, perGroup } = softTerminal(display);
+    const file = doodle(9);
+    // After "abc", so the image has to move to the next whole group; 4 cells wide (padded to 6 on 53 columns).
+    await write(term, `abc${osc(file, 'width=32px;height=16px;preserveAspectRatio=0;')}\r\nz`);
+    const want = snapshot(term, 0, display);
+    const start = Math.ceil(3 / group) * group; // the first whole group from column 3 on
+    const cellsWide = Math.ceil(4 / perGroup) * perGroup, cols = cellsWide / perGroup * group;
+    for (let x = 0; x < display.cols; x++) {
+      assert.equal(want.glyph[x] >= IMAGE, x >= start && x < start + cols, `column ${x}`);
+    }
+    const dec = new Decoder(display.cols, display.rows);
+    const { bytes } = encodeReset(want, 0, 0, 1);
+    dec.feed(bytes);
+    const cell0 = start / group * perGroup;
+    for (const row of [0, 1]) {
+      for (let c = 0; c < cellsWide; c++) {
+        const got = dec.cells[row * 40 + cell0 + c];
+        assert.ok(got, `cell ${c} of row ${row} drawn`);
+        if (c >= 4) assert.ok(got.subarray(0, 8).every(b => b === 0), 'padding is blank');
+        else assert.equal(got.length, 9);
+      }
+    }
+    assert.ok(dec.cells.filter(Boolean).length === cellsWide * 2, 'nothing else');
+    for (let x = start; x < start + cols; x++) assert.equal(dec.glyph[x], 32, 'no characters where the image is');
+    assert.equal(dec.glyph[0], 1, 'a');
+  });
+}
+
+test('imgcat on the soft 80-column screen: text over half a cell is drawn after the cell', async () => {
+  const { term } = softTerminal(DISPLAY.C64_80);
+  await write(term, osc(doodle(5), 'width=16px;height=8px;preserveAspectRatio=0;'));
+  await write(term, '\x1b[1;2Hq'); // over the right half of the first cell
+  const want = snapshot(term, 0, DISPLAY.C64_80);
+  assert.ok(want.glyph[0] >= IMAGE && want.glyph[1] === 17 && want.glyph[2] >= IMAGE);
+  const { bytes } = encodeReset(want, 0, 0, 1);
+  const cells = bytes.indexOf(OP.CELLS), put = bytes.lastIndexOf(17);
+  assert.ok(cells >= 0 && put > cells, 'the cell, then the q over it');
+  const dec = new Decoder(80, 25);
+  dec.feed(bytes);
+  assert.equal(dec.glyph[1], 17);
+  assert.ok(dec.cells[0] && dec.cells[1]);
+});
+
+// --- inline images on the C128 ------------------------------------------------------
+
+test('imgcat on the C128: a character a cell in one colour on the screen colour, loaded with GLYPH', async () => {
+  const term = new xterm.Terminal({ cols: 80, rows: 25, allowProposedApi: true });
+  const images = new InlineImages(term, () => ({ maxCols: 80, maxRows: 25, vdcBg: 0 }));
+  term.parser.registerOscHandler(1337, data => images.osc(data));
+  // 8x8 pixels: the left half red, the right half black (the screen colour): twice as wide on the VDC.
+  const file = png(8, 8, 2, 8, Array.from({ length: 8 }, () => Array.from({ length: 24 }, (_, k) => (k < 12 && k % 3 === 0 ? 255 : 0))));
+  await write(term, osc(file));
+  const want = snapshot(term, 0, DISPLAY.C128);
+  // 16x8 VDC pixels: two cells, the first solid red (a reversed space, no character), the second blank.
+  assert.equal(want.glyph[0], 32);
+  assert.ok(want.color[0] & VDC.RVS, 'solid: reversed');
+  assert.ok([8, 9].includes(want.color[0] & 15), 'red (RGBI)');
+  assert.equal(want.glyph[1], 32);
+});
+
+test('imgcat on the C128: cells with pixels get characters; identical ones share one; past the free ones, blocks', async () => {
+  const term = new xterm.Terminal({ cols: 80, rows: 25, allowProposedApi: true });
+  const images = new InlineImages(term, () => ({ maxCols: 80, maxRows: 25, vdcBg: 0 }));
+  term.parser.registerOscHandler(1337, data => images.osc(data));
+  // Vertical stripes, one pixel wide (two on the VDC): every cell the same pattern.
+  const file = png(32, 16, 2, 8, Array.from({ length: 16 }, () => Array.from({ length: 96 }, (_, k) => (Math.floor(k / 3) % 2 ? 255 : 0))));
+  await write(term, osc(file, 'type=flat;'));
+  const want = snapshot(term, 0, DISPLAY.C128);
+  const image = [...want.glyph.keys()].filter(i => want.glyph[i] >= IMAGE);
+  assert.equal(image.length, 8 * 2, '64x16 VDC pixels: 8 by 2 cells');
+  const cache = new GlyphCache(DISPLAY.C128);
+  const glyphs = cache.place(want, null);
+  assert.equal(glyphs.filter((b, k) => b === OP.GLYPH && k % 11 === 0).length, 1, 'one character for all of them');
+  assert.ok(image.every(i => want.glyph[i] === want.glyph[image[0]]), 'all the same slot');
+  const dec = new Decoder(80, 25);
+  dec.feed([...glyphs, ...encodeReset(want).bytes]);
+  const slot = want.glyph[image[0]] | (want.color[image[0]] & VDC.ALT ? 256 : 0);
+  assert.deepEqual([...dec.glyphs.get(slot)], new Array(8).fill(0b00110011), 'black, white, ... each two VDC pixels wide');
+});
+
+test('imgcat on the C128: past the free characters, image cells are blocks', async () => {
+  const term = new xterm.Terminal({ cols: 80, rows: 25, allowProposedApi: true });
+  const images = new InlineImages(term, () => ({ maxCols: 80, maxRows: 25, vdcBg: 0 }));
+  term.parser.registerOscHandler(1337, data => images.osc(data));
+  // Two different patterns: stripes, and stripes with a dot.
+  const file = png(8, 8, 2, 8, Array.from({ length: 8 }, (_, y) => Array.from({ length: 24 }, (_, k) => (Math.floor(k / 3) % 2 || (y === 0 && k < 3) ? 255 : 0))));
+  await write(term, osc(file, 'type=flat;'));
+  const want = snapshot(term, 0, DISPLAY.C128);
+  assert.equal(want.glyph.filter(g => g >= IMAGE).length, 2);
+  const all = [];
+  for (let s = 128; s < 512; s++) all.push(s);
+  const cache = new GlyphCache(DISPLAY.C128, all.slice(1)); // one slot left
+  cache.place(want, null);
+  assert.equal(want.glyph.filter(g => g === 32).length, 80 * 25 - 1, 'the other is a space (half lit: a block of the screen colour)');
 });

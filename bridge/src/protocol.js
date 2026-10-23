@@ -20,15 +20,16 @@
 //                               pixels: 128-255 on the C64 hi-res screen (cells
 //                               already drawn keep their pixels), 128-511 on the
 //                               C128 (cells showing it change)
-//   0C on              UNDERLINE (C64 hi-res) underline what PUT and REPEAT
+//   0C on              UNDERLINE (C64 hi-res, soft 80 and 53) underline what PUT and REPEAT
 //                               write from now on (0 = off)
 //   0D n (d0..d7 color)*n  BITS (C64 hi-res) write n cells of raw pixels, each
 //                               8 bitmap bytes and its colour, advancing
-//   0E mode bg         VIEW     (C64 hi-res) 1: blank the screen in colour bg and
-//                               switch to multicolour, to load a picture; 2: show
-//                               it; 0: back to the hi-res terminal screen (the
-//                               host then redraws it)
-//   0F lo hi n d1..dn  POKE     (C64 hi-res) write n bytes (0 = 256) at lo + 256 * hi
+//   0E mode bg         VIEW     (C64) 1: blank the screen in colour bg and switch to
+//                               a multicolour bitmap, to load a picture; 3: the same
+//                               in hi-res; 2: show it; 0: back to the terminal
+//                               screen (the host then redraws it). Sprites are
+//                               hidden while a picture is up
+//   0F lo hi n d1..dn  POKE     (C64) write n bytes (0 = 256) at lo + 256 * hi
 //   10 var delay lat_lo lat_hi n_lo n_hi n_ex
 //                      SOUND    (C64 hi-res) play n bytes of 2-bit codes (4 samples each; see
 //                               sound/codec.js) that follow the command as raw bytes: modally,
@@ -39,21 +40,30 @@
 //                               and loads the code's tables first, with POKE at DTAB, NIDX and
 //                               OUTTAB (sound/session.js). No FRAME follows: it would be data.
 //   11                 PROBE    measure the machine: the C64 answers PROBE
-//   12 slot d1..d63    SPRDEF   (C64 text, hi-res) shape for hardware sprite shape slot 0-63 (see game.js)
+//   12 slot d1..d63    SPRDEF   (C64) shape for hardware sprite shape slot 0-63 (see game.js)
 //   13 n slot color flags xlo y
-//                      SPR      (C64 text, hi-res) sprite n (0-7) shows shape `slot` at x = xlo + 256 * flags
+//                      SPR      (C64) sprite n (0-7) shows shape `slot` at x = xlo + 256 * flags
 //                               bit 0, y (the VIC's coordinates: 24, 50 is the top left of the
 //                               text); flags bit 1 on, 2 multicolour, 3 wide, 4 tall, 5 behind text
-//   14 n frames dx dy  GLIDE    (C64 text, hi-res) sprite n moves by (dx, dy), signed pixels, every frame
+//   14 n frames dx dy  GLIDE    (C64) sprite n moves by (dx, dy), signed pixels, every frame
 //                               for `frames` frames; the C64 sends GLIDE when all have ended
-//   15 x y w h dx dy   MOVE     (C64 text, hi-res) copy the w x h cells at x, y (codes and colours) to
+//   15 x y w h dx dy   MOVE     (C64) copy the w x h cells at x, y (codes and colours) to
 //                               x + dx, y + dy (signed), all at once
-//   16 n (reg val)*n   SIDW     (C64 text, hi-res) write SID registers now
-//   17 ch lo hi m0..m3 SIDPLAY  (C64 text, hi-res) start the SID script at lo + 256 * hi on channel
+//   16 n (reg val)*n   SIDW     (C64) write SID registers now
+//   17 ch lo hi m0..m3 SIDPLAY  (C64) start the SID script at lo + 256 * hi on channel
 //                               0-3; its writes are limited to the registers in the 25-bit mask
-//   18 ch              SIDSTOP  (C64 text, hi-res) stop channel ch (255: all), gates down
-//   19                 SIDRESET (C64 text, hi-res) stop all channels, zero the SID
-//   1A c1 c2           SPRMC    (C64 text, hi-res) the sprites' two shared multicolour colours
+//   18 ch              SIDSTOP  (C64) stop channel ch (255: all), gates down
+//   19                 SIDRESET (C64) stop all channels, zero the SID
+//   1A c1 c2           SPRMC    (C64) the sprites' two shared multicolour colours
+//   1C row cell n (d0..d7 color)*n
+//                      CELLS    (C64 soft 80 and 53 columns) write n cells of the bitmap, 8 bytes and
+//                               a colour each, from cell `cell` (0-39) of text row `row` on: an inline
+//                               image, in whole cells (2 columns a cell at 80; 4 columns 3 cells at 53).
+//                               The write pointer stays where it is
+//   1B display         MODE     (a client that sent MODES) switch to that display: the client clears
+//                               its screen and says HELLO_ON display again, then MODES (HELLO_ON of the
+//                               one it is on, if it has no such screen); the bridge sends it only with
+//                               no frame in flight, and nothing more until that HELLO_ON
 //   (opcodes are in hexadecimal above 9; the numbers are in OP below)
 //
 // C64 -> host:
@@ -67,6 +77,9 @@
 //   08                 ABORT    SOUND stopped by RUN/STOP; the C64 has thrown away what
 //                               was in flight, so the bridge may carry on at once
 //   09                 GLIDE    every sprite glide has ended
+//   0A mask            MODES    after HELLO_ON: the client can switch (MODE) to the displays whose
+//                               id is a bit of mask; bit 7 is always set, so that a bridge that
+//                               doesn't know MODES skips both bytes as junk
 //
 // Rows and columns are those of the client's display: 40x25 on the C64, 80x25
 // on the C128's VDC and on the C64's soft 80-column bitmap screen, 53x25 on
@@ -79,25 +92,59 @@
 // `ext`: characters from 128 up are extended glyphs, loaded with GLYPH.
 // Glyphs from IMAGE up are cells of inline images (image.js), sent with BITS.
 
-import { IMAGE, imageCell } from './image.js';
+import { IMAGE, imageCell, imagePart } from './image.js';
 
 // key: what OSC 8350 `display` tells a program (see displayReport).
 export const DISPLAY = {
-  C64: { id: 0, key: 'c64', name: 'C64', cols: 40, rows: 25, sound: true, game: true },
-  C128: { id: 1, key: 'c128', name: 'C128 VDC', cols: 80, rows: 25, reverse: true, ext: true, sound: true },
-  C64_80: { id: 2, key: 'c64-80', name: 'C64 soft-80', cols: 80, rows: 25, pair: true, sound: true },
-  C64_HIRES: { id: 3, key: 'c64-hires', name: 'C64 hi-res', cols: 40, rows: 25, hires: true, ext: true, sound: true, game: true },
-  C64_53: { id: 4, key: 'c64-53', name: 'C64 soft-53', cols: 53, rows: 25, quad: true, sound: true },
+  C64: { id: 0, key: 'c64', name: 'C64', cols: 40, rows: 25, sound: true, game: true, picture: true },
+  C128: { id: 1, key: 'c128', name: 'C128 VDC', cols: 80, rows: 25, reverse: true, ext: true, sound: true, images: true },
+  C64_80: { id: 2, key: 'c64-80', name: 'C64 soft-80', cols: 80, rows: 25, pair: true, sound: true, game: true, picture: true, images: true, underline: true },
+  C64_HIRES: { id: 3, key: 'c64-hires', name: 'C64 hi-res', cols: 40, rows: 25, hires: true, ext: true, sound: true, game: true, picture: true, images: true },
+  C64_53: { id: 4, key: 'c64-53', name: 'C64 soft-53', cols: 53, rows: 25, quad: true, sound: true, game: true, picture: true, images: true, underline: true },
 };
 export const displayById = id => Object.values(DISPLAY).find(d => d.id === id);
+export const displayByKey = key => Object.values(DISPLAY).find(d => d.key === key);
+const FLAGS = ['hires', 'ext', 'game', 'sound', 'reverse', 'pair', 'quad', 'picture', 'images'];
+
+// A client that can switch displays (MODES) is put on the first of these that has what is asked for:
+// the fastest to draw first (text, then the bitmap screens, the narrowest first).
+export const MODE_ORDER = [DISPLAY.C64, DISPLAY.C64_HIRES, DISPLAY.C64_53, DISPLAY.C64_80, DISPLAY.C128];
+
+/**
+ * What a mode request asks for (OSC 8350 `mode`, the control port's `mode`, --mode): a comma-separated list of
+ * display keys (any of them), flags (all of them; see displayReport) and a number (at least that many columns),
+ * as `c64-80`, `game` or `ext,game` or `80`. Returns { keys, flags, cols }, or null if a word is none of these.
+ */
+export function parseMode(spec) {
+  const need = { keys: [], flags: [], cols: 0 };
+  const words = String(spec).split(',').map(w => w.trim()).filter(Boolean);
+  if (!words.length) return null;
+  for (const w of words) {
+    if (displayByKey(w)) need.keys.push(w);
+    else if (FLAGS.includes(w)) need.flags.push(w);
+    else if (/^\d+$/.test(w)) need.cols = Math.max(need.cols, Number(w));
+    else return null;
+  }
+  return need;
+}
+
+export const satisfies = (d, need) =>
+  (!need.keys.length || need.keys.includes(d.key)) && need.flags.every(f => d[f]) && d.cols >= need.cols;
+
+// The display to be on, of those whose ids are in `ids`: the current one if it will do (a switch costs a
+// redraw), else the first in MODE_ORDER that will. Null if none will.
+export function pickDisplay(need, ids, current) {
+  if (ids.has(current.id) && satisfies(current, need)) return current;
+  return MODE_ORDER.find(d => ids.has(d.id) && satisfies(d, need)) ?? null;
+}
 
 // C64 defaults, for callers that only deal with one screen size.
 export const COLS = DISPLAY.C64.cols;
 export const ROWS = DISPLAY.C64.rows;
 export const CELLS = COLS * ROWS;
 
-export const OP = { GOTO: 1, COLOR: 2, PUT: 3, REPEAT: 4, SCROLL: 5, COLORS: 6, CLS: 7, FRAME: 8, SPRITE: 9, NOSPRITE: 10, GLYPH: 11, UNDERLINE: 12, BITS: 13, VIEW: 14, POKE: 15, SOUND: 16, PROBE: 17, SPRDEF: 18, SPR: 19, GLIDE: 20, MOVE: 21, SIDW: 22, SIDPLAY: 23, SIDSTOP: 24, SIDRESET: 25, SPRMC: 26 };
-export const VIEW = { TERMINAL: 0, LOAD: 1, SHOW: 2 };
+export const OP = { GOTO: 1, COLOR: 2, PUT: 3, REPEAT: 4, SCROLL: 5, COLORS: 6, CLS: 7, FRAME: 8, SPRITE: 9, NOSPRITE: 10, GLYPH: 11, UNDERLINE: 12, BITS: 13, VIEW: 14, POKE: 15, SOUND: 16, PROBE: 17, SPRDEF: 18, SPR: 19, GLIDE: 20, MOVE: 21, SIDW: 22, SIDPLAY: 23, SIDSTOP: 24, SIDRESET: 25, SPRMC: 26, MODE: 27, CELLS: 28 };
+export const VIEW = { TERMINAL: 0, LOAD: 1, SHOW: 2, LOAD_HIRES: 3 };
 // Where SOUND's tables go in the C64 (c64/sound.inc).
 export const SOUND_ADDR = { OUTTAB: 0xCD00, DTAB: 0xCE00, NIDX: 0xCE40 };
 export const SOUND_WINDOW = 128; // bytes of codes the C64 holds, which the bridge keeps in flight
@@ -106,7 +153,7 @@ export const encodeSound = (variant, delay, latch, n) => {
   return [OP.SOUND, variant, delay, latch & 0xFF, latch >> 8, n & 0xFF, (n >> 8) & 0xFF, n >> 16];
 };
 export const encodePoke = (addr, data) => [OP.POKE, addr & 0xFF, addr >> 8, data.length & 0xFF, ...data];
-// Game hardware (the C64 text client; game.js): sprites, SID scripts, rectangle moves.
+// Game hardware (the C64 client; game.js): sprites, SID scripts, rectangle moves.
 export const SPRITE_SLOTS = 64;
 export const SPR = { ON: 2, MULTI: 4, WIDE: 8, TALL: 16, BEHIND: 32 }; // SPR flags above bit 0, which is x's bit 8
 export const encodeSprDef = (slot, data) => [OP.SPRDEF, slot, ...Array.from({ length: 63 }, (_, i) => data[i] ?? 0)];
@@ -117,10 +164,12 @@ export const encodeSidW = pairs => [OP.SIDW, pairs.length / 2, ...pairs];
 export const encodeSidPlay = (ch, addr, mask) => [OP.SIDPLAY, ch, addr & 0xFF, addr >> 8, mask & 0xFF, mask >> 8 & 0xFF, mask >> 16 & 0xFF, mask >>> 24 & 0xFF];
 export const encodeSidStop = ch => [OP.SIDSTOP, ch];
 const SPRITES = 8;
-const spriteKey = s => s ? `${s.col},${s.row},${s.color},${s.data.join(',')}` : null;
+// In a snapshot's `sprites` (soft 80 and 53 columns): a sprite the game has (game.js), left alone.
+export const GAME_SPRITE = 'game';
+const spriteKey = s => s === GAME_SPRITE ? s : s ? `${s.col},${s.row},${s.color},${s.data.join(',')}` : null;
 // VDC attribute bits beyond the colour.
 export const VDC = { UNDERLINE: 0x20, RVS: 0x40, ALT: 0x80 };
-export const MSG = { ACK: 1, KEY: 2, HELLO: 3, HELLO_ON: 4, DONE: 5, CREDIT: 6, PROBE: 7, ABORT: 8, GLIDE: 9 };
+export const MSG = { ACK: 1, KEY: 2, HELLO: 3, HELLO_ON: 4, DONE: 5, CREDIT: 6, PROBE: 7, ABORT: 8, GLIDE: 9, MODES: 10 };
 
 const SPACE = 32;
 const MAX_GAP = 3; // unchanged cells worth rewriting instead of a 3-byte GOTO
@@ -131,13 +180,13 @@ export const HIRES_UNDERLINE = 0x100; // hi-res colour bit: sent with UNDERLINE,
 // any colour, unless an attribute such as underline shows on it, or (`hires`)
 // in any foreground on the same background.
 export const sameLook = (g, a, b, hires = false) => a === b || (g === SPACE &&
-  (hires ? a >= 0 && b >= 0 && (a & 0x10F) === (b & 0x10F) : ((a | b) & ATTRS) === 0));
+  (hires ? a >= 0 && b >= 0 && (a & 0x10F) === (b & 0x10F) : ((a | b) & (ATTRS | HIRES_UNDERLINE)) === 0));
 
 // Commands that change the client's current colour from state.cur to c.
 function setColour(out, state, c) {
   const cur = state.cur;
   if (cur < 0 || (cur & 0xFF) !== (c & 0xFF)) out.push(OP.COLOR, c & 0xFF);
-  if (state.hires && (cur < 0 || (cur & HIRES_UNDERLINE) !== (c & HIRES_UNDERLINE))) {
+  if (state.uline && (cur < 0 || (cur & HIRES_UNDERLINE) !== (c & HIRES_UNDERLINE))) {
     out.push(OP.UNDERLINE, c & HIRES_UNDERLINE ? 1 : 0);
   }
   state.cur = c;
@@ -145,10 +194,12 @@ function setColour(out, state, c) {
 
 // Mirror of what the C64 is displaying, plus its write pointer and colour.
 export class ScreenState {
-  constructor(cols = COLS, rows = ROWS, hires = false) {
+  // `uline`: underline goes with UNDERLINE, as a colour's bit 8 (hi-res, soft 80 and 53 columns).
+  constructor(cols = COLS, rows = ROWS, hires = false, uline = hires) {
     this.cols = cols;
     this.rows = rows;
     this.hires = hires;
+    this.uline = uline;
     this.glyph = new Int32Array(cols * rows).fill(-1); // -1 = unknown
     this.color = new Int16Array(cols * rows).fill(-1);
     this.pos = -1;
@@ -157,7 +208,7 @@ export class ScreenState {
   }
 
   clone() {
-    const s = new ScreenState(this.cols, this.rows, this.hires);
+    const s = new ScreenState(this.cols, this.rows, this.hires, this.uline);
     s.glyph.set(this.glyph);
     s.color.set(this.color);
     s.pos = this.pos;
@@ -204,14 +255,18 @@ export class ScreenState {
 function encodeDiff(state, want, out, budget = Infinity) {
   const { glyph: wg, color: wc } = want;
   const { cols } = state, cells = state.glyph.length;
+  // On the soft screens images go first, with CELLS; the rest is text (and never runs over an image).
+  const groups = (want.group ?? 1) > 1;
+  if (groups && !encodeGroups(state, want, out, budget)) return false;
+  const image = j => groups && wg[j] >= IMAGE;
   let i = 0;
   while (i < cells) {
-    if (state.matches(i, wg[i], wc[i])) { i++; continue; }
+    if (state.matches(i, wg[i], wc[i]) || image(i)) { i++; continue; }
     if (out.length >= budget) return false;
 
     // Extend the run while changes are no more than MAX_GAP cells apart.
     let last = i;
-    for (let j = i + 1; j < cells && j - last <= MAX_GAP; j++) {
+    for (let j = i + 1; j < cells && j - last <= MAX_GAP && !image(j); j++) {
       if (!state.matches(j, wg[j], wc[j])) last = j;
     }
 
@@ -259,6 +314,32 @@ function encodeDiff(state, want, out, budget = Infinity) {
   return true;
 }
 
+// The soft screens' image cells that changed (image.js toGroups): each a column of a group of columns showing
+// whole bitmap cells, drawn with CELLS, a group at once, groups next to each other in one command. Columns of
+// a group that the terminal has put text in become unknown, to be drawn after. False if out of budget.
+function encodeGroups(state, want, out, budget) {
+  const { glyph: wg, color: wc } = want;
+  const { cols } = state, g = want.group, per = g === 4 ? 3 : 1;
+  let cmd = null;
+  for (let i = 0; i < wg.length; i++) {
+    if (wg[i] < IMAGE || state.matches(i, wg[i], wc[i])) continue;
+    const part = imagePart(wg[i] - IMAGE);
+    if (!part) continue;
+    if (out.length >= budget) return false;
+    const row = Math.floor(i / cols), start = i % cols - part.phase, cell = start / g * per;
+    if (cmd && cmd.row === row && cmd.end === cell && out[cmd.at] + per <= 255) out[cmd.at] += per;
+    else { out.push(OP.CELLS, row, cell, per); cmd = { row, at: out.length - 1 }; }
+    out.push(...part.data);
+    cmd.end = cell + per;
+    for (let k = 0; k < g; k++) {
+      const j = row * cols + start + k;
+      const p = wg[j] >= IMAGE ? imagePart(wg[j] - IMAGE) : null;
+      if (p && p.data === part.data && p.phase === k) { state.glyph[j] = wg[j]; state.color[j] = wc[j]; } else state.glyph[j] = -1;
+    }
+  }
+  return true;
+}
+
 // Build one frame. Tries every full-screen scroll amount and keeps the
 // cheapest encoding. Returns {bytes, state, partial} without touching the
 // input state. A frame that would be longer than `budget` bytes (an image)
@@ -275,7 +356,7 @@ export function encodeFrame(state, want, budget = Infinity) {
     const frame = encodeScrolled(state, want, n);
     if (!best || frame.bytes.length < best.bytes.length) best = frame;
   }
-  if (want.move && !best.partial) best = bestMove(state, want, best);
+  if (want.move && !best.partial) best = bestMove(state, want, best, want.group ?? 1);
   if (best.bytes.length > budget) best = encodeScrolled(state, want, best.n, budget);
   if (want.sprites) encodeSprites(best.state, want.sprites, best.bytes);
   best.bytes.push(OP.FRAME);
@@ -286,18 +367,19 @@ export function encodeFrame(state, want, budget = Infinity) {
 // follows the player) is cheaper to say with MOVE than to draw again. Looks
 // for the shifts (dx, dy) under which cells of the new screen match the old
 // ones where they didn't without, takes the rectangle they fill, and keeps
-// the frame if it comes out shorter than `best`.
+// the frame if it comes out shorter than `best`. On the soft screens a MOVE is
+// of whole `group`s of columns (2 at 80 columns, 4 at 53), by whole groups.
 const MOVE_MAX = 3, MOVE_MIN_GAIN = 24, MOVE_MIN_CHANGES = 40;
-function bestMove(state, want, best) {
+function bestMove(state, want, best, group = 1) {
   const { cols, rows } = state;
   const cells = cols * rows;
   let changed = 0;
   for (let i = 0; i < cells; i++) if (!state.matches(i, want.glyph[i], want.color[i])) changed++;
   if (changed < MOVE_MIN_CHANGES) return best;
   for (let dy = -MOVE_MAX; dy <= MOVE_MAX; dy++) {
-    for (let dx = -MOVE_MAX; dx <= MOVE_MAX; dx++) {
+    for (let dx = -MOVE_MAX * group; dx <= MOVE_MAX * group; dx += group) {
       if (!dx && !dy) continue;
-      const rect = moveRect(state, want, dx, dy);
+      const rect = moveRect(state, want, dx, dy, group);
       if (!rect) continue;
       const s = state.clone();
       const out = [...encodeMove(rect.x, rect.y, rect.w, rect.h, dx, dy)];
@@ -313,7 +395,7 @@ function bestMove(state, want, best) {
 // only when shifted, in the run of rows and the run of columns that hold most
 // of them (so a stray match elsewhere doesn't widen it), all of which fit the screen both
 // before and after. Null if there are too few.
-function moveRect(state, want, dx, dy) {
+function moveRect(state, want, dx, dy, group = 1) {
   const { cols, rows } = state;
   const rowN = new Int16Array(rows), colN = new Int16Array(cols);
   let gain = 0;
@@ -347,8 +429,10 @@ function moveRect(state, want, dx, dy) {
   };
   const ry = span(rowN, rows), rx = span(colN, cols);
   if (!ry || !rx) return null;
-  // Destination x0..x1, y0..y1 (end exclusive); the source is shifted back.
-  const x0 = Math.max(rx[0], dx), x1 = Math.min(rx[1], cols + dx);
+  // Destination x0..x1, y0..y1 (end exclusive); the source is shifted back. Columns in whole groups, of the
+  // groups that are whole (not the 53-column screen's last column).
+  const last = Math.floor(cols / group) * group;
+  const x0 = Math.max(Math.floor(rx[0] / group) * group, dx), x1 = Math.min(Math.ceil(rx[1] / group) * group, last, last + dx);
   const y0 = Math.max(ry[0], dy), y1 = Math.min(ry[1], rows + dy);
   if (x1 - x0 < 2 || y1 - y0 < 2) return null;
   return { x: x0 - dx, y: y0 - dy, w: x1 - x0, h: y1 - y0 };
@@ -376,6 +460,7 @@ function encodeSprites(state, sprites, out) {
     const s = sprites[n] ?? null;
     const key = spriteKey(s);
     if (state.sprites[n] === key) continue;
+    if (s === GAME_SPRITE) { state.sprites[n] = key; continue; } // its SPR sets it all; a repair after it sets it back
     if (s) out.push(OP.SPRITE, n, s.col, s.row, s.color, ...s.data);
     else out.push(OP.NOSPRITE, n);
     state.sprites[n] = key;
@@ -394,7 +479,7 @@ function rowMatches(state, want, fromRow, toRow) {
 // Full reset: colours, clear screen, then everything that isn't a space.
 // `want` may carry {cols, rows, hires}; otherwise it is a C64 screen.
 export function encodeReset(want, border = 0, bg = 0, color = 15, budget = Infinity) {
-  const state = new ScreenState(want.cols ?? COLS, want.rows ?? ROWS, want.hires);
+  const state = new ScreenState(want.cols ?? COLS, want.rows ?? ROWS, want.hires, want.hires || want.underline);
   const out = [OP.COLORS, border, bg];
   setColour(out, state, color);
   out.push(OP.CLS);
@@ -406,17 +491,18 @@ export function encodeReset(want, border = 0, bg = 0, color = 15, budget = Infin
   return { bytes: out.concat(frame.bytes), state: frame.state, partial: frame.partial };
 }
 
-// Where the C64 hi-res client keeps a picture shown with VIEW: the bitmap
-// and colours of its terminal screen, and the VIC's colour RAM.
+// Where the C64 client keeps a picture shown with VIEW (in the VIC's second
+// bank: the bitmap screens' own bitmap and colours), and the VIC's colour RAM.
 const PICTURE = { bitmap: 0x6000, screen: 0x5C00, colram: 0xD800 };
 
-// Frames of at most about `budget` bytes that show a Koala Painter picture
-// ({bitmap, screen, colram, bg}, see image.js) full screen on the C64 hi-res
-// client: blank the screen, load it, show it. The terminal comes back with
-// VIEW TERMINAL and a reset.
+// Frames of at most about `budget` bytes that show a picture full screen on a
+// C64 client: Koala Painter data ({bitmap, screen, colram, bg}) or a hi-res
+// picture ({bitmap, screen, bg, hires: true}), see image.js. Blank the
+// screen, load it, show it. The terminal comes back with VIEW TERMINAL and a
+// reset.
 export function encodePicture(pic, budget = Infinity) {
-  const cmds = [[OP.VIEW, VIEW.LOAD, pic.bg]];
-  for (const part of ['bitmap', 'screen', 'colram']) {
+  const cmds = [[OP.VIEW, pic.hires ? VIEW.LOAD_HIRES : VIEW.LOAD, pic.bg]];
+  for (const part of pic.hires ? ['bitmap', 'screen'] : ['bitmap', 'screen', 'colram']) {
     const data = pic[part];
     for (let k = 0; k < data.length; k += 256) {
       const addr = PICTURE[part] + k, chunk = data.subarray(k, k + 256);
@@ -448,6 +534,7 @@ export class Decoder {
     this.sprites = new Array(SPRITES).fill(null);
     this.glyphs = new Map(); // GLYPH definitions: code -> 8 bytes
     this.bits = new Array(cols * rows).fill(null); // cells drawn by BITS: 8 bytes
+    this.cells = new Array(1000).fill(null); // bitmap cells drawn by CELLS (soft screens): 9 bytes
     this.view = VIEW.TERMINAL;
     this.mem = new Uint8Array(0x10000); // what POKE wrote
     this.sounds = []; // SOUND commands (their data bytes are not decoded)
@@ -485,10 +572,17 @@ export class Decoder {
           this.glyph.fill(SPACE, clear, to);
           this.color.fill(this.cur, clear, to);
           this.bits.fill(null, clear, to);
+          this.cells.copyWithin(top * 40, (top + n) * 40, (bot + 1) * 40);
+          this.cells.fill(null, Math.max(top, bot - n + 1) * 40, (bot + 1) * 40);
           break;
         }
         case OP.COLORS: this.border = next(); this.bg = next(); break;
-        case OP.CLS: this.glyph.fill(SPACE); this.color.fill(this.cur); this.bits.fill(null); this.pos = 0; break;
+        case OP.CLS: this.glyph.fill(SPACE); this.color.fill(this.cur); this.bits.fill(null); this.cells.fill(null); this.pos = 0; break;
+        case OP.CELLS: {
+          const row = next(), cell = next(), n = next();
+          for (let k = 0; k < n; k++) this.cells[row * 40 + cell + k] = Uint8Array.from({ length: 9 }, next);
+          break;
+        }
         case OP.FRAME: this.frames++; break;
         case OP.SPRITE: {
           const n = next(), col = next(), row = next(), color = next();
@@ -497,7 +591,7 @@ export class Decoder {
         }
         case OP.NOSPRITE: this.sprites[next()] = null; break;
         case OP.GLYPH: { const code = next() | next() << 8; this.glyphs.set(code, Uint8Array.from({ length: 8 }, next)); break; }
-        case OP.VIEW: this.view = next(); if (this.view === VIEW.LOAD) this.border = this.bg = next(); else next(); break;
+        case OP.VIEW: this.view = next(); if (this.view === VIEW.LOAD || this.view === VIEW.LOAD_HIRES) this.border = this.bg = next(); else next(); break;
         case OP.SOUND: this.sounds.push({ variant: next(), delay: next(), latch: next() | next() << 8, n: next() | next() << 8 | next() << 16 }); break;
         case OP.PROBE: break;
         case OP.SPRDEF: { const slot = next(); this.shapes.set(slot, Uint8Array.from({ length: 63 }, next)); break; }
@@ -523,6 +617,8 @@ export class Decoder {
         case OP.SIDSTOP: this.sid.push({ op: 'stop', ch: next() }); break;
         case OP.SIDRESET: this.sid.push({ op: 'reset' }); break;
         case OP.SPRMC: this.sprmc = [next(), next()]; break;
+        case 0: break; // a no-op: the resync after a lost ACK is made of them
+        case OP.MODE: this.mode = next(); break; // the client switches; what follows is for the new display
         case OP.POKE: {
           let addr = next() | next() << 8;
           const n = next() || 256;
@@ -546,9 +642,10 @@ export class Decoder {
 /**
  * What a program is told when it asks (OSC 8350 ; display): `KEY;COLS;ROWS;FLAGS`, FLAGS a comma-separated list
  * of what the display can do: `hires` (per-cell colours, 128-255 free for glyphs), `ext` (the extended glyphs),
- * `game` (sprites and SID: OSC 8348/8349), `sound`, `reverse` (C128), `pair` (soft 80), `quad` (soft 53).
+ * `game` (sprites and SID: OSC 8348/8349), `sound`, `reverse` (C128), `pair` (soft 80), `quad` (soft 53),
+ * `picture` (full-screen pictures: petty-view), `images` (imgcat's pictures in pixels, not blocks).
  */
 export function displayReport(d) {
-  const flags = ['hires', 'ext', 'game', 'sound', 'reverse', 'pair', 'quad'].filter(f => d[f]);
+  const flags = FLAGS.filter(f => d[f]);
   return `${d.key};${d.cols};${d.rows};${flags.join(',')}`;
 }

@@ -1,8 +1,10 @@
 // Game hardware for a program running in the bridge's terminal: hardware
-// sprites (OSC 8348) and the SID (OSC 8349) on the C64 text client. Where
+// sprites (OSC 8348) and the SID (OSC 8349) on the C64 client. Where
 // say and play (OSC 8347) are about sound files, these are about the machine:
 // a program that runs on the host and uses the C64 as its screen, keyboard,
-// sprite chip and sound chip. (The C64 text and hi-res clients.)
+// sprite chip and sound chip. (Every C64 screen; on the soft 80- and 53-column
+// screens the sprites the program uses are taken from the ones that repaint
+// colours, and MOVE moves whole groups of columns.)
 //
 // OSC 8348: sprites. Positions are pixels of the 320x200 text screen (0, 0
 // is the top left of cell 0, 0; the VIC's own coordinates are 24 and 50 more).
@@ -49,8 +51,10 @@
 
 import { OP, SPR, SPRITE_SLOTS, encodeSprDef, encodeSpr, encodeGlide, encodeSidW, encodeSidPlay, encodeSidStop, encodePoke } from './protocol.js';
 
-export const SCRIPT_BASE = 0x9000; // where the C64 clients have room for scripts (the hi-res one's ring ends there)
-export const SCRIPT_END = 0xC000;
+// Where the C64 client has room for scripts: after its receive ring, before the glyph tables
+// under BASIC's ROM.
+export const SCRIPT_BASE = 0x9000;
+export const SCRIPT_END = 0xA000;
 const SCREEN_X = 24, SCREEN_Y = 50; // the VIC's coordinates of the text's top left
 const MAX_QUEUE = 32768; // bytes held for a client that is not taking them
 const FLAG = { x: SPR.WIDE, y: SPR.TALL, m: SPR.MULTI, b: SPR.BEHIND };
@@ -186,6 +190,11 @@ export class GameHardware {
     } else {
       throw new Error(`unknown OSC 8348 command ${verb}`);
     }
+  }
+
+  // The sprites the program has used (bit n: sprite n), which the soft screens' colour repairs leave alone.
+  spriteMask() {
+    return this.sprites.reduce((m, s, n) => (s ? m | 1 << n : m), 0);
   }
 
   setSprite(n, s, on) {

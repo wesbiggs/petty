@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DISPLAY, OP, VDC, HIRES_UNDERLINE, Decoder, encodeFrame, encodeReset, sameLook } from '../src/protocol.js';
+import { DISPLAY, OP, VDC, HIRES_UNDERLINE, GAME_SPRITE, Decoder, encodeFrame, encodeReset, sameLook } from '../src/protocol.js';
 import { toScreenCode, screenCodeToChar, INVERSE } from '../src/glyphs.js';
 import { keyToBytes, MATRIX, SHIFT, CTRL, CBM, ALT } from '../src/keymap.js';
 import { VIC, RGBI, palette, oscReply, THEME_NAMES, stepTheme } from '../src/colors.js';
@@ -133,10 +133,12 @@ test('soft 80 columns: each pair of cells shares one colour', async () => {
   assert.equal(color[5], color[4]);
 });
 
-const soft80 = async text => {
+// The snapshot, with `sprites` just the repairs (as numbers 0 up, with no game sprites).
+const soft80 = async (text, gameSprites = 0) => {
   const term = new xterm.Terminal({ cols: 80, rows: 25, allowProposedApi: true });
   await new Promise(done => term.write('\x1b[?25l' + text, done));
-  return snapshot(term, 0, DISPLAY.C64_80);
+  const snap = snapshot(term, 0, DISPLAY.C64_80, 'dark', 0, null, gameSprites);
+  return { ...snap, all: snap.sprites, sprites: snap.sprites.filter(s => s && s !== GAME_SPRITE) };
 };
 
 test('soft 80 columns: letters keep their colour over punctuation', async () => {
@@ -185,6 +187,25 @@ test('soft 80 columns: sprites group nearby losers and stop at 8', async () => {
   assert.ok(sprites.every(s => lit(s) === 2 * 6), 'two x per sprite');
 });
 
+test('soft 80 columns: the game\'s sprites are left alone, and repairs take the others', async () => {
+  const line = '\x1b[32mx\x1b[31mo  '.repeat(20);
+  const { all, sprites } = await soft80((line + '\r\n').repeat(12), 0b10000101); // the game has 0, 2 and 7
+  assert.equal(sprites.length, 5, 'five left for repairs');
+  assert.deepEqual(all.map((s, n) => s === GAME_SPRITE ? n : -1).filter(n => n >= 0), [0, 2, 7]);
+  // The encoder sends nothing for the game's: no NOSPRITE that would hide them.
+  const { bytes, state } = encodeReset({ ...blank(DISPLAY.C64_80), sprites: all });
+  const dec = new Decoder(80, 25);
+  dec.feed(bytes);
+  assert.deepEqual(dec.sprites.map(s => !!s), [false, true, false, true, true, true, true, false]);
+  const hidden = encodeReset({ ...blank(DISPLAY.C64_80), sprites: all.map(s => (s === GAME_SPRITE ? null : s)) }).bytes;
+  assert.equal(hidden.length - bytes.length, 3 * 2, 'where the game\'s would be NOSPRITE n, nothing');
+  assert.deepEqual(encodeFrame(state, { ...blank(DISPLAY.C64_80), sprites: all }).bytes, [OP.FRAME], 'and nothing again');
+  // Given back to repairs: sprite 0 is sent.
+  const after = encodeFrame(state, { ...blank(DISPLAY.C64_80), sprites: all.map((s, n) => (n === 0 ? { col: 0, row: 0, color: 1, data: new Uint8Array(63) } : s)) });
+  dec.feed(after.bytes);
+  assert.ok(dec.sprites[0], 'sprite 0 repairs once the game lets it go');
+});
+
 test('soft 80 columns: letters get sprites before punctuation', async () => {
   // 9 cells of green "(" + red "o": the o keeps red, each ( loses; then one
   // cell where a red o loses to a green m, far from the others.
@@ -196,7 +217,8 @@ test('soft 80 columns: letters get sprites before punctuation', async () => {
 const soft53 = async text => {
   const term = new xterm.Terminal({ cols: 53, rows: 25, allowProposedApi: true });
   await new Promise(done => term.write('\x1b[?25l' + text, done));
-  return snapshot(term, 0, DISPLAY.C64_53);
+  const snap = snapshot(term, 0, DISPLAY.C64_53);
+  return { ...snap, sprites: snap.sprites.filter(Boolean) };
 };
 
 test('soft 53 columns: each group of 4 cells shares one colour', async () => {
@@ -532,4 +554,27 @@ test('emoji take two cells, the middot and a space, so the line keeps its column
   // ❤ is one cell (text presentation) and has no glyph: a middot too
   assert.deepEqual([...g.slice(0, 15)], want.map(x => typeof x === 'number' ? x : x === ' ' ? 32 : x === '❤' ? dot : toScreenCode(x)));
   assert.equal(term.buffer.active.cursorX, 15);
+});
+
+test('soft 80 and 53 columns: underline goes with UNDERLINE, per character, kept through colour sharing', async () => {
+  for (const [helper, cols] of [[soft80, 80], [soft53, 53]]) {
+    const { glyph, color } = await helper('a\x1b[4mb\x1b[24mc');
+    assert.equal(color[0] & HIRES_UNDERLINE, 0);
+    assert.equal(color[1] & HIRES_UNDERLINE, HIRES_UNDERLINE, 'b is underlined');
+    assert.equal(color[1] & 15, color[0] & 15, 'and shares its colour with a');
+    const display = cols === 80 ? DISPLAY.C64_80 : DISPLAY.C64_53;
+    const { bytes } = encodeReset({ cols, rows: 25, glyph, color, underline: true });
+    const dec = new Decoder(cols, 25);
+    dec.feed(bytes);
+    assert.deepEqual([...dec.color.subarray(0, 3)].map(c => c & HIRES_UNDERLINE), [0, HIRES_UNDERLINE, 0], display.name);
+    assert.ok(bytes.includes(OP.UNDERLINE));
+  }
+});
+
+test('the C64 text client and the C128 never get UNDERLINE', async () => {
+  const term = new xterm.Terminal({ cols: 40, rows: 25, allowProposedApi: true });
+  await new Promise(done => term.write('\x1b[4mx', done));
+  const want = snapshot(term, 0, DISPLAY.C64);
+  assert.equal(want.color[0] & HIRES_UNDERLINE, 0);
+  assert.ok(!encodeReset(want).bytes.includes(OP.UNDERLINE));
 });

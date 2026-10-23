@@ -11,11 +11,12 @@
 
 import { OP, VDC } from './protocol.js';
 import { EXT, EXT_GLYPHS } from './extglyphs.js';
-import { INVERSE } from './glyphs.js';
-import { IMAGE } from './image.js';
+import { INVERSE, SPACE } from './glyphs.js';
+import { IMAGE, vdcCell } from './image.js';
 import { FIXED } from './charset.js';
 
 const isExt = g => g >= EXT && g < EXT + EXT_GLYPHS.length;
+const lit = bits => bits.reduce((n, b) => n + [...b.toString(2)].filter(d => d === '1').length, 0);
 
 const ALT_SPACE = 256 + 32; // looks like a space to the encoder: never used
 
@@ -37,44 +38,53 @@ export class GlyphCache {
 
   // Replaces extended glyphs in `want` with slots, and returns the GLYPH
   // commands that must precede the frame. Cells of `state` (the client's
-  // screen, if known) that show a reloaded slot become unknown.
+  // screen, if known) that show a reloaded slot become unknown. On the C128,
+  // inline image cells (glyphs from IMAGE up, image.js vdcCell) get slots
+  // too, one for each different cell; when there are none left, they are
+  // blocks.
   place(want, state) {
     const { glyph, color } = want;
     // A --charset slot, 128-255, is already loaded: it only needs its number.
     for (let i = 0; i < glyph.length; i++) if (glyph[i] >= FIXED && glyph[i] < IMAGE) glyph[i] -= FIXED;
-    const needed = new Set();
-    for (const g of glyph) if (isExt(g)) needed.add(g);
+    const image = g => this.display.reverse && g >= IMAGE;
+    // What a slot holds: an extended glyph's number, or an image cell's pixels.
+    const idOf = g => (image(g) ? `image ${vdcCell(g - IMAGE).bits.join(',')}` : g);
+    const needed = new Map(); // id -> its 8 bytes
+    for (const g of glyph) {
+      if (image(g)) needed.set(idOf(g), vdcCell(g - IMAGE).bits);
+      else if (isExt(g)) needed.set(g, this.redrawn.get(g) ?? EXT_GLYPHS[g - EXT].data);
+    }
     if (!needed.size) return [];
     this.frame++;
 
     const inUse = new Set();
-    for (const g of needed) if (this.slotOf.has(g)) inUse.add(this.slotOf.get(g));
+    for (const id of needed.keys()) if (this.slotOf.has(id)) inUse.add(this.slotOf.get(id));
     const out = [];
     const assigned = new Map();
-    for (const g of needed) {
-      let slot = this.slotOf.get(g);
+    for (const [id, data] of needed) {
+      let slot = this.slotOf.get(id);
       if (slot === undefined) {
         slot = this.#free(inUse);
         if (slot === undefined) continue; // full: falls back below
         if (this.glyphIn.has(slot)) this.slotOf.delete(this.glyphIn.get(slot));
-        this.glyphIn.set(slot, g);
-        this.slotOf.set(g, slot);
+        this.glyphIn.set(slot, id);
+        this.slotOf.set(id, slot);
         inUse.add(slot);
-        out.push(OP.GLYPH, slot & 0xff, slot >> 8, ...(this.redrawn.get(g) ?? EXT_GLYPHS[g - EXT].data));
+        out.push(OP.GLYPH, slot & 0xff, slot >> 8, ...data);
         if (state) this.#forget(state, slot);
       }
       this.shown.set(slot, this.frame);
-      assigned.set(g, slot);
+      assigned.set(id, slot);
     }
 
     const alt = this.display.reverse; // the C128: bit 8 is an attribute
     for (let i = 0; i < glyph.length; i++) {
       const g = glyph[i];
-      if (!isExt(g)) continue;
-      let code = assigned.get(g);
+      if (!isExt(g) && !image(g)) continue;
+      let code = assigned.get(idOf(g));
       if (code === undefined) {
-        // An inverse fallback (such as █) is its glyph in reverse.
-        code = EXT_GLYPHS[g - EXT].fallback;
+        // An inverse fallback (such as █) is its glyph in reverse; an image cell is a block, lit if mostly lit.
+        code = image(g) ? SPACE | (lit(vdcCell(g - IMAGE).bits) >= 32 ? INVERSE : 0) : EXT_GLYPHS[g - EXT].fallback;
         if (code & INVERSE) {
           code ^= INVERSE;
           const c = color[i];

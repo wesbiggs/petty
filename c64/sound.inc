@@ -1,4 +1,4 @@
-; PETTY - sound for the C64 clients: speech and music through the SID's volume
+; PETTY - sound for the C64 and C128 clients: speech and music through the SID's volume
 ; register, played modally (the screen stays on and still; any frames the
 ; program draws meanwhile wait in the bridge). A port of petty-d418's client.
 ;

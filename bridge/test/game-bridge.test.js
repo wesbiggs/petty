@@ -5,7 +5,10 @@ import assert from 'node:assert/strict';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { Decoder, MSG, OP, DISPLAY } from '../src/protocol.js';
+import { Decoder, MSG, OP, DISPLAY, VIEW } from '../src/protocol.js';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const BRIDGE = fileURLToPath(new URL('../src/bridge.js', import.meta.url));
 const b64 = b => Buffer.from(b).toString('base64');
@@ -74,9 +77,15 @@ stty raw -echo; dd bs=1 count=9 2>/dev/null | od -c | head -1 > /dev/null; print
   assert.ok(dec.glyph.some((g, i) => i < 40 && g !== 32), `the program ran on after the sync reply (${log})`);
 });
 
-test('a client without game hardware (soft 80 columns) gets none of it', async () => {
+test('the soft 80-column client gets them too', async () => {
+  const script = `printf '${osc(8348, 'def', 1, b64(new Uint8Array(63)))}${osc(8348, 'set', 2, 1, 10, 20, 3)}ok'; sleep 5`;
+  const { dec } = await run(script, { display: DISPLAY.C64_80, wait: 8000, until: d => d.hw[2] });
+  assert.equal(dec.hw[2].x, 34);
+});
+
+test('a client without game hardware (the C128) gets none of it', async () => {
   const script = `printf '${osc(8348, 'def', 0, b64(new Uint8Array(63)))}${osc(8348, 'set', 0, 0, 10, 10, 1)}${osc(8349, 'w', 24, 15)}ok'; sleep 3`;
-  const { dec } = await run(script, { display: DISPLAY.C64_80, wait: 8000, until: d => d.glyph.some(g => g !== 32) });
+  const { dec } = await run(script, { display: DISPLAY.C128, wait: 8000, until: d => d.glyph.some(g => g !== 32) });
   assert.equal(dec.shapes.size, 0);
   assert.equal(dec.hw.filter(Boolean).length, 0);
   assert.equal(dec.sid.length, 0);
@@ -85,18 +94,19 @@ test('a client without game hardware (soft 80 columns) gets none of it', async (
 
 // OSC 8350: a program asks what it is drawing on.
 for (const [display, want] of [
-  [DISPLAY.C64, 'c64;40;25;game,sound'],
-  [DISPLAY.C64_HIRES, 'c64-hires;40;25;hires,ext,game,sound'],
-  [DISPLAY.C64_80, 'c64-80;80;25;sound,pair'],
-  [DISPLAY.C64_53, 'c64-53;53;25;sound,quad'],
-  [DISPLAY.C128, 'c128;80;25;ext,sound,reverse'],
+  [DISPLAY.C64, 'c64;40;25;game,sound,picture'],
+  [DISPLAY.C64_HIRES, 'c64-hires;40;25;hires,ext,game,sound,picture,images'],
+  [DISPLAY.C64_80, 'c64-80;80;25;game,sound,pair,picture,images'],
+  [DISPLAY.C64_53, 'c64-53;53;25;game,sound,quad,picture,images'],
+  [DISPLAY.C128, 'c128;80;25;ext,sound,reverse,images'],
 ]) {
   test(`OSC 8350 display: the program is told it is on the ${display.name}`, async () => {
     // The program asks as it starts, usually before the client's HELLO has been read: the answer is
     // whatever the client turns out to be, not a guess. It writes what it was told to the screen.
     const asker = fileURLToPath(new URL('../scripts/ask-display.js', import.meta.url));
     const { dec } = await run(`node ${asker}`, { display, wait: 8000, until: d => /8350;display;/.test(screenText(d, display)) });
-    assert.ok(screenText(dec, display).includes(`8350;display;${want}`), screenText(dec, display));
+    const text = screenText(dec, display), at = text.indexOf(`8350;display;${want}`);
+    assert.ok(at >= 0 && !/[a-z,]/.test(text[at + 13 + want.length]), text); // all of it, not a prefix
   });
 }
 
@@ -105,3 +115,27 @@ function screenText(dec, display) {
   for (let i = 0; i < display.cols * display.rows; i++) s += String.fromCharCode(dec.glyph[i] === 0 ? 64 : dec.glyph[i] < 32 ? dec.glyph[i] + 96 : dec.glyph[i]);
   return s;
 }
+
+// petty-view: a picture full screen, on any C64 client; in the terminal on the C128.
+const doodleFile = () => {
+  const buf = Buffer.alloc(9218);
+  for (let i = 2; i < buf.length; i++) buf[i] = (i * 29) & 0xff;
+  const file = join(mkdtempSync(join(tmpdir(), 'petty-view-')), 'pic.dd');
+  writeFileSync(file, buf);
+  return { file, buf };
+};
+
+test('petty-view shows a hi-res picture full screen on the soft 80-column client', async () => {
+  const { file, buf } = doodleFile();
+  const { dec } = await run(`petty-view ${file}; sleep 20`, { display: DISPLAY.C64_80, wait: 20000, until: d => d.view === VIEW.SHOW });
+  assert.equal(dec.view, VIEW.SHOW);
+  assert.ok(Buffer.from(dec.mem.subarray(0x6000, 0x6000 + 8000)).equals(buf.subarray(1026, 9026)), 'the bitmap');
+  assert.ok(Buffer.from(dec.mem.subarray(0x5C00, 0x5C00 + 1000)).equals(buf.subarray(2, 1002)), 'its colours');
+});
+
+test('petty-view on the C128 shows the picture in the terminal instead', async () => {
+  const { file } = doodleFile();
+  const { dec } = await run(`petty-view ${file}; sleep 5`, { display: DISPLAY.C128, wait: 8000, until: d => d.glyph.some(g => g !== 32) });
+  assert.equal(dec.view, VIEW.TERMINAL);
+  assert.ok(dec.glyph.some(g => g !== 32), 'drawn in the terminal');
+});

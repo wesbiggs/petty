@@ -23,7 +23,7 @@ const MAX_TEXT = 4000;
 const MAX_DATA = 32 << 20;
 
 // Where in a raster line the C64's sample timer starts, in 5-cycle steps, found
-// by measuring the writes' timing in VICE with the hi-res client's screen on
+// by measuring the writes' timing in VICE with the C64 client's hi-res screen on
 // (scripts/sound-capture.js, sweep-phase). PAL machine, NTSC machine.
 export const SOUND_DELAY = { pal: 4, ntsc: 4 };
 

@@ -1,6 +1,7 @@
 // Inline images on the C64 hi-res screen: iTerm2's OSC 1337 (as sent by
 // imgcat, or the fallback bin/imgcat), in PNG or one of the C64's own
-// picture formats.
+// picture formats. Also on the soft 80- and 53-column screens, whose
+// characters are narrower than a bitmap cell: see toGroups.
 //
 // An image is converted once, when it arrives, into hi-res cells (8 bitmap
 // bytes and a colour each), and every cell gets a key. The terminal holds a
@@ -11,7 +12,7 @@
 // more than the terminal and its scrollback can hold.
 
 import { inflateSync } from 'node:zlib';
-import { VIC_RGB } from './colors.js';
+import { VIC_RGB, RGBI_RGB } from './colors.js';
 
 export const IMAGE = 0x10000; // snapshot glyphs from here on are image cells
 export const PLACEHOLDER = 0x100000; // image cell `key` in the terminal
@@ -32,8 +33,30 @@ function addCell(bytes) {
   const key = nextKey;
   nextKey = (nextKey + 1) % KEYS;
   cells.set(bytes, key * CELL_BYTES);
+  parts[key] = undefined;
+  vdcCells[key] = undefined;
   return key;
 }
+
+// On the soft screens a placeholder is one column of a group of columns that shows whole bitmap cells (2
+// columns one cell at 80 columns, 4 columns three cells at 53): {data (9 bytes a cell), phase (its column
+// in the group), group (columns)}. Its cell in `cells` is the one the column starts in, for the other screens.
+const parts = new Array(KEYS);
+
+function addPart(data, phase, group) {
+  const c = Math.floor(phase * (data.length / CELL_BYTES) / group);
+  const key = addCell(data.subarray(c * CELL_BYTES, (c + 1) * CELL_BYTES));
+  parts[key] = { data, phase, group };
+  return key;
+}
+
+// The group image cell `key` is a column of (see addPart), or undefined.
+export const imagePart = key => parts[key];
+
+// On the C128: a cell's 8 rows of pixels and its colour (RGBI), drawn on the screen colour (see toVdcCells).
+// Its cell in `cells` is the nearest the C64 has, for the other screens.
+const vdcCells = new Array(KEYS);
+export const vdcCell = key => vdcCells[key];
 
 // The 9 bytes BITS sends for image cell `key`.
 export const imageCell = key => cells.subarray(key * CELL_BYTES, (key + 1) * CELL_BYTES);
@@ -146,10 +169,23 @@ export function decodePNG(buf) {
 // hi-res Doodle! and Art Studio, multicolour Koala Painter. All 320x200.
 const C64_FORMATS = [
   { name: 'Doodle', size: 9218, hires: true, bitmap: 1026, screen: 2 },
-  { name: 'Art Studio', size: 9009, hires: true, bitmap: 2, screen: 8002 },
+  { name: 'Art Studio', size: 9009, hires: true, bitmap: 2, screen: 8002, border: 9002 },
   { name: 'Art Studio', size: 9002, hires: true, bitmap: 2, screen: 8002 },
   { name: 'Koala', size: 10003, hires: false, bitmap: 2, screen: 8002, colram: 9002, bg: 10002 },
 ];
+
+// A hi-res picture's parts (Doodle! or Art Studio), as the VIC shows them in
+// hi-res bitmap mode: {bitmap, screen, bg (the border), hires: true}, or null.
+export function hiresPicture(buf) {
+  const f = C64_FORMATS.find(f => f.size === buf.length);
+  if (!f || !f.hires) return null;
+  return {
+    bitmap: buf.subarray(f.bitmap, f.bitmap + 8000),
+    screen: buf.subarray(f.screen, f.screen + 1000),
+    bg: f.border ? buf[f.border] & 15 : 0,
+    hires: true,
+  };
+}
 
 // A Koala Painter picture's parts, as the VIC shows them in multicolour
 // bitmap mode: {bitmap, screen, colram, bg}, or null for anything else.
@@ -327,7 +363,7 @@ function colours(img, max) {
 // ones, are `clear`. `order(x, y)` gives each pixel's place in the result.
 function flatPixels(img, list, w, h, cw, ch, ox, oy, order, clear) {
   const index = new Map(list.map((c, i) => [c, i]));
-  const px = new Int16Array(cw * ch).fill(clear);
+  const px = new Int32Array(cw * ch).fill(clear); // (a photo forced flat can have more than 32767 colours)
   for (let y = 0; y < h; y++) {
     const y0 = Math.floor(y * img.height / h), y1 = Math.max(y0 + 1, Math.floor((y + 1) * img.height / h));
     for (let x = 0; x < w; x++) {
@@ -424,9 +460,9 @@ function nearestIn(cost, s, set) {
 // How far point p[k..k+2] is from the dithered mixes of VIC colours i and j,
 // scoring a mix `spread` times its own spread, and where on the way it is
 // (t: 0 = i, 1 = j).
-function mix(p, k, i, j, spread) {
-  const [ar, ag, ab] = PAL_LAB[i];
-  const dr = PAL_LAB[j][0] - ar, dg = PAL_LAB[j][1] - ag, db = PAL_LAB[j][2] - ab;
+function mix(p, k, i, j, spread, labs = PAL_LAB) {
+  const [ar, ag, ab] = labs[i];
+  const dr = labs[j][0] - ar, dg = labs[j][1] - ag, db = labs[j][2] - ab;
   const len = dr * dr + dg * dg + db * db;
   const pr = p[k] - ar, pg = p[k + 1] - ag, pb = p[k + 2] - ab;
   let t = len ? (pr * dr + pg * dg + pb * db) / len : 0;
@@ -468,15 +504,16 @@ function ditheredCell(p) {
   return hiresCell([bi, bj], k => (mix(p, k * 3, bi, bj, MIX_HIRES).t > BAYER[k] ? 1 : 0));
 }
 
-// The image as `cols` x `rows` hi-res cells: {cols, rows, keys}. What's
-// left of the cells around it, and clear pixels, are `bg` (0xRRGGBB, a VIC
-// colour). args.type: flat or dither (see DITHER), else flat art isn't.
-export function toCells(img, args, maxCols, maxRows, bg) {
+// The image as `cols` x `rows` hi-res cells: {cols, rows, cells}, 9 bytes a
+// cell (CELL_BYTES). What's left of the cells around it, and clear pixels,
+// are `bg` (0xRRGGBB, a VIC colour). args.type: flat or dither (see DITHER),
+// else flat art isn't.
+export function hiresCells(img, args, maxCols, maxRows, bg) {
   const { w, h } = fitSize(img.width, img.height, args, Math.min(maxCols, MAX_COLS), Math.min(maxRows, MAX_ROWS));
   const cols = Math.ceil(w / 8), rows = Math.ceil(h / 8);
   const cw = cols * 8, ch = rows * 8, n = cols * rows;
-  const keys = new Uint32Array(n);
-  const dither = DITHER[args.type?.toLowerCase()];
+  const cells = new Uint8Array(n * CELL_BYTES);
+  const dither = DITHER[args.type?.toLowerCase().split(':').pop()];
   const list = dither ? null : colours(img, dither === false ? Infinity : FLAT_COLOURS);
 
   if (list) {
@@ -484,9 +521,9 @@ export function toCells(img, args, maxCols, maxRows, bg) {
     const px = flatPixels(img, list, w, h, cw, ch, 0, 0, hiresOrder(cols), list.indexOf(bg));
     const cost = flatCosts(list, px);
     flatCells(px, cost, n, 64, [], 2).forEach(({ colours: set }, i) => {
-      keys[i] = addCell(hiresCell(set, k => nearestIn(cost, px[i * 64 + k], set)));
+      cells.set(hiresCell(set, k => nearestIn(cost, px[i * 64 + k], set)), i * CELL_BYTES);
     });
-    return { cols, rows, keys };
+    return { cols, rows, cells };
   }
 
   const rgb = resample(img, w, h, cw, ch, bg);
@@ -496,7 +533,117 @@ export function toCells(img, args, maxCols, maxRows, bg) {
       for (let y = 0; y < 8; y++) {
         for (let x = 0; x < 8; x++) p.set(lab(rgbAt(rgb, ((cy * 8 + y) * cw + cx * 8 + x) * 3)), (y * 8 + x) * 3);
       }
-      keys[cy * cols + cx] = addCell(ditheredCell(p));
+      cells.set(ditheredCell(p), (cy * cols + cx) * CELL_BYTES);
+    }
+  }
+  return { cols, rows, cells };
+}
+
+// The same, each cell given a key (for the terminal's placeholders): {cols, rows, keys}.
+export function toCells(img, args, maxCols, maxRows, bg) {
+  const { cols, rows, cells } = hiresCells(img, args, maxCols, maxRows, bg);
+  const keys = new Uint32Array(cols * rows);
+  for (let i = 0; i < keys.length; i++) keys[i] = addCell(cells.subarray(i * CELL_BYTES, (i + 1) * CELL_BYTES));
+  return { cols, rows, keys };
+}
+
+// The image on a soft screen, `group` columns (2 or 4) showing `perGroup`
+// bitmap cells (1 or 3): {cols, rows, keys, group}, a key a column, the image
+// padded to whole groups with `bg` (a VIC colour index). `maxCols` is in
+// columns.
+export function toGroups(img, args, maxCols, maxRows, bg, group, perGroup) {
+  const { cols: w, rows, cells } = hiresCells(img, args, Math.floor(maxCols / group) * perGroup, maxRows, VIC_RGB[bg]);
+  const groups = Math.ceil(w / perGroup), cols = groups * group;
+  const keys = new Uint32Array(cols * rows);
+  for (let r = 0; r < rows; r++) {
+    for (let g = 0; g < groups; g++) {
+      const data = new Uint8Array(perGroup * CELL_BYTES);
+      for (let k = 0; k < perGroup; k++) {
+        const x = g * perGroup + k;
+        if (x < w) data.set(cells.subarray((r * w + x) * CELL_BYTES, (r * w + x + 1) * CELL_BYTES), k * CELL_BYTES);
+        else data[k * CELL_BYTES + 8] = bg << 4 | bg;
+      }
+      for (let p = 0; p < group; p++) keys[r * cols + g * group + p] = addPart(data, p, group);
+    }
+  }
+  return { cols, rows, keys, group };
+}
+
+// A picture as a full hi-res screen ({bitmap, screen, bg, hires: true}, as
+// Art Studio keeps one): as large as it fits, in the middle, on black.
+export function toHiresPicture(img, args = {}) {
+  const { cols, rows, cells } = hiresCells(img, args, 40, 25, VIC_RGB[0]);
+  const bitmap = new Uint8Array(8000), screen = new Uint8Array(1000);
+  const x0 = (40 - cols) >> 1, y0 = (25 - rows) >> 1;
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const c = cells.subarray((y * cols + x) * CELL_BYTES), at = (y0 + y) * 40 + x0 + x;
+      bitmap.set(c.subarray(0, 8), at * 8);
+      screen[at] = c[8];
+    }
+  }
+  return { bitmap, screen, bg: 0, hires: true };
+}
+
+// --- the C128's VDC --------------------------------------------------------------
+
+const RGBI_LAB = RGBI_RGB.map(lab);
+// Image cells a C128 image may have: each is a character of its own (but for blank and solid ones), and they
+// share the 383 the bridge can load with the extended glyphs on the screen (glyphcache.js).
+export const VDC_CELLS = 300;
+const MIX_VDC = 0.25;
+const nearestVic = rgb => { const q = lab(rgb); return PAL_LAB.reduce((b, p, c) => (dist2(p, q) < dist2(PAL_LAB[b], q) ? c : b), 0); };
+
+// The image twice as wide: the VDC's pixels are half as wide as they are tall.
+function stretch({ width, height, rgba }) {
+  const out = new Uint8Array(width * 2 * height * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const o = (y * width + x) * 4;
+      out.set(rgba.subarray(o, o + 4), (y * width * 2 + x * 2) * 4);
+      out.set(rgba.subarray(o, o + 4), (y * width * 2 + x * 2 + 1) * 4);
+    }
+  }
+  return { width: width * 2, height, rgba: out };
+}
+
+// The image as C128 cells: in each, the colour (an RGBI index) that comes closest with the screen colour `bg`
+// (the VDC has one background for the whole screen), and which pixels are it, ordered-dithered unless the image
+// is flat art (args.type: flat or dither, as for the C64). At most VDC_CELLS cells. {cols, rows, keys}.
+export function toVdcCells(img, args, maxCols, maxRows, bg) {
+  const wide = stretch(img);
+  let { w, h } = fitSize(wide.width, wide.height, args, maxCols, maxRows);
+  while (Math.ceil(w / 8) * Math.ceil(h / 8) > VDC_CELLS) { w = Math.max(1, Math.floor(w * 0.95)); h = Math.max(1, Math.floor(h * 0.95)); }
+  const cols = Math.ceil(w / 8), rows = Math.ceil(h / 8), cw = cols * 8;
+  const rgb = resample(wide, w, h, cw, rows * 8, RGBI_RGB[bg]);
+  const dither = DITHER[args.type?.toLowerCase()] ?? !colours(img, FLAT_COLOURS);
+  const keys = new Uint32Array(cols * rows);
+  const p = new Float32Array(192);
+  const bgVic = nearestVic(RGBI_RGB[bg]);
+  for (let cy = 0; cy < rows; cy++) {
+    for (let cx = 0; cx < cols; cx++) {
+      for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) p.set(lab(rgbAt(rgb, ((cy * 8 + y) * cw + cx * 8 + x) * 3)), (y * 8 + x) * 3);
+      }
+      let best = Infinity, fg = bg === 15 ? 0 : 15;
+      for (let c = 0; c < 16; c++) {
+        if (c === bg) continue;
+        let err = 0;
+        for (let k = 0; k < 192 && err < best; k += 3) {
+          err += dither ? mix(p, k, bg, c, MIX_VDC, RGBI_LAB).err
+            : Math.min(dist2(p.subarray(k, k + 3), RGBI_LAB[bg]), dist2(p.subarray(k, k + 3), RGBI_LAB[c]));
+        }
+        if (err < best) { best = err; fg = c; }
+      }
+      const bits = new Uint8Array(8);
+      for (let k = 0; k < 64; k++) {
+        const on = dither ? mix(p, k * 3, bg, fg, MIX_VDC, RGBI_LAB).t > BAYER[k]
+          : dist2(p.subarray(k * 3, k * 3 + 3), RGBI_LAB[fg]) < dist2(p.subarray(k * 3, k * 3 + 3), RGBI_LAB[bg]);
+        if (on) bits[k >> 3] |= 0x80 >> (k & 7);
+      }
+      const key = addCell([...bits, nearestVic(RGBI_RGB[fg]) << 4 | bgVic]);
+      vdcCells[key] = { bits, fg };
+      keys[cy * cols + cx] = key;
     }
   }
   return { cols, rows, keys };
@@ -660,18 +807,25 @@ export function toKoala(img, dither) {
   return list ? flatKoala(img, list) : ditheredKoala(img);
 }
 
-// The types (imgcat -t) that ask for a picture in multicolour, full screen,
-// and after a colon, how: flat (no dithering) or dither.
+// The types (imgcat -t, petty-view -t) that ask for a picture in multicolour
+// or hi-res, full screen, and after a colon, how: flat (no dithering) or dither.
 const MULTICOLOUR = new Set(['koala', 'multicolour', 'multicolor']);
+const HIRES = new Set(['hires', 'hi-res', 'art']);
 
-// What to show full screen in multicolour, instead of in the terminal: a
-// Koala picture, or any picture sent with -t koala (or multicolour, either
-// with :flat or :dither). Koala Painter data (see koala()), or null.
-export function multicolourPicture(file, args = {}) {
-  const pic = koala(file);
+// What to show full screen instead of in the terminal: Koala Painter data
+// (see koala()) or a hi-res picture (see hiresPicture()), or null. A Koala
+// picture always is, and any picture sent with -t koala (or multicolour,
+// either with :flat or :dither). petty-view (args.view) shows anything full
+// screen: Doodle! and Art Studio pictures as they are, others in multicolour
+// unless -t hires.
+export function fullScreenPicture(file, args = {}) {
+  const pic = koala(file) ?? (args.view ? hiresPicture(file) : null);
   if (pic) return pic;
   const [kind, how] = (args.type ?? '').toLowerCase().split(':');
-  return MULTICOLOUR.has(kind) ? toKoala(decodeImage(file), DITHER[how]) : null;
+  if (MULTICOLOUR.has(kind)) return toKoala(decodeImage(file), DITHER[how]);
+  if (!args.view) return null;
+  if (HIRES.has(kind)) return toHiresPicture(decodeImage(file), { type: how });
+  return toKoala(decodeImage(file), DITHER[kind] ?? DITHER[how]);
 }
 
 // --- the terminal side -------------------------------------------------------------
@@ -693,9 +847,11 @@ function writer(term) {
 
 // Places the image's placeholders at the cursor, like iTerm2: a row of cells
 // on each line, scrolling as needed, starting on the next line if it doesn't
-// fit on this one. The cursor ends after the last row.
-export function placeImage(term, { cols, rows, keys }) {
+// fit on this one. The cursor ends after the last row. An image in groups of
+// columns (toGroups) starts on a whole group.
+export function placeImage(term, { cols, rows, keys, group = 1 }) {
   const out = writer(term);
+  if (out.x % group) out.x += group - out.x % group;
   if (out.x + cols > term.cols) out.newline();
   const x = out.x;
   for (let r = 0; r < rows; r++) {
@@ -711,8 +867,10 @@ export function printText(term, s) {
 
 // iTerm2's image escapes (OSC 1337, the part after "1337;"): File=args:base64
 // in one, or MultipartFile=args, FilePart=base64..., FileEnd. `opts()` gives
-// {maxCols, maxRows, bg}, what the client can show. `fullScreen(file, args)`
-// may show a file itself, away from the terminal (see multicolourPicture),
+// {maxCols, maxRows, bg, group, perGroup, vdcBg}, what the client can show
+// (group: the soft screens, see toGroups; bg is then a VIC colour index, else
+// RGB. vdcBg: the C128, its screen colour, see toVdcCells). `fullScreen(file, args)`
+// may show a file itself, away from the terminal (see fullScreenPicture),
 // and returns true if it does. Returns false for other OSC 1337 commands.
 export class InlineImages {
   constructor(term, opts, log = () => {}, fullScreen = () => false) {
@@ -750,8 +908,9 @@ export class InlineImages {
         return;
       }
       const img = decodeImage(file);
-      const { maxCols, maxRows, bg } = this.opts();
-      const cells = toCells(img, args, maxCols, maxRows, bg);
+      const { maxCols, maxRows, bg, group, perGroup, vdcBg } = this.opts();
+      const cells = vdcBg !== undefined ? toVdcCells(img, args, maxCols, maxRows, vdcBg)
+        : group ? toGroups(img, args, maxCols, maxRows, bg, group, perGroup) : toCells(img, args, maxCols, maxRows, bg);
       placeImage(this.term, cells);
       this.log(`image ${name}${img.format ? ` (${img.format})` : ''}: ${img.width}x${img.height} as ${cells.cols}x${cells.rows} cells`);
     } catch (e) {

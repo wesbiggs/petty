@@ -1,16 +1,17 @@
 #!/bin/sh
 # imgcat: show pictures as iTerm2 inline images (OSC 1337), for hosts
 # without iTerm2's own imgcat. The bridge puts this at the end of the PATH
-# of the program it runs, so a real imgcat comes first. It draws the files
-# in the hi-res C64's bitmap: PNG, or the C64's own Koala Painter, Doodle!
-# and Art Studio pictures. The options are a subset of iTerm2's imgcat.
+# of the program it runs, so a real imgcat comes first. The bridge draws the
+# files in pixels (as blocks on the C64's text screen): PNG, or the C64's own
+# Koala Painter, Doodle! and Art Studio pictures. The options are a subset of
+# iTerm2's imgcat. (petty-view shows a picture full screen.)
 #
 # usage: imgcat [-W width] [-H height] [-s] [-t type] file...
 #   -W, -H  N (cells), Npx, N% or auto (default: the picture's own size,
 #           shrunk to fit the screen)
 #   -s      stretch to -W x -H instead of keeping the aspect ratio
 #   -t      a type hint: koala (or multicolour) shows the picture full screen
-#           in multicolour on the hi-res C64, until a key is pressed;
+#           in multicolour on a C64 client, until a key is pressed;
 #           koala:flat or koala:dither says whether to dither it, and flat or
 #           dither alone does for a picture shown in the terminal
 

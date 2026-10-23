@@ -1,10 +1,10 @@
 // Convert the headless xterm's visible buffer into screen codes + colours
 // (C64 colour numbers, or VDC attributes on a C128).
 
-import { DISPLAY, VDC, HIRES_UNDERLINE } from './protocol.js';
+import { DISPLAY, VDC, HIRES_UNDERLINE, GAME_SPRITE } from './protocol.js';
 import { toScreenCode, INVERSE, SPACE } from './glyphs.js';
 import { palette, VIC_RGB } from './colors.js';
-import { IMAGE, imageCell, imageKey, imageShade } from './image.js';
+import { IMAGE, imageCell, imageKey, imagePart, imageShade, vdcCell } from './image.js';
 import { shareColours } from './soft80.js';
 import { FONT4 } from './font4x8.js';
 import { EXT, EXT_GLYPHS, extendedGlyph } from './extglyphs.js';
@@ -52,11 +52,14 @@ export function cursorVisible(term) {
 // terminal column and row shown, for terminals larger than the display.
 // On an `ext` display, glyphs from EXT up are extended glyphs (see
 // glyphcache.js). On a `hires` display, colours are foreground << 4 |
-// background, and inline images are glyphs from IMAGE up (image.js); other
-// displays show an image as blocks of its colours. On a display with `pair`
-// or `quad` cells, the result also has `sprites` (see soft80.js).
+// background, and inline images are glyphs from IMAGE up (image.js), as they
+// are on the soft screens (where they line up); other displays show an image
+// as blocks of its colours. On a display with `pair`
+// or `quad` cells, the result also has `sprites` (see soft80.js): the hardware sprites
+// that repaint colours, in the numbers the game's sprites (bit n of `gameSprites`, game.js)
+// leave free, and GAME_SPRITE in the others.
 // `own`: characters --charset gave codes of their own on this display (charset.js charsFor).
-export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', panY = 0, own = null) {
+export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', panY = 0, own = null, gameSprites = 0) {
   const { cols, rows } = display;
   const pal = paletteFor(display, theme);
   const glyph = new Int32Array(cols * rows);
@@ -75,9 +78,20 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', 
 
       const key = imageKey(cell.getCode());
       if (key >= 0) {
+        // On the soft screens, a column of a group of cells (image.js toGroups) that lines up with the screen's.
+        const part = imagePart(key), group = display.quad ? 4 : display.pair ? 2 : 0, start = x - (part?.phase ?? 0);
         if (display.hires) {
           glyph[i] = IMAGE + key;
           color[i] = imageCell(key)[8];
+        } else if (group && part?.group === group && start >= 0 && start % group === 0 && start + group <= Math.floor(cols / group) * group) {
+          glyph[i] = IMAGE + key;
+          color[i] = imageCell(key)[8];
+        } else if (display.reverse && vdcCell(key)) {
+          // The C128: a character of its own (glyphcache.js), but for blank and solid cells.
+          const { bits, fg } = vdcCell(key);
+          const solid = bits.every(b => b === 0xFF);
+          glyph[i] = solid || bits.every(b => b === 0) ? SPACE : IMAGE + key;
+          color[i] = solid ? fg | VDC.RVS : fg;
         } else {
           // A block of the colour covering more of the cell: an inverse space.
           const c = pal.bg('rgb', VIC_RGB[imageShade(key)]);
@@ -131,16 +145,21 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', 
         inv = !inv;
         fg = bg;
       }
-      const c = cell.isUnderline() ? fg | pal.underline : fg;
+      // Underline: the C128's attribute bit, or (the soft screens) bit 8, sent with UNDERLINE.
+      const c = cell.isUnderline() ? fg | (display.underline ? HIRES_UNDERLINE : pal.underline) : fg;
       // The VDC inverts a cell with an attribute; the C64 needs an inverse glyph.
       glyph[i] = display.reverse || !inv ? g : g | INVERSE;
       color[i] = display.reverse && inv ? c | VDC.RVS : c;
     }
   }
-  const screen = { cols, rows, glyph, color, hires: !!display.hires, move: !!display.game };
+  // MOVE on the soft screens moves whole groups of columns (the cells that share a colour).
+  const screen = { cols, rows, glyph, color, hires: !!display.hires, underline: !!display.underline, move: !!display.game, group: display.quad ? 4 : display.pair ? 2 : 1 };
   if (display.pair || display.quad) {
     const focus = cursorRow >= 0 && cursorRow < rows ? cursorRow : rows - 1;
-    screen.sprites = shareColours(screen, focus, display.quad ? 6 : 4);
+    const free = [...Array(8).keys()].filter(n => !(gameSprites >> n & 1));
+    const repairs = shareColours(screen, focus, display.quad ? 6 : 4, free.length);
+    screen.sprites = Array.from({ length: 8 }, () => GAME_SPRITE);
+    free.forEach((n, k) => { screen.sprites[n] = repairs[k] ?? null; });
   }
   return screen;
 }

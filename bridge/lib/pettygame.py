@@ -14,7 +14,7 @@ This module just prints them. See bridge/src/game.js for the whole story.
     s.loop()
     pg.sid_def(1, s); pg.sid_play(0, 1, voices="1+2+vol")
 
-Positions are pixels of the 320x200 text screen. Needs the C64 text client.
+Positions are pixels of the 320x200 screen. Needs the C64 client (any of its screens).
 """
 import base64
 import sys

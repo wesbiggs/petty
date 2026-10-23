@@ -1,9 +1,10 @@
-// Runs the C64 text client (build/petty.prg; --hires: build/pettyhires.prg) in VICE and checks what the game
+// Runs the C64 client (build/petty.prg) in VICE, switched with MODE to one of its screens (--display c64,
+// c64-hires, c64-80 or c64-53), and checks what the game
 // hardware commands (sprites, glides, MOVE, SID scripts: protocol.js) do to the
 // emulated machine, through VICE's remote monitor. This script is the bridge:
-// VICE's SwiftLink dials it. Needs x64sc; opens a VICE window.
+// VICE's SwiftLink dials it. Needs x64sc.
 //
-// usage: node scripts/vice-game-check.js [--hires] [--keep] [prg]
+// usage: node scripts/vice-game-check.js [--display KEY] [--keep] [prg]
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, copyFileSync, rmSync, existsSync } from 'node:fs';
@@ -15,10 +16,16 @@ import assert from 'node:assert/strict';
 import { MSG, OP, Decoder, encodeSprDef, encodeSpr, encodeGlide, encodeMove, encodeSidW, encodeSidPlay, encodeSidStop, encodePoke, DISPLAY } from '../src/protocol.js';
 import { compileScript, SCRIPT_BASE } from '../src/game.js';
 
-const { values: opt, positionals } = parseArgs({ allowPositionals: true, options: { keep: { type: 'boolean', default: false }, hires: { type: 'boolean', default: false } } });
-const prg = resolve(positionals[0] ?? fileURLToPath(new URL(`../../build/${opt.hires ? 'pettyhires' : 'petty'}.prg`, import.meta.url)));
-// Where the client keeps what: shapes, their pointers (and the number of shape 0's), the screen, the VIC's bank.
-const L = opt.hires ? { blocks: 0x4800, ptrs: 0x5FF8, ptr0: 0x20 } : { blocks: 0x2000, ptrs: 0x07F8, ptr0: 0x80 };
+const { values: opt, positionals } = parseArgs({ allowPositionals: true, options: { keep: { type: 'boolean', default: false }, display: { type: 'string', default: 'c64' } } });
+const D = Object.values(DISPLAY).find(d => d.key === opt.display);
+if (!D || !D.game) { console.error(`--display ${opt.display}: c64, c64-hires, c64-80 or c64-53`); process.exit(2); }
+const prg = resolve(positionals[0] ?? fileURLToPath(new URL('../../build/petty.prg', import.meta.url)));
+const bitmap = D !== DISPLAY.C64; // the hi-res, soft 80 and soft 53 screens
+const group = D.quad ? 4 : D.pair ? 2 : 1; // columns a MOVE moves together; cells a group holds: 1, 1, 3
+const groupCells = D.quad ? 3 : 1;
+// Where the client keeps what: shapes, their pointers (and the number of shape 0's), the text screen, all in the
+// VIC's second bank.
+const L = { blocks: 0x4800, ptrs: 0x5FF8, ptr0: 0x20, screen: 0x5C00 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.error('[vice-check]', ...a);
 const freePort = () => new Promise((ok, fail) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => ok(port)); }).on('error', fail); });
@@ -95,17 +102,18 @@ async function check(name, fn) {
 }
 
 try {
-  if (opt.hires) {
-    await waitFor(() => take(MSG.HELLO_ON), 'HELLO_ON from the client', 60000);
-    await waitFor(() => take(DISPLAY.C64_HIRES.id), 'its display');
-  } else {
-    await waitFor(() => take(MSG.HELLO), 'HELLO from the client', 60000);
-  }
+  await waitFor(() => take(MSG.HELLO_ON), 'HELLO_ON from the client', 60000);
+  await waitFor(() => take(MSG.MODES), 'MODES');
+  await sleep(300);
+  rx.length = 0;
+  sock.write(Buffer.from([OP.MODE, D.id]));
+  await waitFor(() => rx.length >= 4, 'HELLO_ON after MODE');
+  assert.deepEqual(rx.splice(0, 4), [MSG.HELLO_ON, D.id, MSG.MODES, 0x9D]);
   log('client is up');
   await sleep(500);
 
   // The reference: what the bridge's decoder says the screen should be.
-  const ref = new Decoder();
+  const ref = new Decoder(D.cols, D.rows);
   const send = async bytes => { ref.feed([...bytes, OP.FRAME]); await frame(bytes); };
 
   await check('sprite shape, position and colour', async () => {
@@ -142,6 +150,17 @@ try {
     assert.equal(io[0x15] & 2, 2, 'sprite 1 unaffected');
   });
 
+  if (D.pair || D.quad) await check('a colour-repair sprite after the game\'s: its own block, plain, in front', async () => {
+    await send(encodeSpr(2, 0, 1, 2 | 4 | 8 | 16 | 32, 50, 60));
+    await frame([OP.SPRITE, 2, 10, 3, 7, ...new Array(63).fill(0x55)]);
+    const { io, ram } = await machine();
+    assert.equal(ram[L.ptrs + 2], (0x5800 - 0x4000) / 64 + 2, 'pointer to its block at $5800');
+    for (const reg of [0x1C, 0x1D, 0x17, 0x1B]) assert.equal(io[reg] & 4, 0, `register ${reg.toString(16)} cleared`);
+    assert.equal(io[0x15] & 4, 4, 'enabled');
+    assert.equal(io[0x29] & 15, 7, 'colour');
+    await frame([OP.NOSPRITE, 2]);
+  });
+
   await check('glide: right across x = 256, with the done message', async () => {
     await send(encodeSpr(1, 3, 5, 2, 240, 100));
     sock.write(Buffer.from([...encodeGlide(1, 10, 3, -2), OP.FRAME]));
@@ -175,12 +194,48 @@ try {
     assert.ok(!rx.includes(MSG.GLIDE), 'only one message');
   });
 
-  await check('MOVE: random rectangles and shifts, as the decoder does them', async () => {
+  if (D.pair || D.quad) await check('MOVE: random rectangles and shifts of whole groups, as cells of the bitmap', async () => {
+    // A screen of distinct codes and colours first, then MOVEs, done to the bitmap as it was: cells (8 bytes and a
+    // colour) of a group move together.
+    const fill = [];
+    for (let y = 0; y < 25; y++) {
+      fill.push(OP.GOTO, y, 0);
+      for (let x = 0; x < D.cols; x++) fill.push(OP.COLOR, (x + y) & 15, OP.PUT, 1, 33 + (x * 3 + y * 7) % 90);
+    }
+    await send(fill);
+    const before = await machine();
+    const bits = [...before.ram.subarray(0x6000, 0x6000 + 8000)], cols = [...before.ram.subarray(0x5C00, 0x5C00 + 1000)];
+    const groups = Math.floor(D.cols / group); // whole groups in a row
+    let seed = 7;
+    const rnd = n => (seed = (seed * 1103515245 + 12345) & 0x7fffffff, (seed >> 8) % n);
+    for (let k = 0; k < 40; k++) {
+      const w = 1 + rnd(Math.min(15, groups)), h = 1 + rnd(20), x = rnd(groups + 1 - w), y = rnd(26 - h);
+      const dx = rnd(2 * Math.min(4, groups - w) + 1) - Math.min(4, groups - w), dy = rnd(2 * Math.min(6, 25 - h) + 1) - Math.min(6, 25 - h);
+      if (x + dx < 0 || x + dx + w > groups || y + dy < 0 || y + dy + h > 25) { k--; continue; }
+      await frame(encodeMove(x * group, y, w * group, h, dx * group, dy));
+      const cx = x * groupCells, cw = w * groupCells, cdx = dx * groupCells;
+      const old = { bits: bits.slice(), cols: cols.slice() };
+      for (let r = 0; r < h; r++) {
+        for (let c = 0; c < cw; c++) {
+          const from = (y + r) * 40 + cx + c, to = (y + r + dy) * 40 + cx + c + cdx;
+          for (let b = 0; b < 8; b++) bits[to * 8 + b] = old.bits[from * 8 + b];
+          cols[to] = old.cols[from];
+        }
+      }
+    }
+    const { ram } = await machine();
+    for (let i = 0; i < 1000; i++) {
+      for (let b = 0; b < 8; b++) assert.equal(ram[0x6000 + i * 8 + b], bits[i * 8 + b], `bitmap byte ${b} of cell ${i}`);
+      assert.equal(ram[0x5C00 + i], cols[i], `colour of cell ${i}`);
+    }
+  });
+
+  if (!D.pair && !D.quad) await check('MOVE: random rectangles and shifts, as the decoder does them', async () => {
     // A screen of distinct codes and colours first.
     const fill = [OP.GOTO, 0, 0];
     for (let y = 0; y < 25; y++) {
       fill.push(OP.GOTO, y, 0);
-      for (let x = 0; x < 40; x++) fill.push(OP.COLOR, opt.hires ? (x * 16 + y * 5 + 1) & 255 : (x + y) & 15, OP.PUT, 1, 33 + (x * 3 + y * 7) % 90);
+      for (let x = 0; x < 40; x++) fill.push(OP.COLOR, bitmap ? (x * 16 + y * 5 + 1) & 255 : (x + y) & 15, OP.PUT, 1, 33 + (x * 3 + y * 7) % 90);
     }
     await send(fill);
     let seed = 7;
@@ -193,18 +248,18 @@ try {
     }
     const { io, ram } = await machine();
     for (let i = 0; i < 1000; i++) {
-      if (opt.hires) { // a cell is its glyph's 8 font bytes in the bitmap, and a colour byte
+      if (bitmap) { // a cell is its glyph's 8 font bytes in the bitmap, and a colour byte
         for (let r = 0; r < 8; r++) assert.equal(ram[0x6000 + i * 8 + r], ram[0x4000 + r * 256 + ref.glyph[i]], `bitmap row ${r} of cell ${i}`);
         assert.equal(ram[0x5C00 + i], ref.color[i], `colour at ${i}`);
       } else {
-        assert.equal(ram[0x400 + i], ref.glyph[i], `screen code at ${i}`);
+        assert.equal(ram[L.screen + i], ref.glyph[i], `screen code at ${i}`);
         assert.equal(io[0x800 + i] & 15, ref.color[i], `colour at ${i}`);
       }
     }
   });
 
   await check('MOVE: a rectangle off the screen does nothing', async () => {
-    const area = ram => opt.hires ? ram.subarray(0x6000, 0x6000 + 8000) : ram.subarray(0x400, 0x400 + 1000);
+    const area = ram => bitmap ? ram.subarray(0x6000, 0x6000 + 8000) : ram.subarray(L.screen, L.screen + 1000);
     const before = area((await machine()).ram).slice();
     await frame(encodeMove(30, 0, 10, 5, 5, 0)); // not sent to the reference: it does nothing
     await frame(encodeMove(0, 20, 5, 6, 0, 0));

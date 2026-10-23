@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import pty from 'node-pty';
 import xterm from '@xterm/headless';
-import { DISPLAY, MSG, OP, VIEW, displayById, displayReport, encodeFrame, encodeReset, encodePicture } from './protocol.js';
+import { DISPLAY, MSG, OP, VIEW, MODE_ORDER, displayById, displayReport, encodeFrame, encodeReset, encodePicture, parseMode, pickDisplay } from './protocol.js';
 import { loadLut } from './sound/lut.js';
 import { SoundManager } from './sound/manager.js';
 import { classifyRegion } from './sound/probe.js';
@@ -27,7 +27,7 @@ import { THEME_NAMES, stepTheme, oscReply } from './colors.js';
 import { keyToBytes, MATRIX } from './keymap.js';
 import { GlyphCache } from './glyphcache.js';
 import { openSerial } from './serial.js';
-import { InlineImages, multicolourPicture } from './image.js';
+import { InlineImages, fullScreenPicture } from './image.js';
 import { GameHardware } from './game.js';
 
 const { values: opt, positionals } = parseArgs({
@@ -37,6 +37,7 @@ const { values: opt, positionals } = parseArgs({
     host: { type: 'string', default: '127.0.0.1' },
     fps: { type: 'string', default: '20' },
     theme: { type: 'string', default: 'dark' },
+    mode: { type: 'string' },
     control: { type: 'string' },
     serial: { type: 'string' },
     baud: { type: 'string', default: '38400' },
@@ -62,6 +63,11 @@ const { values: opt, positionals } = parseArgs({
 
 if (!THEME_NAMES.includes(opt.theme)) {
   console.error(`[bridge] unknown theme ${opt.theme}: use ${THEME_NAMES.join(', ')}`);
+  process.exit(1);
+}
+
+if (opt.mode !== undefined && !parseMode(opt.mode)) {
+  console.error(`[bridge] --mode ${opt.mode}: use display keys (${MODE_ORDER.map(d => d.key).join(', ')}), flags or a number of columns`);
   process.exit(1);
 }
 
@@ -95,6 +101,7 @@ const CONTROL_PORT = Number(opt.control ?? Number(opt.port) + 1);
 const FRAME_MS = 1000 / Number(opt.fps);
 const SCROLL_LINES = Number(opt.scroll); // per C=+CRSR press, in the bridge's scrollback
 const ACK_TIMEOUT_MS = 5000;
+const MODES_WAIT_MS = 250; // after HELLO_ON, for the MODES that may follow it before a program is told the display
 const SERIAL_RETRY_MS = 2000;
 const SYNC_MAX_MS = 250; // don't wait forever on synchronized output
 const TITLE_MS = 4000; // how long the start screen shows, unless a key is pressed
@@ -121,7 +128,7 @@ try { soundLut = loadLut(opt['sound-lut']); } catch (e) { console.error(`[bridge
 const soundOn = opt.sound !== 'off';
 if (!['on', 'off'].includes(opt.sound)) { console.error('[bridge] --sound on or off'); process.exit(1); }
 
-// --charset FILE: glyphs for the C64 text and hi-res clients (charset.js), sent after each of its resets.
+// --charset FILE: glyphs for the C64's text and hi-res screens (charset.js), sent after each of its resets.
 let charset = null;
 if (opt.charset) {
   try { charset = loadCharset(opt.charset); } catch (e) { console.error(`[bridge] ${e.message}`); process.exit(1); }
@@ -160,6 +167,10 @@ class Session {
     this.panY = 0;
     // Changed by C=+F1 or the control port (scripts/petty-ctl.js).
     this.theme = opt.theme;
+    // The display wanted on a client that can switch (MODES), as parseMode's { keys, flags, cols }: the user's
+    // (--mode, C=+F3, the control port), and a program's (OSC 8350 mode), which wins until it says `restore` or
+    // exits. `base` is the display the program found, to go back to when the user hasn't chosen one.
+    this.mode = { user: opt.mode ? parseMode(opt.mode) : null, program: null, base: null };
     this.term = new xterm.Terminal({ cols: this.termCols(), rows: this.termRows(), scrollback: 200, allowProposedApi: true });
     wideEmoji(this.term);
     const { term } = this;
@@ -176,15 +187,20 @@ class Session {
       });
     }
     term.onWriteParsed(() => { this.dirty = true; });
-    // Inline images (imgcat): drawn on the hi-res screen, as blocks
-    // on the others. Transparency shows the theme's screen colour. On the
-    // hi-res screen, a Koala picture (or any, with imgcat -t koala) shows full
-    // screen, in multicolour, until a key is pressed.
+    // Inline images (imgcat): drawn in pixels on the hi-res, soft and C128
+    // screens, as blocks on the C64 text one. Transparency shows the theme's
+    // screen colour. On the C64
+    // clients a Koala picture (or any, with imgcat -t koala), and anything
+    // petty-view sends, shows full screen until a key is pressed.
     this.images = new InlineImages(term, () => {
-      const vic = paletteFor(DISPLAY.C64_HIRES, this.theme);
-      return { maxCols: this.display.cols, maxRows: this.display.rows, bg: vic.rgb[vic.screenBg] };
+      const vic = paletteFor(DISPLAY.C64_HIRES, this.theme), d = this.display;
+      // The soft screens: in groups of columns that show whole bitmap cells, padded with the screen colour.
+      if (d.pair || d.quad) return { maxCols: d.cols, maxRows: d.rows, bg: vic.screenBg, group: d.quad ? 4 : 2, perGroup: d.quad ? 3 : 1 };
+      // The C128: characters in one colour each on the screen colour.
+      if (d.reverse) return { maxCols: d.cols, maxRows: d.rows, vdcBg: paletteFor(d, this.theme).screenBg };
+      return { maxCols: d.cols, maxRows: d.rows, bg: vic.rgb[vic.screenBg] };
     }, this.log, (file, args) => {
-      const pic = this.display.hires && this.conn && multicolourPicture(file, args);
+      const pic = this.display.picture && this.conn && fullScreenPicture(file, args);
       if (pic) this.conn.showPicture(pic);
       return !!pic;
     });
@@ -214,10 +230,26 @@ class Session {
     // OSC 8350: a program asks what it is drawing on. `display` is answered with `ESC ] 8350 ; display ; KEY;COLS;ROWS;FLAGS BEL`
     // (protocol.js displayReport), once the client has said HELLO: so a question asked as the program starts is answered
     // a moment later, when the client arrives, and not with a guess.
+    // `mode ; SPEC` asks for a display (parseMode) and is answered the same way, once the client is on it (or on
+    // the nearest it could manage). `mode ; restore` takes the request back, unanswered: it is sent on the way out.
     term.parser.registerOscHandler(8350, data => {
-      if (data !== 'display') return false;
-      if (this.conn?.hello) this.answerDisplay();
-      else this.displayAsked = true;
+      const spec = /^mode;(.*)$/s.exec(data)?.[1];
+      if (data !== 'display' && spec === undefined) return false;
+      if (spec === 'restore') {
+        this.mode.program = null;
+        this.dirty = true;
+        return true;
+      }
+      if (spec !== undefined) {
+        const need = parseMode(spec);
+        if (!need) this.log(`a program asked for mode ${JSON.stringify(spec)}: no such display, flag or width`);
+        else {
+          if (!this.mode.program && !this.mode.user) this.mode.base = { keys: [this.display.key], flags: [], cols: 0 };
+          this.mode.program = need;
+        }
+      }
+      this.displayAsked = true; // answered by tick, when the display is settled
+      this.dirty = true;
       return true;
     });
     sessions.add(this);
@@ -226,6 +258,36 @@ class Session {
   answerDisplay() {
     this.displayAsked = false;
     this.proc?.write(`\x1b]8350;display;${displayReport(this.display)}\x07`);
+  }
+
+  // The display the client should switch to, or null to stay. Undefined while that can't be told yet (just after
+  // HELLO_ON, before its MODES).
+  wantedDisplay() {
+    const modes = this.conn?.modes;
+    if (modes === undefined) return undefined;
+    const need = this.mode.program ?? this.mode.user ?? this.mode.base;
+    const d = need && modes.size > 1 && pickDisplay(need, modes, this.display);
+    return d && d !== this.display ? d : null;
+  }
+
+  // The switchable client's displays, in MODE_ORDER.
+  modeList() {
+    const modes = this.conn?.modes;
+    return MODE_ORDER.filter(d => modes?.has(d.id));
+  }
+
+  // The user picks the display (C=+F3, the control port): a program's request ends with it.
+  setMode(need) {
+    this.mode.user = need;
+    this.mode.program = null;
+    this.dirty = true;
+  }
+
+  stepMode(step) {
+    const list = this.modeList();
+    if (list.length < 2) return;
+    const i = list.indexOf(this.display);
+    this.setMode({ keys: [list[(i + step + list.length) % list.length].key], flags: [], cols: 0 });
   }
 
   // A terminal wider (--cols) or taller (--rows) than the display is shown
@@ -274,6 +336,7 @@ class Session {
     clearTimeout(this.holding);
     this.holding = null;
     this.started = true;
+    this.mode.program = this.mode.base = null; // the last program's request
     // reset() leaves the cursor hidden if it was (by the start screen, or a
     // program that exited without showing it).
     this.term.reset();
@@ -303,6 +366,7 @@ class Session {
       if (this.destroyed || this.proc !== proc) return;
       this.log(`${cmd} exited (${exitCode})`);
       this.proc = null;
+      this.mode.program = null;
       if (opt['on-exit'] === 'close') {
         this.closeWhenIdle = true;
         this.dirty = true;
@@ -353,8 +417,12 @@ class Session {
       return;
     }
     if (!conn.verified) return; // nothing goes out until the client has said HELLO
+    if (conn.switching) return; // until the client says HELLO_ON on its new display
+    const want = this.wantedDisplay();
+    if (this.displayAsked && conn.hello && want === null) this.answerDisplay();
     if (conn.inFlight || conn.sound) return; // a sound holds the screen
     if (conn.picture) return conn.sendPicture();
+    if (want) return conn.switchTo(want);
     if (!this.dirty) {
       if (this.closeWhenIdle) conn.sock.end(); // the program's last screen is out
       return;
@@ -386,6 +454,11 @@ class Connection {
     this.restore = false; // back from a picture: switch to the terminal screen
     this.since = Date.now();
     this.lastKey = Date.now(); // for --idle-timeout
+    this.modes = undefined; // ids of the displays the client can switch to (MODES); undefined = not known yet
+    this.modesTimer = null;
+    this.switching = null; // the display a MODE asked for, until the client's HELLO_ON
+    this.switchTimer = null;
+    this.unswitchable = new Set(); // displays a MODE was sent for and never came: not asked again
     this.hasSound = false; // the client can play sound (its display says so)
     this.region = null; // PAL or NTSC, from PROBE
     this.sound = null; // while a sound plays: { credits, onCredit, end }; the screen waits
@@ -400,6 +473,8 @@ class Connection {
 
   close(why) {
     clearTimeout(this.ackTimer);
+    clearTimeout(this.modesTimer);
+    clearTimeout(this.switchTimer);
     // Also for a connection that a newer one replaced: a sound playing on it, or a frame awaited,
     // would otherwise wait for ever, and hold the session's sound queue with it.
     this.sound?.end?.('closed');
@@ -447,6 +522,14 @@ class Connection {
         const [, lo, hi] = this.rx.splice(0, 3);
         this.region = classifyRegion(lo | hi << 8);
         s.log(`C64 is ${this.region.name} (${lo | hi << 8} cycles a frame)`);
+      } else if (type === MSG.MODES) {
+        if (this.rx.length < 2) return;
+        const [, mask] = this.rx.splice(0, 2);
+        clearTimeout(this.modesTimer);
+        this.modes = new Set([s.display.id]);
+        for (const d of MODE_ORDER) if (mask & 1 << d.id && !this.unswitchable.has(d.id)) this.modes.add(d.id);
+        s.debug(`can switch to ${s.modeList().map(d => d.key).join(', ')}`);
+        s.dirty = true;
       } else if (type === MSG.HELLO || type === MSG.HELLO_ON) {
         if (type === MSG.HELLO_ON && this.rx.length < 2) return;
         const [, id = DISPLAY.C64.id] = this.rx.splice(0, type === MSG.HELLO ? 1 : 2);
@@ -455,7 +538,13 @@ class Connection {
         s.log(`${(d ?? DISPLAY.C64).name} says hello`);
         s.setDisplay(d ?? DISPLAY.C64);
         this.hello = true;
-        if (s.displayAsked) s.answerDisplay(); // OSC 8350, asked before the client arrived
+        // A client that can switch says so next (MODES); one that doesn't, can't. HELLO can't be followed by it.
+        clearTimeout(this.switchTimer);
+        clearTimeout(this.modesTimer);
+        this.switching = null;
+        this.modes = undefined;
+        if (type === MSG.HELLO) this.modes = new Set([s.display.id]);
+        else this.modesTimer = setTimeout(() => { this.modes ??= new Set([s.display.id]); s.dirty = true; }, MODES_WAIT_MS);
         this.sound?.end?.('closed'); // the client restarted
         s.game.invalidate(); // with nothing in it: say all of it again (after display is set)
         this.hasSound = soundOn && !!s.display.sound;
@@ -515,6 +604,10 @@ class Connection {
       s.setTheme(stepTheme(s.theme, bytes.theme));
       return;
     }
+    if (bytes.mode) {
+      s.stepMode(bytes.mode);
+      return;
+    }
     if (bytes.scroll) {
       term.scrollLines(bytes.scroll * SCROLL_LINES);
       s.dirty = true;
@@ -544,7 +637,7 @@ class Connection {
   sendFrame() {
     const { s } = this;
     const { display } = s;
-    const want = snapshot(s.term, s.panX, display, s.theme, s.panY, s.own);
+    const want = snapshot(s.term, s.panX, display, s.theme, s.panY, s.own, display.game ? s.game.spriteMask() : 0);
     want.move &&= s.game.used; // MOVE, for a program that is a game (the search for one costs a little)
     const reset = !this.state;
     const pal = paletteFor(display, s.theme);
@@ -553,7 +646,7 @@ class Connection {
       ? new GlyphCache(display, charset && reservedSlots(charset, display), charset && extRedraws(charset, display)) : null;
     const glyphs = this.glyphs?.place(want, this.state) ?? [];
     const colour = display.hires ? pal.defaultFg << 4 | pal.screenBg : pal.defaultFg;
-    const budget = display.hires ? IMAGE_FRAME_BYTES : Infinity;
+    const budget = display.images ? IMAGE_FRAME_BYTES : Infinity;
     let { bytes, state, partial } = this.state
       ? encodeFrame(this.state, want, budget)
       : encodeReset(want, pal.border, pal.screenBg, colour, budget);
@@ -578,9 +671,29 @@ class Connection {
   // C64 is free to take them.
   flushGame() {
     const { s } = this;
-    if (this.inFlight || this.sound || this.picture || !s.display.game) return;
+    if (this.inFlight || this.sound || this.picture || this.switching || !s.display.game) return;
     const pre = s.game.takePre();
     if (pre.length) this.send([...pre, OP.FRAME]);
+  }
+
+  // Asks the client to switch to display d (no frame is in flight). It answers HELLO_ON d; if it doesn't, it
+  // is left where it is (and redrawn: it may have started switching), and not asked for d again.
+  switchTo(d) {
+    const { s } = this;
+    s.log(`switching to ${d.name}`);
+    this.switching = d;
+    this.sock.write(Buffer.from([OP.MODE, d.id]));
+    this.bytesSent += 2;
+    this.switchTimer = setTimeout(() => {
+      s.log(`no HELLO_ON from ${d.name} - staying on ${s.display.name}`);
+      this.switching = null;
+      this.unswitchable.add(d.id);
+      this.modes?.delete(d.id);
+      this.state = null;
+      this.resync = true;
+      s.game.invalidate();
+      s.dirty = true;
+    }, ACK_TIMEOUT_MS);
   }
 
   // A Koala picture ({bitmap, screen, colram, bg}), full screen until a key
@@ -612,9 +725,9 @@ class Connection {
     });
   }
 
-  // Resolves when no frame is in flight.
+  // Resolves when no frame is in flight (nor a switch of display).
   async idle() {
-    while (this.inFlight && !this.sock.destroyed) await new Promise(r => setTimeout(r, 10));
+    while ((this.inFlight || this.switching) && !this.sock.destroyed) await new Promise(r => setTimeout(r, 10));
   }
 
   send(bytes) {
@@ -710,6 +823,27 @@ function control(line) {
   if (cmd === 'say') return session.sound.add({ text: rest.join(' ') }), 'queued';
   if (cmd === 'play') return session.sound.add({ path: rest.join(' ') }), 'queued';
   if (cmd === 'kick') return session.destroy(), 'ended';
+  if (cmd === 'mode') {
+    const list = () => session.modeList().length > 1 ? `can switch to: ${session.modeList().map(d => d.key).join(', ')}` : "can't switch";
+    if (!arg) return `${session.conn ? session.display.key : 'no client'} (${list()})`;
+    if (arg === 'next' || arg === 'prev') {
+      if (session.modeList().length < 2) return "error: the client can't switch";
+      session.stepMode(arg === 'next' ? 1 : -1);
+    } else if (arg === 'auto') {
+      session.setMode(null);
+      session.mode.base = null;
+      return 'auto';
+    } else {
+      const need = parseMode(rest.join(''));
+      if (!need) return `error: unknown mode ${rest.join(' ')}: use display keys, flags (hires, ext, game, ...), a number of columns, next, prev or auto`;
+      const d = session.conn?.modes && pickDisplay(need, session.conn.modes, session.display);
+      if (session.conn?.modes && !d) return `error: the client has no such display (${list()})`;
+      session.setMode(need);
+      if (!d) return 'set, for a client that can switch';
+      return d.key;
+    }
+    return session.wantedDisplay()?.key ?? session.display.key;
+  }
   if (cmd === 'theme') {
     if (!arg) return `${session.theme} (${THEME_NAMES.join(', ')})`;
     const name = arg === 'next' ? stepTheme(session.theme, 1) : arg === 'prev' ? stepTheme(session.theme, -1) : arg;
@@ -717,7 +851,7 @@ function control(line) {
     session.setTheme(name);
     return session.theme;
   }
-  return `error: unknown command ${cmd}: use sessions, [@N] theme [name|next|prev], say TEXT, play FILE or kick`;
+  return `error: unknown command ${cmd}: use sessions, [@N] theme [name|next|prev], mode [spec|next|prev|auto], say TEXT, play FILE or kick`;
 }
 
 // Loopback unless --control-host says otherwise: it can make the bridge play any file on the host.

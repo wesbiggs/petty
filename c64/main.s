@@ -1,24 +1,56 @@
-; PETTY - thin terminal client for the C64
+; PETTY - the C64 client: the text, hi-res, soft 80-column and soft 53-column
+; screens in one program, switched by the bridge (MODE)
 ;
-; Receives screen updates from the bridge over a SwiftLink (6551 ACIA
-; at $DE00, NMI) and sends keyboard matrix codes back. See
-; bridge/src/protocol.js for the wire format.
+; Receives screen updates from the bridge over a SwiftLink (6551 ACIA at $DE00,
+; NMI) and sends keyboard matrix codes back; see bridge/src/protocol.js for the
+; wire format. Each screen is its own file (text.s, hires.s, soft80.s, soft53.s),
+; assembled here in a scope of its own; what they share is here once: the receive
+; ring and the NMI, the keyboard, the dial, sound, the game hardware, VIEW, CELLS
+; and POKE. The command loop dispatches through the current screen's opcode table.
+;
+; It starts on the text screen, which the dial (and DIALASK's settings screen)
+; draws on, then switches to START_DISPLAY and says HELLO_ON with it, and
+; MODES: the displays it can switch to. MODE display (from the bridge, between
+; frames) switches: the screen is cleared, the sprites and the SID's scripts
+; are stopped, and it says HELLO_ON and MODES again, for a full redraw. An id
+; it has no screen for gets the HELLO_ON of the screen it is on.
+;
+; Memory (the VIC uses its second bank, $4000-$7FFF, on every screen):
+;   $0400-$07FF  the character ROM's lowercase half, copied once
+;   $0801-$3FFF  the program
+;   $4000-$47FF  the text and hi-res screens' font, or a soft 53-column table
+;   $4800-$57FF  the game's sprite shapes
+;   $5800-$59FF  soft 80 and 53 columns: the sprites that repaint colours
+;   $5C00-$5FFF  the text screen, or the bitmap's colours; sprite pointers at $5FF8
+;   $6000-$7F3F  the bitmap (and a full-screen picture's, on any screen)
+;   $8000-$8FFF  the receive ring
+;   $9000-$9FFF  SID scripts
+;   $A000-$BFFF  under BASIC's ROM, switched out: the soft 80- or 53-column tables
+;   $C000-$C05F  game variables; $C100-$C8FF a soft 53-column table; $CD00-$CFFF sound
 
 ; --- hardware ---------------------------------------------------------------
-SCREEN      = $0400
-COLRAM      = $D800
-CHARSET     = $3800             ; 2K: 0-127 ROM lowercase + patches, 128-255 inverse
-RBUF        = $3700             ; 256-byte receive ring buffer
-ROMCHARS    = $D800             ; lowercase half of the character ROM
+RBUF        = $8000
+RBUF_END    = $9000
+ROMCHARS    = $0400             ; the screens' fonts are built from this copy of the ROM's
+ROMFONT     = $D800             ; lowercase half, made while nothing can interrupt
 
 ACIA_DATA   = $DE00
 ACIA_STATUS = $DE01
 ACIA_CMD    = $DE02
 ACIA_CTRL   = $DE03
 
+CIA2_PRA    = $DD00             ; bits 0-1: VIC bank, inverted
+SPR_ON      = $D015
+SPR_YEXP    = $D017
+SPR_PRIO    = $D01B
+SPR_MULTI   = $D01C
+SPR_XEXP    = $D01D
+VIC_CR1     = $D011
+VIC_CR2     = $D016
 VIC_MEM     = $D018
 BORDER      = $D020
 BGCOLOR     = $D021
+VIC_BG      = $D021
 
 ; KERNAL
 NMIVEC      = $0318
@@ -31,42 +63,38 @@ SHFLAG      = $028D             ; shift/C=/ctrl flags
 MODE        = $0291             ; $80 = disable shift+C= charset toggle
 
 ; protocol
-OP_GOTO     = 1
-OP_COLOR    = 2
-OP_PUT      = 3
-OP_REPEAT   = 4
-OP_SCROLL   = 5
-OP_COLORS   = 6
-OP_CLS      = 7
-OP_FRAME    = 8
-NUM_OPS     = GAME_OPS          ; 16 and 17 (SOUND, PROBE) are in sound.inc, 18 up in game.inc
-
+OP_MODE     = 27                ; display
+NUM_OPS     = 29                ; the screens' tables: opcodes below this (27, MODE, is the core's)
 MSG_ACK     = 1
 MSG_KEY     = 2
-MSG_HELLO   = 3
+MSG_HELLO_ON = 4
+MSG_MODES   = 10
+
+DISPLAY_C64 = 0
+DISPLAY_C64_80 = 2
+DISPLAY_C64_HIRES = 3
+DISPLAY_C64_53 = 4
+MODES_MASK  = $80 | 1 << DISPLAY_C64 | 1 << DISPLAY_C64_80 | 1 << DISPLAY_C64_HIRES | 1 << DISPLAY_C64_53
+.include "start.inc"            ; START_DISPLAY, from make START=...
 
 REPEAT_DELAY = 20               ; jiffies before auto-repeat
 REPEAT_RATE  = 3                ; jiffies between repeats
 
 ; --- zero page (BASIC's area; BASIC is not running) -------------------------
-scr         = $FB               ; screen write pointer
-colp        = $FD               ; colour write pointer (low byte == scr low)
-src         = $10               ; generic pointers
+; The screens' own are theirs while they are on; these are the ones they share.
+src         = $10
 dst         = $12
-srcc        = $14
-dstc        = $16
-count       = $18
-rptr        = $19               ; ring buffer read index
-wptr        = $1A               ; ring buffer write index (NMI)
-curcolor    = $1B
-lastjiffy   = $1C
-lastkey     = $1D
-repcnt      = $1E
-top         = $1F
-bot         = $20
-lines       = $21
-row         = $22
-glyph       = $23
+cnt         = $16
+rp          = $18               ; ring buffer read pointer
+wp          = $1A               ; ring buffer write pointer (NMI)
+count       = $1C               ; (count, top and bot: dialask.inc's line editor)
+lastjiffy   = $20
+lastkey     = $21
+repcnt      = $22
+top         = $23
+bot         = $24
+tmp         = $29
+optab       = $3A               ; the screen's opcode table
 
 CLIENT_ASK  = 1                 ; this client can ask for the dial's settings (dialask.inc)
 
@@ -82,13 +110,19 @@ CLIENT_ASK  = 1                 ; this client can ask for the dial's settings (d
 start:
         .assert start = 2061, error, "SYS address mismatch"
         sei
-        jsr init_charset
-        jsr init_screen
+        lda #$36                ; BASIC's ROM out: RAM at $A000-$BFFF (the soft 53-column tables)
+        sta $01
+        jsr copy_rom_font
+        lda #DISPLAY_C64        ; the dial draws on the text screen
+        jsr set_screen
         jsr sound_init
         jsr game_init
-        lda #0
-        sta rptr
-        sta wptr
+        lda #<RBUF
+        sta rp
+        sta wp
+        lda #>RBUF
+        sta rp+1
+        sta wp+1
         lda #64
         sta lastkey
         lda #<nmi
@@ -98,247 +132,155 @@ start:
         jsr init_acia
         cli
         jsr dial                ; through a WiFi modem, if built with DIAL
-        lda #MSG_HELLO
-        jsr send
+        lda #START_DISPLAY
+        cmp display
+        beq :+
+        jsr set_screen
+:       jsr hello
 
 ; --- main loop: decode commands forever ------------------------------------
 cmdloop:
         jsr keypoll
         jsr rb_get
+        cmp #OP_MODE
+        beq op_mode
         cmp #NUM_OPS
         bcs cmdloop
         asl
-        tax
-        lda optable+1,x
+        tay
+        iny
+        lda (optab),y
         pha
-        lda optable,x
+        dey
+        lda (optab),y
         pha
         rts
 
-optable:
-        .word cmdloop-1, op_goto-1, op_color-1, op_put-1, op_repeat-1
-        .word op_scroll-1, op_colors-1, op_cls-1, op_frame-1
-        .word cmdloop-1, cmdloop-1, cmdloop-1, cmdloop-1
-        .word cmdloop-1, cmdloop-1, op_poke-1
-        .word op_sound-1, op_probe-1
-        .word op_sprdef-1, op_spr-1, op_glide-1, op_move-1
-        .word op_sidw-1, op_sidplay-1, op_sidstop-1, op_sidreset-1, op_sprmc-1
-
-op_goto:
+; MODE display: switch to it, and say so.
+op_mode:
         jsr rb_get
-        cmp #25
-        bcc :+
-        lda #24
-:       sta row
-        jsr rb_get              ; clobbers X
-        cmp #40
-        bcc :+
-        lda #39
-:       ldx row
-        clc
-        adc rowlo,x
-        sta scr
-        sta colp
-        lda rowhi,x
-        adc #0
-        sta scr+1
-        clc
-        adc #>(COLRAM-SCREEN)
-        sta colp+1
+        jsr set_screen
+        jsr hello
         jmp cmdloop
 
-op_color:
-        jsr rb_get
-        and #$0F
-        sta curcolor
-        jmp cmdloop
-
-op_put:
-        jsr rb_get
-        sta count
-        beq @done
-@loop:  jsr rb_get
-        jsr putcell
-        dec count
-        bne @loop
-@done:  jmp cmdloop
-
-op_repeat:
-        jsr rb_get
-        sta count
-        jsr rb_get
-        sta glyph
-        lda count
-        beq @done
-@loop:  lda glyph
-        jsr putcell
-        dec count
-        bne @loop
-@done:  jmp cmdloop
-
-op_colors:
-        jsr rb_get
-        sta BORDER
-        jsr rb_get
-        sta BGCOLOR
-        jmp cmdloop
-
-op_cls:
-        jsr clear_screen
-        jmp cmdloop
-
-op_frame:
-        lda #MSG_ACK
+; HELLO_ON, the display, and MODES: the bridge redraws everything.
+hello:
+        lda #MSG_HELLO_ON
         jsr send
-        jmp cmdloop
+        lda display
+        jsr send
+        lda #MSG_MODES
+        jsr send
+        lda #MODES_MASK
+        jmp send
 
-; POKE lo hi n d1..dn: n bytes (0 = 256) from lo + 256 * hi on (sound's tables).
-op_poke:
-        jsr rb_get
-        sta dst
-        jsr rb_get
-        sta dst+1
-        jsr rb_get
-        sta count
-@loop:  jsr rb_get
-        ldy #0
-        sta (dst),y
-        inc dst
-        bne :+
-        inc dst+1
-:       dec count
-        bne @loop
-        jmp cmdloop
-
-; SCROLL top bot n: rows top..bot move up n, vacated rows cleared.
-op_scroll:
-        jsr rb_get
-        sta top
-        jsr rb_get
-        sta bot
-        jsr rb_get
-        sta lines
-        ldx bot                 ; ignore bad arguments
-        cpx #25
-        bcs @done
-        cpx top
-        bcc @done
-        tax
-        beq @done
-        lda top
-        sta row
-@copy:  lda row                 ; while row + n <= bot: copy row+n -> row
-        clc
-        adc lines
-        bcs @clear
-        cmp bot
-        beq :+
-        bcs @clear
-:       tax
-        jsr set_src_row
-        ldx row
-        jsr set_dst_row
-        ldy #39
-:       lda (src),y
-        sta (dst),y
-        lda (srcc),y
-        sta (dstc),y
-        dey
+; Switch to display A, if there is a screen for it (C clear), else stay (C set). The
+; game hardware and the SID start over, as on a fresh start.
+set_screen:
+        ldx #NUM_SCREENS - 1
+:       cmp screen_ids,x
+        beq @found
+        dex
         bpl :-
-        inc row
-        jmp @copy
-@clear: ldx row                 ; clear row..bot
-        cpx bot
-        beq :+
-        bcs @done
-:       jsr set_dst_row
-        ldy #39
-:       lda #32
-        sta (dst),y
-        lda curcolor
-        sta (dstc),y
-        dey
-        bpl :-
-        inc row
-        jmp @clear
-@done:  jmp cmdloop
-
-set_src_row:
-        lda rowlo,x
-        sta src
-        sta srcc
-        lda rowhi,x
-        sta src+1
+        sec
+        rts
+@found: sta display
+        stx screen
+        php
+        sei
+        jsr game_reset
+        jsr sound_init
+        ldx screen
+        lda screen_ops_lo,x
+        sta optab
+        lda screen_ops_hi,x
+        sta optab+1
+        lda screen_cr1,x        ; what VIEW TERMINAL goes back to
+        sta view_cr1
+        lda screen_mem,x
+        sta view_mem
+        lda screen_init_hi,x
+        pha
+        lda screen_init_lo,x
+        pha
+        rts                     ; to the screen's set-up, which returns to set_screen_done
+set_screen_done:
+        plp
         clc
-        adc #>(COLRAM-SCREEN)
-        sta srcc+1
         rts
 
-set_dst_row:
-        lda rowlo,x
-        sta dst
-        sta dstc
-        lda rowhi,x
-        sta dst+1
-        clc
-        adc #>(COLRAM-SCREEN)
-        sta dstc+1
+display:        .byte $FF           ; its id
+screen:         .byte 0             ; its index in the tables below
+
+; The sprites off, as the KERNAL leaves them, and the game's glides and scripts stopped
+; (its variables zeroed, but for the KERNAL's interrupt vector, which it chains to).
+game_reset:
+        lda #0
+        sta VIC_IRQEN
+        sta SPR_ON
+        sta SPR_YEXP
+        sta SPR_PRIO
+        sta SPR_MULTI
+        sta SPR_XEXP
+        ldx #gold - GV
+:       sta GV - 1,x
+        dex
+        bne :-
+        lda VIC_IRQFLG
+        sta VIC_IRQFLG
         rts
 
-; Write screen code in A with the current colour, advance, wrap at 1000.
-putcell:
-        ldy #0
-        sta (scr),y
-        lda curcolor
-        sta (colp),y
-        inc scr
-        inc colp
-        bne :+
-        inc scr+1
-        inc colp+1
-:       lda scr+1
-        cmp #>(SCREEN+1000)
-        bne :+
-        lda scr
-        cmp #<(SCREEN+1000)
-        bne :+
-home:   lda #<SCREEN
-        sta scr
-        sta colp
-        lda #>SCREEN
-        sta scr+1
-        lda #>COLRAM
-        sta colp+1
-:       rts
-
-clear_screen:
+; The character ROM's lowercase half to ROMCHARS, once (the screens build their fonts
+; from it whenever they come on). The ROM shows only with the I/O area switched out,
+; so this is done before the NMI is the client's, and not again after a restart.
+copy_rom_font:
+        lda rom_copied
+        bne @out
+        lda #$32                ; character ROM visible at $D000, BASIC's ROM still out
+        sta $01
         ldx #0
-:       lda #32
-        sta SCREEN,x
-        sta SCREEN+$100,x
-        sta SCREEN+$200,x
-        sta SCREEN+$2E8,x
-        lda curcolor
-        sta COLRAM,x
-        sta COLRAM+$100,x
-        sta COLRAM+$200,x
-        sta COLRAM+$2E8,x
+:       lda ROMFONT,x
+        sta ROMCHARS,x
+        lda ROMFONT+$100,x
+        sta ROMCHARS+$100,x
+        lda ROMFONT+$200,x
+        sta ROMCHARS+$200,x
+        lda ROMFONT+$300,x
+        sta ROMCHARS+$300,x
         inx
         bne :-
-        jmp home
+        lda #$36
+        sta $01
+        inc rom_copied
+@out:   rts
+
+rom_copied:     .byte 0
 
 ; --- serial ------------------------------------------------------------------
 
 ; Next received byte in A, flags set from it; polls the keyboard while
-; waiting. Clobbers X, Y.
+; waiting. Clobbers Y.
 rb_get:
-        ldx rptr
-        cpx wptr
-        bne :+
+        lda rp
+        cmp wp
+        bne @have
+        lda rp+1
+        cmp wp+1
+        bne @have
         jsr keypoll
         jmp rb_get
-:       inc rptr                ; before the load, so Z/N reflect the byte
-        lda RBUF,x
+@have:  ldy #0
+        lda (rp),y
+        sta tmp
+        inc rp
+        bne @out
+        inc rp+1
+        lda rp+1
+        cmp #>RBUF_END
+        bne @out
+        lda #>RBUF
+        sta rp+1
+@out:   lda tmp
         rts
 
 ; Transmit A (waits for the transmit register to empty).
@@ -351,20 +293,28 @@ send:
         sta ACIA_DATA
         rts
 
+; The byte is stored before wp moves on, so rb_get never reads ahead of it.
 nmi:
         pha
-        txa
+        tya
         pha
         lda ACIA_STATUS         ; also acknowledges the interrupt
         bpl @restore            ; bit 7: the ACIA's interrupt, else RESTORE
         and #$08                ; receive register full?
         beq @out
         lda ACIA_DATA
-        ldx wptr
-        sta RBUF,x
-        inc wptr
+        ldy #0
+        sta (wp),y
+        inc wp
+        bne @out
+        inc wp+1
+        lda wp+1
+        cmp #>RBUF_END
+        bne @out
+        lda #>RBUF
+        sta wp+1
 @out:   pla
-        tax
+        tay
         pla
         rti
 @restore:
@@ -387,39 +337,28 @@ init_acia:
 
 ; The next byte the NMI has put in the receive ring: C set and A = it, else C clear. Clobbers X.
 dial_rx:
-        ldx rptr
-        cpx wptr
+        lda rp
+        cmp wp
+        bne @have
+        lda rp+1
+        cmp wp+1
         beq @none
-        lda RBUF,x
-        inc rptr
+@have:  ldx #0
+        lda (rp,x)
+        sta tmp
+        inc rp
+        bne @out
+        inc rp+1
+        lda rp+1
+        cmp #>RBUF_END
+        bne @out
+        lda #>RBUF
+        sta rp+1
+@out:   lda tmp
         sec
         rts
 @none:  clc
         rts
-
-; The dial's progress, and asking for its settings (dialask.inc), draw through this.
-UI_COLS     = 40
-CFG         = $0334             ; the cassette buffer
-.if DIAL_DBGCODE
-; A = screen code, X = column, Y = row.
-ui_cell:
-        pha
-        txa
-        clc
-        adc rowlo,y
-        sta scr
-        lda rowhi,y
-        adc #0
-        sta scr+1
-        pla
-        ldy #0
-        sta (scr),y
-        rts
-
-ui_clear:
-        jmp clear_screen
-.endif
-.include "dialask.inc"
 
 ; --- keyboard ----------------------------------------------------------------
 
@@ -456,120 +395,155 @@ keypoll:
 @none:  sta lastkey
         rts
 
-; --- setup -------------------------------------------------------------------
-
-init_screen:
-        lda #$1E                ; screen $0400, charset $3800
-        sta VIC_MEM
-        lda #0
-        sta BORDER
-        sta BGCOLOR
-        lda #$80
-        sta MODE
-        lda #1
-        sta BLNSW
-        lda #15
-        sta curcolor
-        jsr clear_screen
-        ldx #0
-:       lda banner,x
-        beq :+
-        sta SCREEN,x
-        inx
-        bne :-
-:       rts
-
-; Screen codes for "petty: waiting for bridge..." (lowercase set).
-banner:
-        .byte 16,5,20,20,25,": ",23,1,9,20,9,14,7," ",6,15,18," ",2,18,9,4,7,5,"...",0
-
-; Called with interrupts off.
-init_charset:
-        lda $01
-        pha
-        lda #$33                ; character ROM visible at $D000
-        sta $01
-        ldx #0
-:       lda ROMCHARS,x
-        sta CHARSET,x
-        lda ROMCHARS+$100,x
-        sta CHARSET+$100,x
-        lda ROMCHARS+$200,x
-        sta CHARSET+$200,x
-        lda ROMCHARS+$300,x
-        sta CHARSET+$300,x
-        inx
-        bne :-
-        pla
-        sta $01
-
-        lda #<glyph_data        ; patch custom glyphs
-        sta src
-        lda #>glyph_data
-        sta src+1
-        ldx #0
-@patch: cpx #NUM_GLYPHS
-        beq @inverse
-        lda #0
-        sta dst+1
-        lda glyph_slots,x       ; dst = CHARSET + slot * 8
-        asl
-        rol dst+1
-        asl
-        rol dst+1
-        asl
-        rol dst+1
-        sta dst
-        lda dst+1
-        clc
-        adc #>CHARSET
-        sta dst+1
-        ldy #7
-:       lda (src),y
-        sta (dst),y
-        dey
-        bpl :-
-        lda src
-        clc
-        adc #8
-        sta src
-        bcc :+
-        inc src+1
-:       inx
-        jmp @patch
-
-@inverse:
-        ldx #0
-:       lda CHARSET,x
-        eor #$FF
-        sta CHARSET+$400,x
-        lda CHARSET+$100,x
-        eor #$FF
-        sta CHARSET+$500,x
-        lda CHARSET+$200,x
-        eor #$FF
-        sta CHARSET+$600,x
-        lda CHARSET+$300,x
-        eor #$FF
-        sta CHARSET+$700,x
-        inx
-        bne :-
-        rts
-
-rowlo:
-.repeat 25, i
-        .byte <(SCREEN + i * 40)
-.endrep
-rowhi:
-.repeat 25, i
-        .byte >(SCREEN + i * 40)
-.endrep
-
 .macro RX_PENDING target
-        lda rptr
-        cmp wptr
+        lda rp
+        cmp wp
+        bne target
+        lda rp+1
+        cmp wp+1
         bne target
 .endmacro
 .include "sound.inc"
 .include "game.inc"
 .include "glyphs.inc"
+
+; --- what the screens share --------------------------------------------------
+
+; POKE lo hi n d1..dn: n bytes (0 = 256) from lo + 256 * hi on (sound's tables, pictures).
+op_poke:
+        jsr rb_get
+        sta dst
+        jsr rb_get
+        sta dst+1
+        jsr rb_get
+        sta count
+@loop:  jsr rb_get
+        ldy #0
+        sta (dst),y
+        inc dst
+        bne :+
+        inc dst+1
+:       dec count
+        bne @loop
+        jmp cmdloop
+
+; Copy cnt bytes from (src) to (dst), ascending, so dst may overlap above src.
+copy:
+        ldy #0
+        ldx cnt+1
+        beq @part
+@page:  lda (src),y
+        sta (dst),y
+        iny
+        bne @page
+        inc src+1
+        inc dst+1
+        dex
+        bne @page
+@part:  ldx cnt
+        beq @done
+@byte:  lda (src),y
+        sta (dst),y
+        iny
+        dex
+        bne @byte
+@done:  rts
+
+; Fill cnt bytes from (dst) on with A.
+fill:
+        ldy #0
+        ldx cnt+1
+        beq @part
+@page:  sta (dst),y
+        iny
+        bne @page
+        inc dst+1
+        dex
+        bne @page
+@part:  ldx cnt
+        beq @done
+@byte:  sta (dst),y
+        iny
+        dex
+        bne @byte
+@done:  rts
+
+; Byte offsets of text rows 0-25 in the bitmap (320 per row) and colours (40).
+o320lo:
+.repeat 26, i
+        .byte <(i * 320)
+.endrep
+o320hi:
+.repeat 26, i
+        .byte >(i * 320)
+.endrep
+o40lo:
+.repeat 26, i
+        .byte <(i * 40)
+.endrep
+o40hi:
+.repeat 26, i
+        .byte >(i * 40)
+.endrep
+
+; MOVE's rows on the bitmap screens; VIEW on every screen.
+BITMAP      = $6000
+COLRAM      = $5C00
+.include "movebits.inc"
+.include "view.inc"
+.include "cells.inc"
+view_cr1:   .byte 0
+view_mem:   .byte 0
+
+; --- the screens -------------------------------------------------------------
+
+.scope text
+.include "text.s"
+.endscope
+.scope hires
+.include "hires.s"
+.endscope
+.scope s80
+.include "soft80.s"
+.endscope
+.scope s53
+.include "soft53.s"
+.endscope
+
+; Each screen's opcode table, set-up and VIC registers (for VIEW TERMINAL), by its index. (After the screens: an
+; older ca65 can't refer to a scope before it.)
+NUM_SCREENS = 4
+screen_ids:     .byte DISPLAY_C64, DISPLAY_C64_HIRES, DISPLAY_C64_80, DISPLAY_C64_53
+screen_ops_lo:  .byte <text::optable, <hires::optable, <s80::optable, <s53::optable
+screen_ops_hi:  .byte >text::optable, >hires::optable, >s80::optable, >s53::optable
+screen_init_lo: .byte <(init_text-1), <(init_hires-1), <(init_s80-1), <(init_s53-1)
+screen_init_hi: .byte >(init_text-1), >(init_hires-1), >(init_s80-1), >(init_s53-1)
+screen_cr1:     .byte $1B, $3B, $3B, $3B
+screen_mem:     .byte $70, $78, $78, $78
+
+init_text:
+        jsr text::init_charset
+        jsr text::init_screen
+        jmp set_screen_done
+init_hires:
+        jsr hires::init_font
+        jsr hires::init_screen
+        jmp set_screen_done
+init_s80:
+        jsr s80::init_tables
+        jsr s80::init_screen
+        jmp set_screen_done
+init_s53:
+        jsr s53::init_tables
+        jsr s53::init_screen
+        jmp set_screen_done
+
+; The dial's progress, and asking for its settings (dialask.inc), are on the text screen.
+UI_COLS     = 40
+CFG         = $0334             ; the cassette buffer
+.if DIAL_DBGCODE
+ui_cell     = text::ui_cell
+ui_clear    = text::ui_clear
+.endif
+init_screen = text::init_screen
+.include "dialask.inc"

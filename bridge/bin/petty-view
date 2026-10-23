@@ -1,0 +1,37 @@
+#!/bin/sh
+# petty-view: show a picture full screen on a C64 client, until a key is
+# pressed (which is not passed on). The bridge puts this at the end of the
+# PATH of the program it runs. Koala Painter pictures show in multicolour,
+# Doodle! and Art Studio ones in hi-res, as they are; anything else (PNG) is
+# converted, to multicolour unless -t hires says otherwise. Where there is no
+# full screen to show it on (the C128), it shows in the terminal, as imgcat's.
+#
+# usage: petty-view [-t type] file
+#   -t  hires or multicolour, with :flat or :dither after it (flat: no
+#       dithering, for drawn pictures; dither, for photographs; the default
+#       picks by the number of colours)
+
+usage() {
+  echo "usage: petty-view [-t hires|multicolour[:flat|:dither]] file" >&2
+  exit 2
+}
+
+type=
+while getopts t: opt; do
+  case $opt in
+    t) type=";type=$OPTARG" ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND - 1))
+[ $# -eq 1 ] || usage
+f=$1
+if [ ! -r "$f" ]; then
+  echo "petty-view: $f: cannot read" >&2
+  exit 1
+fi
+name=$(printf '%s' "$(basename "$f")" | base64 | tr -d '\n')
+size=$(wc -c < "$f" | tr -d ' ')
+printf '\033]1337;File=name=%s;size=%s;view=1%s;inline=1:' "$name" "$size" "$type"
+base64 < "$f" | tr -d '\n'
+printf '\a'

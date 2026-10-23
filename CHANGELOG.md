@@ -2,20 +2,38 @@
 
 ## Unreleased
 
-- **Soft 53-column C64 client** (`petty53.prg`, `make vice53`): 53×25 in the hi-res bitmap with a 6×8 font
-  (`bridge/src/font6x8.js`, generated into `c64/font6x8.inc`), announced as `HELLO_ON 4`. Each group of four characters
-  (three bitmap cells) shares a colour, and sprites repaint the characters that lost theirs, as on the soft 80-column screen
-  (`soft80.js` now handles both). OSC 8350 reports it as `c64-53` with the flag `quad`. `fake-c64.js --soft53`,
-  `mock-soft80.js --53`.
-- **RUN/STOP+RESTORE restarts the client** (all four): the screen, SID, sprites and interrupts are set up again, the client says
+- **One C64 client with four screens** (`petty.prg`): the text, hi-res, soft 80-column and the new soft 53-column screens in
+  one program, which replaces `petty.prg` (text), `pettyhires.prg` and `petty80.prg`. It starts on hi-res (`make START=c64-80`
+  and so on for another), and says which displays it can show after its `HELLO_ON` (`MODES`); the bridge switches it with
+  `MODE` (both new in the protocol), which clears the screen and redraws it all, resizing the program's terminal. The screen is
+  chosen by the user (C=+F3 / C=+F4, the control port's `mode`, `--mode`), or by a program: OSC 8350 `mode ; SPEC` (a display,
+  flags such as `game`, or a width) is answered once the client is on it; `petty-mode SPEC command` does it for any program.
+  Every C64 screen keeps its memory in the VIC's second bank, with BASIC's ROM switched out.
+- **Soft 53-column screen**: 53×25 in the hi-res bitmap with a 6×8 font (`bridge/src/font6x8.js`, generated into
+  `c64/font6x8.inc`), display 4. Each group of four characters (three bitmap cells) shares a colour, and sprites repaint the
+  characters that lost theirs, as on the soft 80-column screen (`soft80.js` now handles both). OSC 8350 reports it as `c64-53`
+  with the flag `quad`. `mock-soft80.js --53`.
+- **What one screen can do, the others can** where the machine allows (README: What each screen can do): sprites, glides,
+  `MOVE` and SID scripts on the soft screens (the game's sprites take numbers from the colour repairs; `MOVE` moves whole
+  groups of columns); full-screen pictures on every C64 screen; underline on the soft screens; `imgcat` pictures in pixels on
+  the soft screens (whole bitmap cells, with the new `CELLS` command) and on the C128 (a character a cell, in one colour on the
+  screen colour, loaded with `GLYPH`). OSC 8350 has the flags `picture` and `images`.
+- **`petty-view FILE`** shows a picture full screen until a key is pressed, on any C64 screen: Koala in multicolour, Art Studio
+  and Doodle! in hi-res (the new `VIEW` mode 3), and anything else converted (`-t hires` for hi-res).
+- SID scripts have `$9000-$9FFF` (4 KB), not `$9000-$BFFF`: above `$A000` the old text and hi-res clients read BASIC's ROM.
+- Fix: flat conversion (`-t flat`) of a picture with more than 32767 colours drew much of it black.
+- **RUN/STOP+RESTORE restarts the client** (both): the screen, SID, sprites and interrupts are set up again, the client says
   HELLO anew (the bridge redraws everything) and, in a build that dials, hangs the modem up (`+++`, `ATH`) and dials again.
   RESTORE alone does nothing, as before. `c64/restart.inc`; `bridge/scripts/fake-modem.js` understands `+++` and `ATH`.
-- **Dial setup on the C64** (`make DIALASK=1`, all four clients): the modem's start-up command, the bridge's address and a
+- **Dial setup on the C64** (`make DIALASK=1`, both clients): the modem's start-up command, the bridge's address and a
   dial-progress switch are asked for on the screen, kept in `PETTY.CFG` on the last device used, and asked again when the
   call does not come in about 10 seconds. `DIALINIT=ATC` sends a command line before `ATDT` (for a TeensyROM's Ethernet modem,
   which also waits longer for the answer to it), and `DIALDEBUG=1` shows the dial's progress on the screen. The clients' dial step now reads the modem through the receive ring their NMI fills, not by polling the ACIA.
-- **OSC 8350 `display`**: a program asks which client it is drawing on and what it can do, and is answered once the client has said
-  HELLO (`c64`, `c64-hires`, `c64-80`, `c128`, with its size and flags). `bridge/scripts/ask-display.js`. See the README.
+- **OSC 8350 `display`**: a program asks which display it is drawing on and what it can do, and is answered once the client has said
+  HELLO (`c64`, `c64-hires`, `c64-80`, `c64-53`, `c128`, with its size and flags). `bridge/scripts/ask-display.js`. See the README.
+- Checks in VICE: `make screen-check` (each C64 screen against the reference decoder, and switching), `make game-check`,
+  `make picture-check`; `bridge/scripts/vice.js` is their shared harness. `fake-c64.js` behaves as the C64 client (`--display`
+  to start on another screen, `--c128`).
 
 ## 0.11.0
 

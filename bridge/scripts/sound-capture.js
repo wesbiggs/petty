@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Plays a sound on the hi-res client in VICE through the whole path (a command to the
+// Plays a sound on the C64 client in VICE through the whole path (a command to the
 // bridge's control port, as `say` would make by OSC), records VICE's sound, and scores it against
 // the signal the encoder was given (sound-score.js). VICE shows its window. The bridge
 // runs `sleep` as its program, so nothing else draws.
@@ -19,7 +19,7 @@ const { values: opt } = parseArgs({ options: {
   sweep: { type: 'string' },
   sid: { type: 'string', default: '0' },
   model: { type: 'string', default: 'c64' },
-  prg: { type: 'string', default: 'build/pettyhires.prg' },
+  prg: { type: 'string', default: 'build/petty.prg' },
   out: { type: 'string', default: 'build/sound' },
   port: { type: 'string', default: '6464' },
   keep: { type: 'boolean', default: false },

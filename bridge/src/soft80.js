@@ -9,6 +9,7 @@
 import { FONT4 } from './font4x8.js';
 import { FONT6 } from './font6x8.js';
 import { SPACE } from './glyphs.js';
+import { IMAGE } from './image.js';
 
 export const MAX_SPRITES = 8;
 const SPRITE_PIXELS = 24; // a 24x21 sprite covers 24 / width characters...
@@ -32,29 +33,32 @@ const WEIGHT = { 4: weights(ROWS[4]), 6: weights(ROWS[6]) };
 const groupOf = width => { let n = 1; while ((n * width) % 8) n++; return n; };
 
 // Make the characters of each group the same colour, in place, and return up
-// to MAX_SPRITES sprites ({col, row, color, data}) that repaint the characters
+// to `max` (MAX_SPRITES) sprites ({col, row, color, data}) that repaint the characters
 // that lost their colour: letters and digits first, then those nearest
 // `focusRow` (the cursor). Each sprite takes as many losers of its colour as
 // fit in it.
-export function shareColours({ cols, glyph, color }, focusRow, width = 4) {
+export function shareColours({ cols, glyph, color }, focusRow, width = 4, max = MAX_SPRITES) {
   const rowsOfCode = ROWS[width], weight = WEIGHT[width], group = groupOf(width);
   const losers = [];
   for (let row = 0; row * cols < glyph.length; row++) {
     for (let x = 0; x < cols; x += group) {
       const start = row * cols + x, end = row * cols + Math.min(x + group, cols);
+      // An image's cells have colours of their own (CELLS draws them).
+      if (glyph.subarray(start, end).some(g => g >= IMAGE)) continue;
       // The colour with the most weight among the group's visible characters;
       // on a tie, or with none visible, the first.
       const total = new Map();
       for (let i = start; i < end; i++) {
-        if (glyph[i] !== SPACE) total.set(color[i], (total.get(color[i]) ?? 0) + weight[glyph[i]]);
+        if (glyph[i] !== SPACE) total.set(color[i] & 15, (total.get(color[i] & 15) ?? 0) + weight[glyph[i]]);
       }
-      let keep = color[start], most = -1;
+      let keep = color[start] & 15, most = -1;
       for (const [c, n] of total) if (n > most) [keep, most] = [c, n];
       for (let i = start; i < end; i++) {
-        if (glyph[i] !== SPACE && color[i] !== keep) {
-          losers.push({ col: i % cols, row, color: color[i], glyph: glyph[i], word: WORD.has(glyph[i] & 0x7f) });
+        // (Bit 8 is underline: each character's own, not the cell's.)
+        if (glyph[i] !== SPACE && (color[i] & 15) !== keep) {
+          losers.push({ col: i % cols, row, color: color[i] & 15, glyph: glyph[i], word: WORD.has(glyph[i] & 0x7f) });
         }
-        color[i] = keep;
+        color[i] = keep | (color[i] & ~15);
       }
     }
   }
@@ -65,7 +69,7 @@ export function shareColours({ cols, glyph, color }, focusRow, width = 4) {
   const inside = (m, col, row, color) => m.color === color &&
     m.col >= col && m.col < col + spriteCols && m.row >= row && m.row < row + SPRITE_ROWS;
   const sprites = [];
-  while (losers.length && sprites.length < MAX_SPRITES) {
+  while (losers.length && sprites.length < max) {
     // Of the placements that cover the first loser, the one covering most;
     // on a tie, the one starting at it.
     const first = losers[0];

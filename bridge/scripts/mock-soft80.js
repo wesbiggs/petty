@@ -33,7 +33,8 @@ await new Promise(r => setTimeout(r, Number(wait)));
 if (keys) { proc.write(keys.replace(/\\r/g, '\r')); await new Promise(r => setTimeout(r, 800)); }
 await new Promise(r => term.write('', r));
 
-const { glyph, color, sprites } = snapshot(term, 0, display);
+const { glyph, color, sprites: all } = snapshot(term, 0, display);
+const sprites = all.filter(Boolean);
 proc.kill();
 
 // Rows of WIDTH pixels for a screen code; bit 7 = inverse.

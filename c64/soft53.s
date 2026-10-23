@@ -1,41 +1,36 @@
-; PETTY - C64 client with a soft 53-column screen
+; PETTY - the C64 client's soft 53-column screen: 53x25 in the bitmap with a 6x8 font,
+; display 4 (c64-53)
 ;
-; The C64 client's protocol (bridge/src/protocol.js) on a 53x25 screen drawn
-; in the hi-res bitmap with a 6x8 font, announced with HELLO_ON 4. Characters
-; are 6 pixels wide, so 4 of them fill 3 bitmap cells (24 pixels), and the
-; middle two straddle a cell boundary: character 4g+p of a row is drawn in
-; phase p of group g. Column 52 is alone in cell 39, whose last 2 pixels stay
-; blank. A cell holds one colour; the bridge sends the 4 characters of a group
-; the same colour, and hardware sprites (SPRITE) that repaint the characters
-; that lost theirs. Only non-space characters set colours (of every cell they
-; touch), so writing a space never recolours its neighbours.
+; One of the client's four screens (main.s assembles it in a scope). Characters are 6
+; pixels wide, so 4 of them fill 3 bitmap cells (24 pixels), and the middle two straddle
+; a cell boundary: character 4g+p of a row is drawn in phase p of group g. Column 52 is
+; alone in cell 39, whose last 2 pixels stay blank. A cell holds one colour; the bridge
+; sends the 4 characters of a group the same colour, and hardware sprites (SPRITE) that
+; repaint the characters that lost theirs. Only non-space characters set colours (of
+; every cell they touch), so writing a space never recolours its neighbours. Underline,
+; sprites, MOVE (groups of 4 columns, 3 cells) and inline images are as on the soft
+; 80-column screen.
 ;
-; Memory: glyph tables $2000-$4FFF (built at startup; $4000-$4FFF is in the
-; VIC's bank but unused by it), and as the soft 80-column client: the VIC
-; uses its second bank, $4000-$7FFF, sprite data $5000-$51FF, cell colours
-; $5C00 (sprite pointers $5FF8), bitmap $6000-$7F3F, receive ring
-; $8000-$8FFF (4K: a bitmap scroll takes ~90 ms).
+; Memory: six glyph tables of 2K, built when the screen comes on, at $A000-$BFFF (under
+; BASIC's ROM, switched out), $4000 (in the VIC's bank, unused by it) and $C100; and as
+; the soft 80-column screen: the game's sprite shapes $4800-$57FF, the colour sprites'
+; data $5800-$59FF, cell colours $5C00 (sprite pointers $5FF8), bitmap $6000-$7F3F.
 
 ; --- hardware ---------------------------------------------------------------
 ; Glyph tables, 8 pages each: row r of screen code c at table + r * 256 + c,
 ; codes 128-255 inverted. G is the glyph row in the top 6 bits.
-TBL_0       = $2000             ; phase 0: G, in cell 0
-TBL_1A      = $2800             ; phase 1: G >> 6, in cell 0's last 2 pixels
-TBL_1B      = $3000             ;          G << 2, in cell 1's first 4
-TBL_2A      = $3800             ; phase 2: G >> 4, in cell 1's last 4
+; Under BASIC's ROM (switched out), in the VIC's bank before the game's sprite shapes,
+; and after the game's variables.
+TBL_0       = $A000             ; phase 0: G, in cell 0
+TBL_1A      = $A800             ; phase 1: G >> 6, in cell 0's last 2 pixels
+TBL_1B      = $B000             ;          G << 2, in cell 1's first 4
+TBL_2A      = $B800             ; phase 2: G >> 4, in cell 1's last 4
 TBL_2B      = $4000             ;          G << 4, in cell 2's first 2
-TBL_3       = $4800             ; phase 3: G >> 2, in cell 2's last 6
-SPRDATA     = $5000             ; 8 sprites of 64 bytes
+TBL_3       = $C100             ; phase 3: G >> 2, in cell 2's last 6
+SPRDATA     = $5800             ; 8 sprites of 64 bytes, after the game's shapes
 COLRAM      = $5C00             ; bitmap colours: high nibble fg, low nibble bg
 SPRPTR      = COLRAM + $3F8
 BITMAP      = $6000
-RBUF        = $8000
-RBUF_END    = $9000
-
-ACIA_DATA   = $DE00
-ACIA_STATUS = $DE01
-ACIA_CMD    = $DE02
-ACIA_CTRL   = $DE03
 
 CIA2_PRA    = $DD00             ; bits 0-1: VIC bank, inverted
 
@@ -53,56 +48,25 @@ VIC_MEM     = $D018
 BORDER      = $D020
 
 ; KERNAL
-NMIVEC      = $0318
-JIFFY_LO    = $A2
-KEYCOUNT    = $C6               ; keyboard buffer length
-CURKEY      = $CB               ; matrix code of held key, 64 = none
-STOP_KEY    = 63                ; ...of RUN/STOP
 BLNSW       = $CC               ; cursor blink switch (nonzero = off)
-SHFLAG      = $028D             ; shift/C=/ctrl flags
 MODE        = $0291             ; $80 = disable shift+C= charset toggle
 
-; protocol
-OP_GOTO     = 1
-OP_COLOR    = 2
-OP_PUT      = 3
-OP_REPEAT   = 4
-OP_SCROLL   = 5
-OP_COLORS   = 6
-OP_CLS      = 7
-OP_FRAME    = 8
-OP_SPRITE   = 9
-OP_NOSPRITE = 10
-NUM_OPS     = 18                ; 16 and 17 (SOUND, PROBE) are in sound.inc
-
 MSG_ACK     = 1
-MSG_KEY     = 2
-MSG_HELLO_ON = 4
-DISPLAY_C64_53 = 4
 
 COLS        = 53
 ROWS        = 25
 SPACE       = 32
-
-REPEAT_DELAY = 20               ; jiffies before auto-repeat
-REPEAT_RATE  = 3                ; jiffies between repeats
 
 ; --- zero page (BASIC's area; BASIC is not running) -------------------------
 bp          = $FB               ; bitmap address of the current group's first cell
 cp          = $FD               ; colour address of the same
 src         = $10
 dst         = $12
-dst2        = $14
 cnt         = $16               ; 16-bit byte count for copy / fill
-rp          = $18               ; ring buffer read pointer
-wp          = $1A               ; ring buffer write pointer (NMI)
 count       = $1C
 curcolor    = $1D               ; foreground 0-15
 cellcol     = $1E               ; curcolor << 4 | bgcol
 bgcol       = $1F
-lastjiffy   = $20
-lastkey     = $21
-repcnt      = $22
 top         = $23
 bot         = $24
 lines       = $25
@@ -117,63 +81,18 @@ srow        = $2D
 sidx        = $2E
 inv         = $2F               ; init_tables: 0, or $FC for the inverse half
 
-CLIENT_ASK  = 1                 ; this client can ask for the dial's settings (dialask.inc)
+uline       = $39               ; $FF: underline what is written, else 0 (after sound.inc's)
 
-; --- BASIC stub: 10 SYS2061 -------------------------------------------------
-.segment "LOADADDR"
-        .word $0801
-
-.segment "CODE"
-        .word @next, 10
-        .byte $9E, "2061", 0
-@next:  .word 0
-
-start:
-        .assert start = 2061, error, "SYS address mismatch"
-        sei
-        jsr init_tables
-        jsr init_screen
-        jsr sound_init
-        lda #<RBUF
-        sta rp
-        sta wp
-        lda #>RBUF
-        sta rp+1
-        sta wp+1
-        lda #64
-        sta lastkey
-        lda #<nmi
-        sta NMIVEC
-        lda #>nmi
-        sta NMIVEC+1
-        jsr init_acia
-        cli
-        jsr dial                ; through a WiFi modem, if built with DIAL
-        lda #MSG_HELLO_ON
-        jsr send
-        lda #DISPLAY_C64_53
-        jsr send
-
-; --- main loop: decode commands forever ------------------------------------
-cmdloop:
-        jsr keypoll
-        jsr rb_get
-        cmp #NUM_OPS
-        bcs cmdloop
-        asl
-        tax
-        lda optable+1,x
-        pha
-        lda optable,x
-        pha
-        rts
-
+; Opcodes 0-28 (main.s handles 27, MODE).
 optable:
         .word cmdloop-1, op_goto-1, op_color-1, op_put-1, op_repeat-1
         .word op_scroll-1, op_colors-1, op_cls-1, op_frame-1
-        .word op_sprite-1, op_nosprite-1, cmdloop-1, cmdloop-1
-        .word cmdloop-1, cmdloop-1, op_poke-1
+        .word op_sprite-1, op_nosprite-1, cmdloop-1, op_underline-1
+        .word cmdloop-1, op_view-1, op_poke-1
         .word op_sound-1, op_probe-1
+        .word op_sprdef-1, op_spr-1, op_glide-1, op_move-1
+        .word op_sidw-1, op_sidplay-1, op_sidstop-1, op_sidreset-1, op_sprmc-1
+        .word cmdloop-1, op_cells-1     ; (27, MODE, is main.s's)
 
 op_goto:
         jsr rb_get
@@ -266,6 +185,14 @@ op_cls:
         jsr clear_screen
         jmp cmdloop
 
+; UNDERLINE on: underline what PUT and REPEAT write from now on (0 = off).
+op_underline:
+        jsr rb_get
+        beq :+
+        lda #$FF
+:       sta uline
+        jmp cmdloop
+
 op_frame:
         lda #MSG_ACK
         jsr send
@@ -342,6 +269,22 @@ op_sprite:
         lda SPR_ON
         ora bitmask,x
         sta SPR_ON
+        txa                     ; its own block, hi-res, unexpanded, in front: the game
+        clc                     ; may have had this sprite before
+        adc #(SPRDATA & $3FFF) / 64
+        sta SPRPTR,x
+        lda notbit,x
+        and SPR_MULTI
+        sta SPR_MULTI
+        lda notbit,x
+        and SPR_XEXP
+        sta SPR_XEXP
+        lda notbit,x
+        and SPR_YEXP
+        sta SPR_YEXP
+        lda notbit,x
+        and SPR_PRIO
+        sta SPR_PRIO
         jmp cmdloop
 
 op_nosprite:
@@ -353,26 +296,7 @@ op_nosprite:
         sta SPR_ON
         jmp cmdloop
 
-bitmask: .byte $01, $02, $04, $08, $10, $20, $40, $80
-notbit: .byte $FE, $FD, $FB, $F7, $EF, $DF, $BF, $7F
-
-; POKE lo hi n d1..dn: n bytes (0 = 256) from lo + 256 * hi on (sound's tables).
-op_poke:
-        jsr rb_get
-        sta dst
-        jsr rb_get
-        sta dst+1
-        jsr rb_get
-        sta count
-@loop:  jsr rb_get
-        ldy #0
-        sta (dst),y
-        inc dst
-        bne :+
-        inc dst+1
-:       dec count
-        bne @loop
-        jmp cmdloop
+notbit: .byte $FE, $FD, $FB, $F7, $EF, $DF, $BF, $7F   ; (bitmask is game.inc's)
 
 ; SCROLL top bot n: rows top..bot move up n, vacated rows cleared. The write
 ; position is unchanged.
@@ -527,16 +451,25 @@ phases: .word put0-1, put1-1, put2-1, put3-1
 :
 .endmacro
 
-; The glyph's 8 rows into the cell at bp + y0, keeping the pixels in `keep`.
+; The glyph's 8 rows into the cell at bp + y0, keeping the pixels in `keep`; the bottom
+; row underlined (uline) in the pixels it draws.
 .macro DRAW y0, keep, table
         ldy #y0
-.repeat 8, r
+.repeat 7, r
         lda (bp),y
         and #keep
         ora table + r * 256,x
         sta (bp),y
         iny
 .endrep
+        lda uline
+        and #<~keep
+        ora table + 7 * 256,x
+        sta tmp2
+        lda (bp),y
+        and #keep
+        ora tmp2
+        sta (bp),y
 .endmacro
 
 put0:   COLOUR 0, 0
@@ -626,155 +559,8 @@ clear_screen:
         jsr fill
         jmp home
 
-; Copy cnt bytes from (src) to (dst), ascending, so dst may overlap above src.
-copy:
-        ldy #0
-        ldx cnt+1
-        beq @part
-@page:  lda (src),y
-        sta (dst),y
-        iny
-        bne @page
-        inc src+1
-        inc dst+1
-        dex
-        bne @page
-@part:  ldx cnt
-        beq @done
-@byte:  lda (src),y
-        sta (dst),y
-        iny
-        dex
-        bne @byte
-@done:  rts
-
-; Fill cnt bytes from (dst) on with A.
-fill:
-        ldy #0
-        ldx cnt+1
-        beq @part
-@page:  sta (dst),y
-        iny
-        bne @page
-        inc dst+1
-        dex
-        bne @page
-@part:  ldx cnt
-        beq @done
-@byte:  sta (dst),y
-        iny
-        dex
-        bne @byte
-@done:  rts
-
-; --- serial ------------------------------------------------------------------
-
-; Next received byte in A, flags set from it; polls the keyboard while
-; waiting. Clobbers Y.
-rb_get:
-        lda rp
-        cmp wp
-        bne @have
-        lda rp+1
-        cmp wp+1
-        bne @have
-        jsr keypoll
-        jmp rb_get
-@have:  ldy #0
-        lda (rp),y
-        sta tmp
-        inc rp
-        bne @out
-        inc rp+1
-        lda rp+1
-        cmp #>RBUF_END
-        bne @out
-        lda #>RBUF
-        sta rp+1
-@out:   lda tmp
-        rts
-
-; Transmit A (waits for the transmit register to empty).
-send:
-        pha
-:       lda ACIA_STATUS
-        and #$10
-        beq :-
-        pla
-        sta ACIA_DATA
-        rts
-
-; The byte is stored before wp moves on, so rb_get never reads ahead of it.
-nmi:
-        pha
-        tya
-        pha
-        lda ACIA_STATUS         ; also acknowledges the interrupt
-        bpl @restore            ; bit 7: the ACIA's interrupt, else RESTORE
-        and #$08                ; receive register full?
-        beq @out
-        lda ACIA_DATA
-        ldy #0
-        sta (wp),y
-        inc wp
-        bne @out
-        inc wp+1
-        lda wp+1
-        cmp #>RBUF_END
-        bne @out
-        lda #>RBUF
-        sta wp+1
-@out:   pla
-        tay
-        pla
-        rti
-@restore:
-        lda CURKEY
-        cmp #STOP_KEY           ; RUN/STOP+RESTORE?
-        bne @out
-        jmp restart
-
-init_acia:
-        sta ACIA_STATUS         ; programmed reset
-        lda #%00011111          ; 1 stop, 8 bits, internal clock, 19200 (38400 on SwiftLink)
-        sta ACIA_CTRL
-        lda #%00001001          ; no parity, RTS low, TX irq off, RX irq on, DTR on
-        sta ACIA_CMD
-        lda ACIA_DATA           ; discard anything pending
-        rts
-
-.include "dial.inc"
-.include "restart.inc"
-
-; The next byte the NMI has put in the receive ring: C set and A = it, else C clear. Clobbers X.
-dial_rx:
-        lda rp
-        cmp wp
-        bne @have
-        lda rp+1
-        cmp wp+1
-        beq @none
-@have:  ldx #0
-        lda (rp,x)
-        sta tmp
-        inc rp
-        bne @out
-        inc rp+1
-        lda rp+1
-        cmp #>RBUF_END
-        bne @out
-        lda #>RBUF
-        sta rp+1
-@out:   lda tmp
-        sec
-        rts
-@none:  clc
-        rts
-
 ; The dial's progress, and asking for its settings (dialask.inc), draw through this.
-UI_COLS     = 53
-CFG         = $0334             ; the cassette buffer
-.if DIAL_DBGCODE
+.if ::DIAL_DBGCODE              ; (:: as this is assembled in a scope)
 ; A = screen code, X = column, Y = row.
 ui_cell:
         sta ui_code
@@ -789,41 +575,6 @@ ui_code: .byte 0
 ui_clear:
         jmp clear_screen
 .endif
-.include "dialask.inc"
-
-; --- keyboard ----------------------------------------------------------------
-
-; Once per jiffy: send KEY for new presses and auto-repeats. Clobbers A.
-keypoll:
-        lda JIFFY_LO
-        cmp lastjiffy
-        beq @out
-        sta lastjiffy
-        lda #0
-        sta KEYCOUNT            ; we read the matrix, not the KERNAL buffer
-        lda CURKEY
-        cmp #64
-        beq @none
-        cmp lastkey
-        bne @new
-        dec repcnt
-        bne @out
-        lda #REPEAT_RATE
-        sta repcnt
-        bne @send
-@new:   sta lastkey
-        lda #REPEAT_DELAY
-        sta repcnt
-@send:  lda #MSG_KEY
-        jsr send
-        lda lastkey
-        jsr send
-        lda SHFLAG
-        and #7
-        jsr send
-@out:   rts
-@none:  sta lastkey
-        rts
 
 ; --- setup -------------------------------------------------------------------
 
@@ -860,6 +611,8 @@ init_screen:
         sta BLNSW
         lda #15
         sta curcolor
+        lda #0
+        sta uline
         jsr set_cellcol
         jsr clear_screen
         ldx #0
@@ -914,31 +667,7 @@ init_tables:
         jmp @code
 :       rts
 
-; Byte offsets of text rows 0-25 in the bitmap (320 per row) and colours (40).
-o320lo:
-.repeat ROWS+1, i
-        .byte <(i * 320)
-.endrep
-o320hi:
-.repeat ROWS+1, i
-        .byte >(i * 320)
-.endrep
-o40lo:
-.repeat ROWS+1, i
-        .byte <(i * 40)
-.endrep
-o40hi:
-.repeat ROWS+1, i
-        .byte >(i * 40)
-.endrep
-
-.macro RX_PENDING target
-        lda rp
-        cmp wp
-        bne target
-        lda rp+1
-        cmp wp+1
-        bne target
-.endmacro
-.include "sound.inc"
+MOVE_BITMAP = 1
+MOVE_GROUP  = 4
+.include "move.inc"
 .include "font6x8.inc"
