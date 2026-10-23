@@ -1,9 +1,9 @@
-; PETTY - MOVE for the C64 clients (game.inc), which differ in how: the text client
-; copies screen codes and colours, the bitmap ones bitmap bytes and colours. The includer
-; says which with MOVE_BITMAP, and MOVE_GROUP: the columns a group of bitmap cells holds
-; (1 on the 40-column screens; 2 columns a cell at 80 columns; 4 columns three cells at
-; 53), as the soft screens move whole groups only. (The combined client includes this
-; once for each screen.)
+; PETTY - MOVE for the C64 client's screens (game.inc), which differ in how: the text
+; screen copies screen codes and colours, the bitmap ones bitmap bytes and colours
+; (movebits.inc, in main.s). Each screen includes this, saying which with MOVE_BITMAP,
+; and MOVE_GROUP: the columns a group of bitmap cells holds (1 on the 40-column screens;
+; 2 columns a cell at 80 columns; 4 columns three cells at 53), as the soft screens move
+; whole groups only.
 
 ; MOVE x y w h dx dy: the w by h cells (screen codes and colours) at x, y
 ; copy to x + dx, y + dy (dx and dy signed), as if all at once. A rectangle
@@ -128,9 +128,6 @@ move_cells:
 .endif
 
 .if MOVE_BITMAP
-.ifndef MULTI                   ; (the combined client's core has it once)
-.include "movebits.inc"
-.endif
 .else
 ; Row mr of the rectangle.
 move_row:

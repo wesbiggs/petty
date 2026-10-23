@@ -1,10 +1,10 @@
-// Runs each C64 client in VICE (petty.prg, pettyhires.prg, petty80.prg, petty53.prg, and pettyall.prg on each of
-// its screens) and shows full-screen pictures on it, as petty-view does: a multicolour one (Koala) and a hi-res one
-// (Art Studio); on the soft screens, also inline image cells (CELLS, for imgcat). Checks the VIC's set-up and the picture's memory while it shows, that the sprites are hidden and come
-// back, and that VIEW TERMINAL gives the terminal screen back. This script is the bridge. Needs x64sc.
-// --shots DIR: screenshots there, one of each picture on each client.
+// Runs the C64 client (build/petty.prg) in VICE on each of its screens, and shows full-screen pictures there, as
+// petty-view does: a multicolour one (Koala) and a hi-res one (Art Studio); on the soft screens, also inline image
+// cells (CELLS, for imgcat) and underline. Checks the VIC's set-up and the picture's memory while it shows, that the
+// sprites are hidden and come back, and that VIEW TERMINAL gives the terminal screen back. This script is the
+// bridge. Needs x64sc. --shots DIR: screenshots there, one of each picture on each screen.
 //
-// usage: node scripts/vice-picture-check.js [--keep] [--shots DIR] [build dir]
+// usage: node scripts/vice-picture-check.js [--keep] [--shots DIR] [prg]
 import { copyFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,7 +15,7 @@ import { toKoala, toHiresPicture } from '../src/image.js';
 import { startVice, checks, sleep } from './vice.js';
 
 const { values: opt, positionals } = parseArgs({ allowPositionals: true, options: { keep: { type: 'boolean', default: false }, shots: { type: 'string' } } });
-const build = resolve(positionals[0] ?? fileURLToPath(new URL('../../build', import.meta.url)));
+const prg = resolve(positionals[0] ?? fileURLToPath(new URL('../../build/petty.prg', import.meta.url)));
 const log = (...a) => console.error('[vice-picture]', ...a);
 const { check, done } = checks(log);
 
@@ -31,19 +31,10 @@ for (let y = 0; y < 200; y++) {
 const KOALA = toKoala(img);
 const HIRES = { ...toHiresPicture(img, { type: 'flat' }), bg: 6 };
 
-// The terminal screen each client goes back to: $D011, $D018 (bit 0 reads as 1), the VIC's bank (CIA 2 port A bits 0-1).
-const TERM = {
-  text: [0x1B, 0x1F, 3], allText: [0x1B, 0x71, 2], bitmap: [0x3B, 0x79, 2],
-};
-const CLIENTS = [
-  { name: 'text', prg: 'petty.prg', display: DISPLAY.C64, term: TERM.text },
-  { name: 'hi-res', prg: 'pettyhires.prg', display: DISPLAY.C64_HIRES, term: TERM.bitmap },
-  { name: 'soft 80', prg: 'petty80.prg', display: DISPLAY.C64_80, term: TERM.bitmap },
-  { name: 'soft 53', prg: 'petty53.prg', display: DISPLAY.C64_53, term: TERM.bitmap },
-  ...[DISPLAY.C64, DISPLAY.C64_HIRES, DISPLAY.C64_80, DISPLAY.C64_53].map(d => ({
-    name: `combined on ${d.key}`, prg: 'pettyall.prg', display: d, all: true, term: d === DISPLAY.C64 ? TERM.allText : TERM.bitmap,
-  })),
-];
+// The terminal screen each screen goes back to: $D011, $D018 (bit 0 reads as 1), the VIC's bank (CIA 2 port A bits 0-1).
+const CLIENTS = [DISPLAY.C64, DISPLAY.C64_HIRES, DISPLAY.C64_80, DISPLAY.C64_53].map(d => ({
+  name: d.key, display: d, term: d === DISPLAY.C64 ? [0x1B, 0x71, 2] : [0x3B, 0x79, 2],
+}));
 
 const vicOf = io => [io[0x11] & 0x7F, io[0x16], io[0x18], io[0xD00] & 3];
 const same = (got, want, what) => {
@@ -52,7 +43,7 @@ const same = (got, want, what) => {
 };
 
 for (const client of CLIENTS) {
-  const c = await startVice(join(build, client.prg), { keep: opt.keep || !!opt.shots, log });
+  const c = await startVice(prg, { keep: opt.keep || !!opt.shots, log });
   const shot = async name => {
     if (!opt.shots) return;
     await c.monitor([`screenshot "${name}.bmp" 0`]);
@@ -61,13 +52,9 @@ for (const client of CLIENTS) {
   };
   try {
     await check(`${client.name}: it starts`, async () => {
-      if (client.all) {
-        await c.read(4, 'HELLO_ON and MODES');
-        c.sock.write(Buffer.from([OP.MODE, client.display.id]));
-        assert.deepEqual((await c.read(4, 'HELLO_ON')).slice(0, 2), [MSG.HELLO_ON, client.display.id]);
-      } else {
-        await c.read(client.display === DISPLAY.C64 ? 1 : 2, 'HELLO');
-      }
+      await c.read(4, 'HELLO_ON and MODES');
+      c.sock.write(Buffer.from([OP.MODE, client.display.id]));
+      assert.deepEqual((await c.read(4, 'HELLO_ON')).slice(0, 2), [MSG.HELLO_ON, client.display.id]);
       const want = { cols: client.display.cols, rows: client.display.rows, hires: client.display.hires };
       want.glyph = new Int32Array(want.cols * want.rows).map((_, i) => 1 + i % 26);
       want.color = new Int16Array(want.cols * want.rows).fill(client.display.hires ? 0x10 : 1);

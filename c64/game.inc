@@ -1,6 +1,6 @@
-; PETTY - game hardware for the C64 clients: hardware sprites, a SID script
+; PETTY - game hardware for the C64 client: hardware sprites, a SID script
 ; player and a rectangle move, for a program that wants more than a terminal.
-; Included by each C64 client after sound.inc. Wire format: bridge/src/protocol.js; what
+; Included by main.s after sound.inc; MOVE is each screen's (move.inc). Wire format: bridge/src/protocol.js; what
 ; a program sends: bridge/src/game.js (OSC 8348 sprites, OSC 8349 SID).
 ;
 ; A raster interrupt at line 251 (below the last text row, so nothing is
@@ -13,12 +13,10 @@
 ; keyboard and the jiffy clock. While a sound plays (sound.inc) interrupts
 ; are off, so everything here simply waits.
 ;
-; Memory: sprite shapes, 64 slots of 64 bytes, in the VIC's bank: at $2000-$2FFF
-; (the text client; clear of the character ROM's image at $1000 and below the
-; receive buffer at $3700) or $4800-$57FF (the bitmap clients, after the hi-res
-; font, and the combined client, mainall.s). Script data goes where the bridge POKEs
-; it, $9000-$9FFF; variables are at $C000. MOVE is the one part that differs
-; (move.inc): the bitmap clients copy bitmap bytes.
+; Memory: sprite shapes, 64 slots of 64 bytes, at $4800-$57FF in the VIC's second
+; bank (every screen). Script data goes where the bridge POKEs it, $9000-$9FFF;
+; variables are at $C000. MOVE is the one part that differs from screen to screen
+; (move.inc): the bitmap screens copy bitmap bytes.
 ;
 ; A script is records: n, (reg, value) * n, delay. The writes happen, then
 ; the next record waits `delay` frames (0: carry on at once). n = $FF ends
@@ -82,15 +80,9 @@ GV_END      = GV + 95
 
 gp          = $F7               ; script read pointer (BASIC's RS-232 pointers: unused)
 
-.ifdef GAME_BANK1                  ; the bitmap clients, and the combined one
 SPR_BLOCKS  = $4800             ; in the VIC's second bank, after the font and before the colours
 SPR_PTRS    = $5FF8             ; the colours at $5C00 are the "screen matrix"
 SPR_PTR0    = $20               ; the pointer for the first block: (SPR_BLOCKS - $4000) / 64
-.else
-SPR_BLOCKS  = $2000
-SPR_PTRS    = $07F8
-SPR_PTR0    = $80
-.endif
 VIC_SPRX    = $D000
 VIC_SPRXMSB = $D010
 VIC_YEXP    = $D017
@@ -339,9 +331,6 @@ op_sprmc:
 
 ; --- MOVE ----------------------------------------------------------------------
 
-.ifndef MULTI
-.include "move.inc"                 ; with the client's MOVE_BITMAP and MOVE_GROUP
-.endif
 
 ; --- SID ---------------------------------------------------------------------
 

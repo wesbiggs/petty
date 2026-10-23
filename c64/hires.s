@@ -1,35 +1,20 @@
-; PETTY - C64 client with a 40-column hi-res bitmap screen
+; PETTY - the C64 client's hi-res screen: 40x25 in the bitmap, display 3 (c64-hires)
 ;
-; The C64 client's protocol (bridge/src/protocol.js) on a 40x25 screen drawn
-; in the hi-res bitmap, announced with HELLO_ON 3. Each 8x8 cell has its own
-; foreground and background (COLOR is foreground << 4 | background), so the
-; character set needs no inverse half: screen codes 0-127 are the text
-; client's (lowercase ROM plus the custom glyphs), and the bridge loads
-; 128-255 with GLYPH as it needs them. UNDERLINE sets the bottom pixel row
-; of what is written next.
+; One of the client's four screens (main.s assembles it in a scope; the receive ring,
+; keyboard, dial, sound, game hardware, VIEW and POKE are the core's). Each 8x8 cell has
+; its own foreground and background (COLOR is foreground << 4 | background), so the
+; character set needs no inverse half: screen codes 0-127 are the text screen's
+; (lowercase ROM plus the custom glyphs), and the bridge loads 128-255 with GLYPH as it
+; needs them. UNDERLINE sets the bottom pixel row of what is written next. BITS draws
+; an inline image's cells at the write position.
 ;
-; Memory (the VIC uses its second bank, $4000-$7FFF): font $4000-$47FF, the
-; game's sprite shapes $4800-$57FF, cell colours $5C00, bitmap $6000-$7F3F,
-; receive ring $8000-$8FFF (4K: a bitmap scroll takes ~90 ms), SID scripts
-; $9000-$9FFF. Sound (sound.inc) keeps its buffer and tables at $CD00-$CFFF.
-;
-; The combined client (mainall.s) also assembles this file, in a scope with MULTI
-; defined: then only the screen's own part is here (.ifndef MULTI marks the rest).
+; Memory (the VIC's second bank): font $4000-$47FF, the game's sprite shapes
+; $4800-$57FF, cell colours $5C00, bitmap $6000-$7F3F.
 
 ; --- hardware ---------------------------------------------------------------
 FONT        = $4000             ; 8 pages: row r of screen code c at FONT + r*256 + c
 COLRAM      = $5C00             ; bitmap colours: high nibble fg, low nibble bg
 BITMAP      = $6000
-.ifndef MULTI
-RBUF        = $8000
-RBUF_END    = $9000
-ROMCHARS    = $D800             ; lowercase half of the character ROM
-.endif
-
-ACIA_DATA   = $DE00
-ACIA_STATUS = $DE01
-ACIA_CMD    = $DE02
-ACIA_CTRL   = $DE03
 
 CIA2_PRA    = $DD00             ; bits 0-1: VIC bank, inverted
 
@@ -38,47 +23,15 @@ VIC_CR1     = $D011
 VIC_CR2     = $D016
 VIC_MEM     = $D018
 BORDER      = $D020
-VIC_BG      = $D021
 
 ; KERNAL
-NMIVEC      = $0318
-JIFFY_LO    = $A2
-KEYCOUNT    = $C6               ; keyboard buffer length
-CURKEY      = $CB               ; matrix code of held key, 64 = none
-STOP_KEY    = 63                ; ...of RUN/STOP
 BLNSW       = $CC               ; cursor blink switch (nonzero = off)
-SHFLAG      = $028D             ; shift/C=/ctrl flags
 MODE        = $0291             ; $80 = disable shift+C= charset toggle
 
-; protocol
-OP_GOTO     = 1
-OP_COLOR    = 2
-OP_PUT      = 3
-OP_REPEAT   = 4
-OP_SCROLL   = 5
-OP_COLORS   = 6
-OP_CLS      = 7
-OP_FRAME    = 8
-OP_SPRITE   = 9
-OP_NOSPRITE = 10
-OP_GLYPH    = 11
-OP_UNDERLINE = 12
-OP_BITS     = 13
-OP_VIEW     = 14
-OP_POKE     = 15
-NUM_OPS     = GAME_OPS          ; 16 and 17 (SOUND, PROBE) are in sound.inc, 18 up in game.inc
-
 MSG_ACK     = 1
-MSG_KEY     = 2
-MSG_HELLO_ON = 4
-DISPLAY_C64_HIRES = 3
 
 COLS        = 40
 ROWS        = 25
-SPACE       = 32
-
-REPEAT_DELAY = 20               ; jiffies before auto-repeat
-REPEAT_RATE  = 3                ; jiffies between repeats
 
 ; --- zero page (BASIC's area; BASIC is not running) -------------------------
 bp          = $FB               ; bitmap address of the current cell
@@ -86,13 +39,8 @@ cp          = $FD               ; colour address of the current cell
 src         = $10
 dst         = $12
 cnt         = $16               ; 16-bit byte count for copy / fill
-rp          = $18               ; ring buffer read pointer
-wp          = $1A               ; ring buffer write pointer (NMI)
 count       = $1C
 curcolor    = $1D               ; foreground << 4 | background
-lastjiffy   = $20
-lastkey     = $21
-repcnt      = $22
 top         = $23
 bot         = $24
 lines       = $25
@@ -102,62 +50,7 @@ tmp         = $29
 tmp2        = $2A
 uline       = $2B               ; $FF: underline what is written, else 0
 
-CLIENT_ASK  = 1                 ; this client can ask for the dial's settings (dialask.inc)
-
-.ifndef MULTI
-; --- BASIC stub: 10 SYS2061 -------------------------------------------------
-.segment "LOADADDR"
-        .word $0801
-
-.segment "CODE"
-        .word @next, 10
-        .byte $9E, "2061", 0
-@next:  .word 0
-
-start:
-        .assert start = 2061, error, "SYS address mismatch"
-        sei
-        lda #$36                ; BASIC's ROM out, as on every C64 client (the SID scripts' RAM is under it)
-        sta $01
-        jsr init_font
-        jsr init_screen
-        jsr sound_init
-        jsr game_init
-        lda #<RBUF
-        sta rp
-        sta wp
-        lda #>RBUF
-        sta rp+1
-        sta wp+1
-        lda #64
-        sta lastkey
-        lda #<nmi
-        sta NMIVEC
-        lda #>nmi
-        sta NMIVEC+1
-        jsr init_acia
-        cli
-        jsr dial                ; through a WiFi modem, if built with DIAL
-        lda #MSG_HELLO_ON
-        jsr send
-        lda #DISPLAY_C64_HIRES
-        jsr send
-
-; --- main loop: decode commands forever ------------------------------------
-cmdloop:
-        jsr keypoll
-        jsr rb_get
-        cmp #NUM_OPS
-        bcs cmdloop
-        asl
-        tax
-        lda optable+1,x
-        pha
-        lda optable,x
-        pha
-        rts
-.endif
-
+; Opcodes 0-28 (main.s handles 27, MODE).
 optable:
         .word cmdloop-1, op_goto-1, op_color-1, op_put-1, op_repeat-1
         .word op_scroll-1, op_colors-1, op_cls-1, op_frame-1
@@ -166,9 +59,7 @@ optable:
         .word op_sound-1, op_probe-1
         .word op_sprdef-1, op_spr-1, op_glide-1, op_move-1
         .word op_sidw-1, op_sidplay-1, op_sidstop-1, op_sidreset-1, op_sprmc-1
-.ifdef MULTI
-        .word cmdloop-1, cmdloop-1      ; (MODE, CELLS: the combined client's table is as long as the others')
-.endif
+        .word cmdloop-1, cmdloop-1      ; (MODE; CELLS, which the hi-res screen does without: it has BITS)
 
 op_goto:
         jsr rb_get
@@ -312,33 +203,6 @@ op_bits:
         bne @cell
 @done:  jmp cmdloop
 
-.ifndef MULTI                   ; (the combined client's core has this once)
-VIEW_TERM_CR1 = $3B             ; the terminal: hi-res bitmap (view.inc)
-VIEW_TERM_MEM = ((COLRAM & $3FFF) / $400) << 4 | ((BITMAP & $3FFF) / $2000) << 3
-VIEW_BANK0  = 0
-.include "view.inc"
-.endif
-
-.ifndef MULTI                   ; (the combined client's core has this once)
-; POKE lo hi n d1..dn: n bytes (0 = 256) from lo + 256 * hi on.
-op_poke:
-        jsr rb_get
-        sta dst
-        jsr rb_get
-        sta dst+1
-        jsr rb_get
-        sta count
-@loop:  jsr rb_get
-        ldy #0
-        sta (dst),y
-        inc dst
-        bne :+
-        inc dst+1
-:       dec count
-        bne @loop
-        jmp cmdloop
-
-.endif
 ; SCROLL top bot n: rows top..bot move up n, vacated rows cleared. The write
 ; position is unchanged.
 op_scroll:
@@ -520,159 +384,8 @@ clear_screen:
         jsr fill
         jmp home
 
-.ifndef MULTI                   ; (the combined client's core has this once)
-; Copy cnt bytes from (src) to (dst), ascending, so dst may overlap above src.
-copy:
-        ldy #0
-        ldx cnt+1
-        beq @part
-@page:  lda (src),y
-        sta (dst),y
-        iny
-        bne @page
-        inc src+1
-        inc dst+1
-        dex
-        bne @page
-@part:  ldx cnt
-        beq @done
-@byte:  lda (src),y
-        sta (dst),y
-        iny
-        dex
-        bne @byte
-@done:  rts
-
-; Fill cnt bytes from (dst) on with A.
-fill:
-        ldy #0
-        ldx cnt+1
-        beq @part
-@page:  sta (dst),y
-        iny
-        bne @page
-        inc dst+1
-        dex
-        bne @page
-@part:  ldx cnt
-        beq @done
-@byte:  sta (dst),y
-        iny
-        dex
-        bne @byte
-@done:  rts
-
-.endif
-.ifndef MULTI
-; --- serial ------------------------------------------------------------------
-
-; Next received byte in A, flags set from it; polls the keyboard while
-; waiting. Clobbers Y.
-rb_get:
-        lda rp
-        cmp wp
-        bne @have
-        lda rp+1
-        cmp wp+1
-        bne @have
-        jsr keypoll
-        jmp rb_get
-@have:  ldy #0
-        lda (rp),y
-        sta tmp
-        inc rp
-        bne @out
-        inc rp+1
-        lda rp+1
-        cmp #>RBUF_END
-        bne @out
-        lda #>RBUF
-        sta rp+1
-@out:   lda tmp
-        rts
-
-; Transmit A (waits for the transmit register to empty).
-send:
-        pha
-:       lda ACIA_STATUS
-        and #$10
-        beq :-
-        pla
-        sta ACIA_DATA
-        rts
-
-; The byte is stored before wp moves on, so rb_get never reads ahead of it.
-nmi:
-        pha
-        tya
-        pha
-        lda ACIA_STATUS         ; also acknowledges the interrupt
-        bpl @restore            ; bit 7: the ACIA's interrupt, else RESTORE
-        and #$08                ; receive register full?
-        beq @out
-        lda ACIA_DATA
-        ldy #0
-        sta (wp),y
-        inc wp
-        bne @out
-        inc wp+1
-        lda wp+1
-        cmp #>RBUF_END
-        bne @out
-        lda #>RBUF
-        sta wp+1
-@out:   pla
-        tay
-        pla
-        rti
-@restore:
-        lda CURKEY
-        cmp #STOP_KEY           ; RUN/STOP+RESTORE?
-        bne @out
-        jmp restart
-
-init_acia:
-        sta ACIA_STATUS         ; programmed reset
-        lda #%00011111          ; 1 stop, 8 bits, internal clock, 19200 (38400 on SwiftLink)
-        sta ACIA_CTRL
-        lda #%00001001          ; no parity, RTS low, TX irq off, RX irq on, DTR on
-        sta ACIA_CMD
-        lda ACIA_DATA           ; discard anything pending
-        rts
-
-.include "dial.inc"
-.include "restart.inc"
-
-; The next byte the NMI has put in the receive ring: C set and A = it, else C clear. Clobbers X.
-dial_rx:
-        lda rp
-        cmp wp
-        bne @have
-        lda rp+1
-        cmp wp+1
-        beq @none
-@have:  ldx #0
-        lda (rp,x)
-        sta tmp
-        inc rp
-        bne @out
-        inc rp+1
-        lda rp+1
-        cmp #>RBUF_END
-        bne @out
-        lda #>RBUF
-        sta rp+1
-@out:   lda tmp
-        sec
-        rts
-@none:  clc
-        rts
-.endif
-
 ; The dial's progress, and asking for its settings (dialask.inc), draw through this.
-UI_COLS     = 40
-CFG         = $0334             ; the cassette buffer
-.if ::DIAL_DBGCODE              ; (:: as these are also assembled in a scope: mainall.s)
+.if ::DIAL_DBGCODE              ; (:: as this is assembled in a scope)
 ; A = screen code, X = column, Y = row.
 ui_cell:
         sta ui_code
@@ -686,44 +399,6 @@ ui_code: .byte 0
 
 ui_clear:
         jmp clear_screen
-.endif
-.ifndef MULTI
-.include "dialask.inc"
-
-; --- keyboard ----------------------------------------------------------------
-
-; Once per jiffy: send KEY for new presses and auto-repeats. Clobbers A.
-keypoll:
-        jsr game_poll
-        lda JIFFY_LO
-        cmp lastjiffy
-        beq @out
-        sta lastjiffy
-        lda #0
-        sta KEYCOUNT            ; we read the matrix, not the KERNAL buffer
-        lda CURKEY
-        cmp #64
-        beq @none
-        cmp lastkey
-        bne @new
-        dec repcnt
-        bne @out
-        lda #REPEAT_RATE
-        sta repcnt
-        bne @send
-@new:   sta lastkey
-        lda #REPEAT_DELAY
-        sta repcnt
-@send:  lda #MSG_KEY
-        jsr send
-        lda lastkey
-        jsr send
-        lda SHFLAG
-        and #7
-        jsr send
-@out:   rts
-@none:  sta lastkey
-        rts
 .endif
 
 ; --- setup -------------------------------------------------------------------
@@ -767,8 +442,8 @@ banner:
 
 ; FONT: codes 0-127 from the character ROM's lowercase half with the custom
 ; glyphs patched over it, turned into one page per pixel row; 128-255 blank
-; until the bridge loads them. Called with interrupts off (the combined client: from
-; its copy of the ROM's font).
+; until the bridge loads them. Called with interrupts off, from main.s's copy of the
+; ROM's font.
 init_font:
         ldx #0
         txa
@@ -782,12 +457,6 @@ init_font:
         sta FONT+$700,x
         inx
         bne :-
-.ifndef MULTI
-        lda $01
-        pha
-        lda #$33                ; character ROM visible at $D000
-        sta $01
-.endif
         lda #<ROMCHARS
         sta src
         lda #>ROMCHARS
@@ -796,10 +465,6 @@ init_font:
 @rom:   jsr store_glyph
         inx
         bpl @rom
-.ifndef MULTI
-        pla
-        sta $01
-.endif
 
         lda #<glyph_data
         sta src
@@ -831,43 +496,6 @@ store_glyph:
         inc src+1
 :       rts
 
-.ifndef MULTI                   ; (the combined client's core has these once)
-; Byte offsets of text rows 0-25 in the bitmap (320 per row) and colours (40).
-o320lo:
-.repeat ROWS+1, i
-        .byte <(i * 320)
-.endrep
-o320hi:
-.repeat ROWS+1, i
-        .byte >(i * 320)
-.endrep
-o40lo:
-.repeat ROWS+1, i
-        .byte <(i * 40)
-.endrep
-o40hi:
-.repeat ROWS+1, i
-        .byte >(i * 40)
-.endrep
-.endif
-
-.ifdef MULTI
 MOVE_BITMAP = 1
 MOVE_GROUP  = 1
 .include "move.inc"
-.else
-.macro RX_PENDING target
-        lda rp
-        cmp wp
-        bne target
-        lda rp+1
-        cmp wp+1
-        bne target
-.endmacro
-.include "sound.inc"
-GAME_BANK1  = 1
-MOVE_BITMAP = 1
-MOVE_GROUP  = 1
-.include "game.inc"
-.include "glyphs.inc"
-.endif

@@ -1,11 +1,10 @@
-// Runs a C64 client (--display c64, c64-hires, c64-80 or c64-53: petty.prg, pettyhires.prg, petty80.prg,
-// petty53.prg in build/; --hires is --display c64-hires) in VICE and checks what the game
+// Runs the C64 client (build/petty.prg) in VICE, switched with MODE to one of its screens (--display c64,
+// c64-hires, c64-80 or c64-53), and checks what the game
 // hardware commands (sprites, glides, MOVE, SID scripts: protocol.js) do to the
 // emulated machine, through VICE's remote monitor. This script is the bridge:
-// VICE's SwiftLink dials it. Needs x64sc; opens a VICE window. --all: the
-// combined client (build/pettyall.prg), switched to that screen with MODE first.
+// VICE's SwiftLink dials it. Needs x64sc.
 //
-// usage: node scripts/vice-game-check.js [--all] [--display KEY | --hires] [--keep] [prg]
+// usage: node scripts/vice-game-check.js [--display KEY] [--keep] [prg]
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, copyFileSync, rmSync, existsSync } from 'node:fs';
@@ -17,17 +16,16 @@ import assert from 'node:assert/strict';
 import { MSG, OP, Decoder, encodeSprDef, encodeSpr, encodeGlide, encodeMove, encodeSidW, encodeSidPlay, encodeSidStop, encodePoke, DISPLAY } from '../src/protocol.js';
 import { compileScript, SCRIPT_BASE } from '../src/game.js';
 
-const { values: opt, positionals } = parseArgs({ allowPositionals: true, options: { keep: { type: 'boolean', default: false }, hires: { type: 'boolean', default: false }, all: { type: 'boolean', default: false }, display: { type: 'string', default: 'c64' } } });
-const D = opt.hires ? DISPLAY.C64_HIRES : Object.values(DISPLAY).find(d => d.key === opt.display);
+const { values: opt, positionals } = parseArgs({ allowPositionals: true, options: { keep: { type: 'boolean', default: false }, display: { type: 'string', default: 'c64' } } });
+const D = Object.values(DISPLAY).find(d => d.key === opt.display);
 if (!D || !D.game) { console.error(`--display ${opt.display}: c64, c64-hires, c64-80 or c64-53`); process.exit(2); }
-const PRGS = { c64: 'petty', 'c64-hires': 'pettyhires', 'c64-80': 'petty80', 'c64-53': 'petty53' };
-const prg = resolve(positionals[0] ?? fileURLToPath(new URL(`../../build/${opt.all ? 'pettyall' : PRGS[D.key]}.prg`, import.meta.url)));
+const prg = resolve(positionals[0] ?? fileURLToPath(new URL('../../build/petty.prg', import.meta.url)));
 const bitmap = D !== DISPLAY.C64; // the hi-res, soft 80 and soft 53 screens
 const group = D.quad ? 4 : D.pair ? 2 : 1; // columns a MOVE moves together; cells a group holds: 1, 1, 3
 const groupCells = D.quad ? 3 : 1;
-// Where the client keeps what: shapes, their pointers (and the number of shape 0's), the text screen. The combined
-// client's text screen is in the VIC's second bank, as the bitmap screens are.
-const L = bitmap || opt.all ? { blocks: 0x4800, ptrs: 0x5FF8, ptr0: 0x20, screen: 0x5C00 } : { blocks: 0x2000, ptrs: 0x07F8, ptr0: 0x80, screen: 0x400 };
+// Where the client keeps what: shapes, their pointers (and the number of shape 0's), the text screen, all in the
+// VIC's second bank.
+const L = { blocks: 0x4800, ptrs: 0x5FF8, ptr0: 0x20, screen: 0x5C00 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.error('[vice-check]', ...a);
 const freePort = () => new Promise((ok, fail) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => ok(port)); }).on('error', fail); });
@@ -104,20 +102,13 @@ async function check(name, fn) {
 }
 
 try {
-  if (opt.all) {
-    await waitFor(() => take(MSG.HELLO_ON), 'HELLO_ON from the client', 60000);
-    await waitFor(() => take(MSG.MODES), 'MODES');
-    await sleep(300);
-    rx.length = 0;
-    sock.write(Buffer.from([OP.MODE, D.id]));
-    await waitFor(() => rx.length >= 4, 'HELLO_ON after MODE');
-    assert.deepEqual(rx.splice(0, 4), [MSG.HELLO_ON, D.id, MSG.MODES, 0x9D]);
-  } else if (D !== DISPLAY.C64) {
-    await waitFor(() => take(MSG.HELLO_ON), 'HELLO_ON from the client', 60000);
-    await waitFor(() => take(D.id), 'its display');
-  } else {
-    await waitFor(() => take(MSG.HELLO), 'HELLO from the client', 60000);
-  }
+  await waitFor(() => take(MSG.HELLO_ON), 'HELLO_ON from the client', 60000);
+  await waitFor(() => take(MSG.MODES), 'MODES');
+  await sleep(300);
+  rx.length = 0;
+  sock.write(Buffer.from([OP.MODE, D.id]));
+  await waitFor(() => rx.length >= 4, 'HELLO_ON after MODE');
+  assert.deepEqual(rx.splice(0, 4), [MSG.HELLO_ON, D.id, MSG.MODES, 0x9D]);
   log('client is up');
   await sleep(500);
 

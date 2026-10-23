@@ -19,7 +19,7 @@ const { values: opt } = parseArgs({ options: {
   sweep: { type: 'string' },
   sid: { type: 'string', default: '0' },
   model: { type: 'string', default: 'c64' },
-  prg: { type: 'string', default: 'build/pettyhires.prg' },
+  prg: { type: 'string', default: 'build/petty.prg' },
   out: { type: 'string', default: 'build/sound' },
   port: { type: 'string', default: '6464' },
   keep: { type: 'boolean', default: false },

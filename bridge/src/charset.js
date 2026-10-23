@@ -25,7 +25,7 @@ import { toScreenCode, INVERSE, hasGlyph } from './glyphs.js';
 import { extendedGlyph } from './extglyphs.js';
 import { OP, encodePoke } from './protocol.js';
 
-export const CHARSET_ADDR = 0x3800; // c64/main.s CHARSET: 2K, 8 bytes a screen code
+export const CHARSET_ADDR = 0x4000; // c64/text.s CHARSET: 2K, 8 bytes a screen code
 const INVERSE_ADDR = CHARSET_ADDR + 0x400;
 
 // snapshot() glyph numbers 0x8000 + slot are the hi-res client's slots 128-255, which

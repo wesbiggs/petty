@@ -1,5 +1,5 @@
 ; PETTY - MOVE on the C64's bitmap screens (move.inc): the rows of the rectangle, as
-; bitmap bytes and colours. Needs the client's BITMAP, COLRAM, o320lo/hi, o40lo/hi, copy.
+; bitmap bytes and colours. Needs BITMAP, COLRAM, o320lo/hi, o40lo/hi and copy (main.s).
 
 ; (hi-res) byte offsets: x * 8, the destination's, and the width * 8.
 move_prep:
