@@ -15,7 +15,7 @@ DIALASK ?=
 VICE_FLAGS := -acia1 -acia1mode 1 -acia1base 0xDE00 -acia1irq 1 \
               -myaciadev 0 -rsdev1 127.0.0.1:$(PORT) +rsdev1ip232 -rsdev1baud 38400
 
-.PHONY: all clean bridge theme title vice vice128 vice80 vice53 vicehires run test game-check
+.PHONY: all clean bridge theme title vice vice128 vice80 vice53 vicehires run test vice-test game-check
 
 all: $(PRG) $(PRG128) $(PRG80) $(PRG53) $(PRGHI)
 
@@ -118,7 +118,14 @@ test: bridge/node_modules
 clean:
 	rm -rf $(BUILD)
 
-# The text client's game hardware, checked in VICE (opens a window).
-game-check: $(PRG) $(PRGHI)
-	node bridge/scripts/vice-game-check.js $(PRG)
-	node bridge/scripts/vice-game-check.js --hires $(PRGHI)
+# The clients in VICE (bridge/vice/; a window each, unless VICE was built headless).
+# Also builds a C64 client that dials, for the dial's test. VICE_TESTS=game.js runs one file.
+VICE_TESTS ?= *.js
+VICE_JOBS ?= 2
+vice-test: all bridge/node_modules
+	$(MAKE) BUILD=$(BUILD)/dial DIAL=petty.test:6400 DIALINIT=ATE0 $(BUILD)/dial/petty.prg
+	PETTY_BUILD=$(abspath $(BUILD)) node --test --test-concurrency=$(VICE_JOBS) $(addprefix bridge/vice/,$(VICE_TESTS))
+
+# The text and hi-res clients' game hardware, checked in VICE.
+game-check:
+	$(MAKE) vice-test VICE_TESTS=game.js
