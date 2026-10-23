@@ -40,21 +40,21 @@
 //                               and loads the code's tables first, with POKE at DTAB, NIDX and
 //                               OUTTAB (sound/session.js). No FRAME follows: it would be data.
 //   11                 PROBE    measure the machine: the C64 answers PROBE
-//   12 slot d1..d63    SPRDEF   (C64 text, hi-res) shape for hardware sprite shape slot 0-63 (see game.js)
+//   12 slot d1..d63    SPRDEF   (C64) shape for hardware sprite shape slot 0-63 (see game.js)
 //   13 n slot color flags xlo y
-//                      SPR      (C64 text, hi-res) sprite n (0-7) shows shape `slot` at x = xlo + 256 * flags
+//                      SPR      (C64) sprite n (0-7) shows shape `slot` at x = xlo + 256 * flags
 //                               bit 0, y (the VIC's coordinates: 24, 50 is the top left of the
 //                               text); flags bit 1 on, 2 multicolour, 3 wide, 4 tall, 5 behind text
-//   14 n frames dx dy  GLIDE    (C64 text, hi-res) sprite n moves by (dx, dy), signed pixels, every frame
+//   14 n frames dx dy  GLIDE    (C64) sprite n moves by (dx, dy), signed pixels, every frame
 //                               for `frames` frames; the C64 sends GLIDE when all have ended
-//   15 x y w h dx dy   MOVE     (C64 text, hi-res) copy the w x h cells at x, y (codes and colours) to
+//   15 x y w h dx dy   MOVE     (C64) copy the w x h cells at x, y (codes and colours) to
 //                               x + dx, y + dy (signed), all at once
-//   16 n (reg val)*n   SIDW     (C64 text, hi-res) write SID registers now
-//   17 ch lo hi m0..m3 SIDPLAY  (C64 text, hi-res) start the SID script at lo + 256 * hi on channel
+//   16 n (reg val)*n   SIDW     (C64) write SID registers now
+//   17 ch lo hi m0..m3 SIDPLAY  (C64) start the SID script at lo + 256 * hi on channel
 //                               0-3; its writes are limited to the registers in the 25-bit mask
-//   18 ch              SIDSTOP  (C64 text, hi-res) stop channel ch (255: all), gates down
-//   19                 SIDRESET (C64 text, hi-res) stop all channels, zero the SID
-//   1A c1 c2           SPRMC    (C64 text, hi-res) the sprites' two shared multicolour colours
+//   18 ch              SIDSTOP  (C64) stop channel ch (255: all), gates down
+//   19                 SIDRESET (C64) stop all channels, zero the SID
+//   1A c1 c2           SPRMC    (C64) the sprites' two shared multicolour colours
 //   1C row cell n (d0..d7 color)*n
 //                      CELLS    (C64 soft 80 and 53 columns) write n cells of the bitmap, 8 bytes and
 //                               a colour each, from cell `cell` (0-39) of text row `row` on: an inline

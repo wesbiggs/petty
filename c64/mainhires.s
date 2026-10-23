@@ -8,9 +8,10 @@
 ; 128-255 with GLYPH as it needs them. UNDERLINE sets the bottom pixel row
 ; of what is written next.
 ;
-; Memory (the VIC uses its second bank, $4000-$7FFF): font $4000-$47FF, cell
-; colours $5C00, bitmap $6000-$7F3F, receive ring $8000-$8FFF (4K: a bitmap
-; scroll takes ~90 ms). Sound (sound.inc) keeps its buffer and tables at $CD00-$CFFF.
+; Memory (the VIC uses its second bank, $4000-$7FFF): font $4000-$47FF, the
+; game's sprite shapes $4800-$57FF, cell colours $5C00, bitmap $6000-$7F3F,
+; receive ring $8000-$8FFF (4K: a bitmap scroll takes ~90 ms), SID scripts
+; $9000-$9FFF. Sound (sound.inc) keeps its buffer and tables at $CD00-$CFFF.
 ;
 ; The combined client (mainall.s) also assembles this file, in a scope with MULTI
 ; defined: then only the screen's own part is here (.ifndef MULTI marks the rest).

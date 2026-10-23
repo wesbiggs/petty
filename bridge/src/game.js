@@ -1,8 +1,10 @@
 // Game hardware for a program running in the bridge's terminal: hardware
-// sprites (OSC 8348) and the SID (OSC 8349) on the C64 text client. Where
+// sprites (OSC 8348) and the SID (OSC 8349) on the C64 clients. Where
 // say and play (OSC 8347) are about sound files, these are about the machine:
 // a program that runs on the host and uses the C64 as its screen, keyboard,
-// sprite chip and sound chip. (The C64 text and hi-res clients.)
+// sprite chip and sound chip. (Every C64 client; on the soft 80- and 53-column
+// screens the sprites the program uses are taken from the ones that repaint
+// colours, and MOVE moves whole groups of columns.)
 //
 // OSC 8348: sprites. Positions are pixels of the 320x200 text screen (0, 0
 // is the top left of cell 0, 0; the VIC's own coordinates are 24 and 50 more).

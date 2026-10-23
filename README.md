@@ -165,6 +165,24 @@ plus:
 
 The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
 
+## What each client can do
+
+| | C64 text | C64 hi-res | C64 soft 80 | C64 soft 53 | C128 |
+|---|---|---|---|---|---|
+| Screen | 40×25 | 40×25 | 80×25 | 53×25 | 80×25 |
+| Colours | one a cell, on the screen colour | foreground and background a cell | one per 2 cells (sprites repaint the rest) | one per 4 cells (likewise) | one a cell, on the screen colour |
+| Extended glyphs (box drawing, braille, …) | aliased | yes | aliased | aliased | yes |
+| Underline | no | yes | yes | yes | yes |
+| Pictures in the terminal (`imgcat`) | blocks | pixels | pixels, in whole 8×8 cells | pixels, in whole 8×8 cells | pixels, a colour a cell on the screen colour |
+| Full-screen pictures (`petty-view`) | yes | yes | yes | yes | no |
+| Game hardware (sprites, MOVE, SID scripts) | yes | yes | yes | yes | no |
+| Sound (`say`, `play`) | yes | yes | yes | yes | yes |
+
+The combined C64 client ([below](#switching-screens-the-combined-c64-client)) can do what each of its screens can. The
+gaps are the machines': the text screen has no bitmap for a picture's pixels; the soft screens' fonts are 4 and 6
+pixels wide, too narrow for the 8×8 extended glyphs; and the C128's VDC has no sprites and no multicolour bitmap (its
+SID could play the game's scripts, which is not done).
+
 ## How it maps the display
 
 - **Characters:** the lowercase character ROM is copied to RAM at `$3800`, and
@@ -226,13 +244,14 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
   whole bitmap, which takes about 90 ms, as on the soft 80-column screen.
 
   ![ttysolitaire on the text client (left) and the hi-res client (right)](docs/solitaire.png)
-- **Pictures (hi-res C64):** inline images in iTerm2's format (OSC 1337, as
-  sent by `imgcat`) are drawn in the bitmap. iTerm2's own `imgcat` works;
+- **Pictures in the terminal:** inline images in iTerm2's format (OSC 1337, as
+  sent by `imgcat`) are drawn in pixels on every client but the text one, which
+  shows blocks of colour. iTerm2's own `imgcat` works;
   where there is none, the bridge puts a small one
   ([bridge/bin/imgcat](bridge/bin/imgcat)) at the end of the program's PATH:
 
   ```bash
-  imgcat photo.png           # its own size, shrunk to fit 40×25 cells
+  imgcat photo.png           # its own size, shrunk to fit the screen
   imgcat -W 20 logo.png      # 20 cells wide (also Npx, N%; -H for height)
   imgcat -t flat art.png     # never dither (-t dither: always)
   imgcat picture.dd          # Doodle! or Art Studio (.art): hi-res, pixel for pixel
@@ -268,9 +287,37 @@ The mapping lives in [bridge/src/keymap.js](bridge/src/keymap.js).
   cursor ends up after its last row. The terminal holds a private-use placeholder character for each
   of the picture's cells, so it scrolls, clears and is overwritten like text,
   and a redraw (a theme switch, a reconnect) draws it again. A whole
-  screen is about 9 KB, sent 2 KB per frame: about 2.5 s at 38400 baud.
-  The other clients show a picture as blocks of colour, one per cell
+  screen is about 9 KB, sent 2 KB per frame: about 2.5 s at 38400 baud
   ([bridge/src/image.js](bridge/src/image.js)).
+
+  On the soft 80- and 53-column screens a picture is whole 8×8 cells of the
+  bitmap, each with its own two colours, as on the hi-res screen: 2 columns a
+  cell at 80, 4 columns three cells at 53 (a picture is padded to whole groups
+  and starts on one), sent with CELLS. Text written over part of a picture's
+  cell takes that cell's colour. On the C128, whose VDC has one background for
+  the whole screen, each 8×8 cell is a character of its own in the one colour
+  that comes closest on the screen colour, twice as wide as on the C64 (the
+  VDC's pixels are half as wide); identical cells share a character, and a
+  picture has at most 300 cells, since they share the 383 loadable characters
+  with the extended glyphs. Past those, cells are blocks. The text client shows
+  a picture as blocks of colour, one per cell.
+
+- **Full-screen pictures (`petty-view`):** on every C64 client, a picture can
+  take the whole screen until a key is pressed (the key isn't passed on; the
+  terminal carries on unseen, and is redrawn after). The pictures go to the
+  VIC's second bank, where the bitmap screens keep theirs; the text client
+  switches there and back, and sprites are hidden meanwhile.
+
+  ```bash
+  petty-view picture.koa          # Koala Painter: multicolour, as it is
+  petty-view picture.art          # Art Studio, or Doodle! (.dd): hi-res, as it is
+  petty-view photo.png            # anything else, converted to multicolour
+  petty-view -t hires photo.png   # ...or to hi-res (two colours per 8×8 cell, on black)
+  petty-view -t hires:flat x.png  # :flat or :dither as for imgcat
+  ```
+
+  On the C128, `petty-view` draws the picture in the terminal, as `imgcat`
+  does. `imgcat` still shows Koala pictures and `-t koala` full screen.
 
   Many pictures are released as programs that unpack and show themselves
   (`…_exe.prg`). `prg2pic.js` runs one in VICE until a bitmap has been on
@@ -331,18 +378,19 @@ aliases to it, such as `□`). A character with a `slot` is a new one, for a pro
 
 The glyphs are sent after each full redraw (a client start, a theme switch), so a reset restores them.
 
-## Game hardware (the C64 text and hi-res clients)
+## Game hardware (the C64 clients)
 
 A program that runs entirely on the host can use the C64 as its sprite chip and sound chip as well as its screen: it prints
 escape sequences and the bridge turns them into C64 commands. **OSC 8348** is sprites, **OSC 8349** the SID. They work
-on the 40-column text and hi-res clients; the others ignore them. The parts are described at the top of
+on every C64 client; the C128 ignores them. On the soft 80- and 53-column screens the sprites a program uses are taken
+from the 8 that repaint colours (which get the rest), and MOVE moves whole groups of columns (2 at 80 columns, 4 at 53). The parts are described at the top of
 [bridge/src/game.js](bridge/src/game.js) (the sequences) and in [protocol.js](bridge/src/protocol.js) (the wire commands).
 [bridge/lib/pettygame.py](bridge/lib/pettygame.py) prints them from Python, and
 [bridge/examples/game-demo.py](bridge/examples/game-demo.py) is a small game (a hero walking over a scrolling map,
 shooting arrows, with a tune): `make bridge CMD="-- python3 bridge/examples/game-demo.py"`, then `make vice`.
 
-**Sprites.** Eight hardware sprites, 64 shapes kept in the C64 (`$2000-$2FFF` on the text client, `$4800-$57FF` on the hi-res one and on both screens of the
-combined client):
+**Sprites.** Eight hardware sprites, 64 shapes kept in the C64 (`$2000-$2FFF` on the text client, `$4800-$57FF` on the others, and on
+every screen of the combined client):
 
 ```
 ESC ] 8348 ; def ; SLOT ; BASE64(63 bytes) BEL          a shape (24x21, 3 bytes a row)
@@ -379,8 +427,8 @@ few cells (a map as the camera follows the hero) and sends one `MOVE` (copy a re
 each direction) and the cells that are new, rather than the whole viewport again: about 150 bytes for a one-cell pan of 21x19 cells
 instead of 2 KB. Vertical scrolls of the whole screen still use `SCROLL`.
 
-`node bridge/scripts/vice-game-check.js` (or `make game-check`) runs the text client (`--hires`: the hi-res one; `--all`: the combined
-client, switched to either) in VICE and checks all of this against the
+`node bridge/scripts/vice-game-check.js` (or `make game-check`) runs the text client (`--display c64-hires`, `c64-80`, `c64-53`: the
+others; `--all`: the combined client, switched to that screen) in VICE and checks all of this against the
 emulated machine: shapes, positions, flags, glides across x = 256, random `MOVE`s against the reference decoder, and script timing and
 masking in VICE's SID dump.
 
@@ -395,7 +443,8 @@ ESC ] 8350 ; display BEL
 
 and read back, on its input, `ESC ] 8350 ; display ; KEY ; COLS ; ROWS ; FLAGS BEL`. KEY is `c64`, `c64-hires`, `c64-80`, `c64-53` or `c128`;
 FLAGS is a comma-separated list of `hires`, `ext`, `game`, `sound`, `reverse`, `pair`, `quad` (what the display can do, as in the sections
-above; `pair` and `quad`: 2 or 4 neighbouring cells share a colour). The answer waits for the client's HELLO, so asking as the program starts is fine: it comes when the client arrives, and
+above; `pair` and `quad`: 2 or 4 neighbouring cells share a colour), `picture` (full-screen pictures) and `images` (`imgcat`'s pictures in
+pixels). The answer waits for the client's HELLO, so asking as the program starts is fine: it comes when the client arrives, and
 is never a guess. A bridge without this answers nothing, so a program should give up after a second or two.
 `node bridge/scripts/ask-display.js` is a program that asks and prints the answer.
 
@@ -403,8 +452,8 @@ is never a guess. A bridge without this answers nothing, so a program should giv
 
 `build/pettyall.prg` is the text, hi-res, soft 53-column and soft 80-column clients in one program (about 11 KB), and the
 bridge says which screen it should be on. The text screen draws fastest, the hi-res one has a colour per cell and
-the extra glyphs, and the soft 53- and 80-column ones fit wider programs. The game hardware works on the text and
-hi-res screens, as in their own clients. A switch clears the screen, resizes the program's terminal (the program gets a
+the extra glyphs, and the soft 53- and 80-column ones fit wider programs. The game hardware, pictures and the rest
+work on each screen as in its own client. A switch clears the screen, resizes the program's terminal (the program gets a
 SIGWINCH, and a shell rewraps its lines) and redraws it all: quick on the text screen, about a second at 80 columns.
 
 The client starts on hi-res (`make START=c64-80`: another; `c64`, `c64-hires`, `c64-53` or `c64-80`). Then the
@@ -505,10 +554,14 @@ The control port takes `say TEXT` and `play FILE` (`node bridge/scripts/petty-ct
 ## Protocol
 
 See [bridge/src/protocol.js](bridge/src/protocol.js). Host→C64 opcodes are GOTO,
-COLOR, PUT, REPEAT, SCROLL, COLORS, CLS and FRAME, plus SPRITE and NOSPRITE for
-the soft 80- and 53-column screens, GLYPH for the hi-res one and the C128, and
-UNDERLINE, BITS (cells of a picture, as raw pixels), VIEW (full-screen
-multicolour pictures), POKE (to load them), and SOUND and PROBE (see [Sound](#sound-the-c64-and-c128-clients)), which every client has.
+COLOR, PUT, REPEAT, SCROLL, COLORS, CLS and FRAME, plus SPRITE and NOSPRITE
+(the colour-repairing sprites) and CELLS (a picture's bitmap cells) for the soft
+80- and 53-column screens, GLYPH for the hi-res one and the C128, UNDERLINE for
+the hi-res and soft screens, BITS (cells of a picture, as raw pixels) for the
+hi-res one, VIEW (full-screen pictures, multicolour or hi-res) and POKE (to load
+them) for every C64 client, the game hardware's (SPRDEF to SPRMC, see
+[Game hardware](#game-hardware-the-c64-clients)) for every C64 client too, MODE
+for the combined one, and SOUND and PROBE (see [Sound](#sound-the-c64-and-c128-clients)), which every client has.
 Every frame ends with FRAME and
 the C64 answers ACK. The bridge keeps only one frame in flight, so fast output
 merges into fewer frames instead of overflowing the client's receive buffer (256
@@ -545,6 +598,15 @@ node bridge/scripts/fake-c64.js --modes 6464 $'echo hi\r'    # same, switching s
 node bridge/scripts/fake-c64.js --serial /dev/ttys005 0 $'echo hi\r'  # to a bridge on --serial
 ```
 
+With VICE's `x64sc` on the PATH, three checks run the real clients in it, with a script for a bridge, and compare what
+they did to the machine's memory:
+
+```bash
+make game-check      # sprites, glides, MOVE and SID scripts, on every C64 client and every screen of the combined one
+make mode-check      # the combined client's screens, byte for byte against the single-screen clients'
+make picture-check   # full-screen pictures, inline picture cells and underline, on every C64 client
+```
+
 To try the dial step in VICE, put a pretend WiFi modem between VICE and the
 bridge: it answers AT commands and dials `ATDT host:port` over TCP.
 
@@ -568,21 +630,26 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `c64/main.s` | ca65 client: NMI serial receive, command decoder, keyboard scan |
 | `c64/petty.cfg` | linker config (program must end below `$2000`) |
 | `c64/main80.s` | soft 80-column C64 client: the same, drawing into the bitmap |
-| `c64/petty80.cfg` | linker config (program must end below `$2000`) |
+| `c64/petty80.cfg` | linker config (program must end below `$4000`) |
 | `c64/main53.s` | soft 53-column C64 client: the same, with 6-pixel characters |
-| `c64/petty53.cfg` | linker config (program must end below `$2000`, where its glyph tables start) |
+| `c64/petty53.cfg` | linker config (program must end below `$4000`) |
 | `c64/mainhires.s` | hi-res 40-column C64 client |
-| `c64/pettyhires.cfg` | linker config (program must end below `$2000`) |
+| `c64/pettyhires.cfg` | linker config (program must end below `$4000`) |
 | `c64/mainall.s` | the combined C64 client: the four files above, each assembled in a scope with `MULTI`, and what they share |
 | `c64/pettyall.cfg` | linker config (program must end below `$4000`) |
-| `c64/move.inc` | MOVE, for the text and hi-res clients (both in the combined one) |
+| `c64/move.inc`, `movebits.inc` | MOVE, for every C64 client (the bitmap clients' rows in `movebits.inc`) |
+| `c64/view.inc` | VIEW, full-screen pictures, for every C64 client |
+| `c64/cells.inc` | CELLS, inline pictures in whole cells, for the soft 80- and 53-column clients |
+| `bridge/bin/petty-view` | shows a picture full screen until a key is pressed |
+| `bridge/scripts/vice-picture-check.js` | runs every C64 client in VICE and checks pictures, CELLS and underline there (`make picture-check`) |
+| `bridge/scripts/vice.js` | the VICE harness the `vice-*-check.js` scripts share |
 | `bridge/bin/petty-mode` | asks for a screen (OSC 8350 `mode`) around a command |
 | `bridge/scripts/vice-mode-check.js` | runs the combined client in VICE and checks each screen against its own client's (`make mode-check`) |
 | `c64/staircase.s` | standalone program for calibrating a real SID (`make build/staircase.prg`) |
-| `c64/game.inc` | game hardware for the text and hi-res clients: sprites, glides, MOVE, the SID script player (OSC 8348, 8349) |
+| `c64/game.inc` | game hardware for the C64 clients: sprites, glides, MOVE, the SID script player (OSC 8348, 8349) |
 | `bridge/src/game.js` | those OSCs: the program's sprites and scripts, kept for a client that restarts |
 | `bridge/lib/pettygame.py` | prints them from Python; `bridge/examples/game-demo.py` is a small game |
-| `bridge/scripts/vice-game-check.js` | runs the text client in VICE and checks the game hardware against the machine (`--hires`, `--all`: the hi-res, the combined one) |
+| `bridge/scripts/vice-game-check.js` | runs a C64 client in VICE and checks the game hardware against the machine (`--display`, `--all`) |
 | `c64/sound.inc` | sound for all the clients: SOUND and PROBE, the 2-bit decoder and the playback loop |
 | `c128/main.s` | C128 client: the same, drawing on the VDC at 2 MHz |
 | `c128/petty128.cfg` | linker config (program must end below `$3800`) |
@@ -596,7 +663,7 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `bridge/src/font4x8.js` | 4×8 font for the soft 80-column screen |
 | `bridge/src/font6x8.js` | 6×8 font for the soft 53-column screen |
 | `bridge/src/extglyphs.js` / `glyphcache.js` | the extra glyphs for the hi-res C64 and the C128, and which are loaded |
-| `bridge/src/image.js` | inline images: OSC 1337, PNG and C64 pictures, hi-res conversion |
+| `bridge/src/image.js` | inline images: OSC 1337, PNG and C64 pictures; hi-res, multicolour and C128 conversion |
 | `bridge/bin/imgcat` | sends pictures as inline images, where iTerm2's imgcat isn't installed |
 | `bridge/bin/sound/say`, `play` | speak and play on the C64, by OSC 8347 (first in the program's PATH) |
 | `bridge/src/sound/` | sound: the OSC and queue (`manager.js`), the playback session, the codec, DSP, TTS and file loading |
@@ -612,31 +679,25 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `bridge/scripts/ask-display.js` | asks the bridge which client it is drawing on (OSC 8350) and prints the answer |
 | `bridge/scripts/gen-title.js` | writes `bridge/title.ans`, the start screen |
 
-Memory map: code `$0801–$16DB`, sprite shapes `$2000–$2FFF`, receive ring `$3700`, character set `$3800–$3FFF`, screen `$0400`;
-SID scripts are uploaded at `$9000–$BFFF` and the game variables are at `$C000`.
+Every C64 client switches BASIC's ROM out (none of them returns to BASIC), and keeps the SID's scripts at `$9000–$9FFF`, the
+game's variables at `$C000` and sound's tables at `$CD00–$CFFF`. A full-screen picture goes to the VIC's second bank on all
+of them: bitmap `$6000–$7F3F`, colours `$5C00`, and colour RAM.
 
-Soft 80 columns: code `$0801–$1286`; the VIC uses its second bank, with glyph
-tables `$4000–$4FFF` (built at startup), sprite data `$5000–$51FF`, colours
-`$5C00` (sprite pointers `$5FF8`) and the bitmap `$6000–$7F3F`; receive ring
-`$8000–$8FFF` (4 KB, because a bitmap scroll takes about 90 ms).
+Text: code `$0801–$17C3`, sprite shapes `$2000–$2FFF`, receive ring `$3700`, character set `$3800–$3FFF`, screen `$0400`.
 
-Soft 53 columns: code `$0801–$199D`, glyph tables `$2000–$4FFF` (built at
-startup: six tables of 2 KB, one for each part of a cell a character can
-fall in); the rest as the soft 80-column client: the VIC's second bank,
-sprite data `$5000–$51FF`, colours `$5C00`, bitmap `$6000–$7F3F`, receive
-ring `$8000–$8FFF`.
+Hi-res 40 columns: code `$0801–$1A9C`; the VIC uses its second bank, with the
+font `$4000–$47FF` (one page per pixel row), sprite shapes `$4800–$57FF`, colours `$5C00` and the bitmap
+`$6000–$7F3F`; receive ring `$8000–$8FFF` (4 KB, because a bitmap scroll takes about 90 ms).
 
-Hi-res 40 columns: code `$0801–$0FB2`; the VIC uses its second bank, with the
-font `$4000–$47FF` (one page per pixel row), colours `$5C00` and the bitmap
-`$6000–$7F3F`; receive ring `$8000–$8FFF`.
+Soft 80 columns: code `$0801–$1EAD`; as the hi-res client, but the colour sprites' data at `$5800–$59FF`, and the
+glyph tables at `$A000–$AFFF` (built at startup), under BASIC's ROM.
 
-Combined (`pettyall.prg`): code `$0801–$3408` (`$394D` with `DIALASK=1`). The VIC uses its second bank on every
-screen: the screen's font `$4000–$47FF` (text, hi-res; with sprite shapes `$4800–$57FF`) or tables `$4000–$4FFF`
-(80 columns), sprite data `$5000–$51FF` (80 and 53 columns), the text screen or the bitmap's colours `$5C00`, the
-bitmap `$6000–$7F3F`; receive ring `$8000–$8FFF`. `$9000–$BFFF` holds the game's scripts, or on the 53-column screen
-(which has no game hardware) its six tables: BASIC's ROM is switched out, and the bridge loads the scripts again when
-the client comes back to a game screen. The character ROM's lowercase half is copied to `$C800–$CBFF` once, at start;
-game variables `$C000`, sound `$CD00–$CFFF`.
+Soft 53 columns: code `$0801–$2157`; as the soft 80-column client, but six glyph tables of 2 KB, one for each part of a
+cell a character can fall in: `$A000–$BFFF`, `$4000` (in the VIC's bank, which doesn't use it) and `$C100`.
+
+Combined (`pettyall.prg`): code `$0801–$35B8` (`$3AFD` with `DIALASK=1`), with the character ROM's lowercase half copied
+to `$0400–$07FF` once, at start (the screens build their fonts from it when they come on). Otherwise each screen's
+memory is as in its own client, but the text screen, which is in the VIC's second bank too: screen `$5C00`, character set `$4000`.
 
 C128 (bank 15): code `$1C01–$231F`, font build buffer `$3800–$3BFF` (startup
 only), receive ring `$3F00`. VDC RAM: screen `$0000`, attributes `$0800`, font

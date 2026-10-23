@@ -1,6 +1,6 @@
-; PETTY - game hardware for the C64 text client: hardware sprites, a SID script
+; PETTY - game hardware for the C64 clients: hardware sprites, a SID script
 ; player and a rectangle move, for a program that wants more than a terminal.
-; Included by main.s after sound.inc. Wire format: bridge/src/protocol.js; what
+; Included by each C64 client after sound.inc. Wire format: bridge/src/protocol.js; what
 ; a program sends: bridge/src/game.js (OSC 8348 sprites, OSC 8349 SID).
 ;
 ; A raster interrupt at line 251 (below the last text row, so nothing is
@@ -15,10 +15,10 @@
 ;
 ; Memory: sprite shapes, 64 slots of 64 bytes, in the VIC's bank: at $2000-$2FFF
 ; (the text client; clear of the character ROM's image at $1000 and below the
-; receive buffer at $3700) or $4800-$57FF (the hi-res one, after its font, and the
-; combined client, mainall.s, on both). Script data goes where the bridge POKEs it,
-; $9000-$BFFF; variables are at $C000. MOVE is the one part that differs (move.inc):
-; the hi-res client copies bitmap bytes.
+; receive buffer at $3700) or $4800-$57FF (the bitmap clients, after the hi-res
+; font, and the combined client, mainall.s). Script data goes where the bridge POKEs
+; it, $9000-$9FFF; variables are at $C000. MOVE is the one part that differs
+; (move.inc): the bitmap clients copy bitmap bytes.
 ;
 ; A script is records: n, (reg, value) * n, delay. The writes happen, then
 ; the next record waits `delay` frames (0: carry on at once). n = $FF ends

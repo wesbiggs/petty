@@ -8,13 +8,16 @@
 ; blank. A cell holds one colour; the bridge sends the 4 characters of a group
 ; the same colour, and hardware sprites (SPRITE) that repaint the characters
 ; that lost theirs. Only non-space characters set colours (of every cell they
-; touch), so writing a space never recolours its neighbours.
+; touch), so writing a space never recolours its neighbours. Underline, the game
+; hardware (MOVE moves groups of 4 columns, 3 cells), pictures and inline images
+; are as on the soft 80-column client.
 ;
-; Memory: glyph tables $2000-$4FFF (built at startup; $4000-$4FFF is in the
-; VIC's bank but unused by it), and as the soft 80-column client: the VIC
-; uses its second bank, $4000-$7FFF, sprite data $5000-$51FF, cell colours
-; $5C00 (sprite pointers $5FF8), bitmap $6000-$7F3F, receive ring
-; $8000-$8FFF (4K: a bitmap scroll takes ~90 ms).
+; Memory: six glyph tables of 2K, built at startup, at $A000-$BFFF (under BASIC's
+; ROM, switched out), $4000 (in the VIC's bank, unused by it) and $C100; and as the
+; soft 80-column client: the VIC uses its second bank, $4000-$7FFF, the game's
+; sprite shapes $4800-$57FF, the colour sprites' data $5800-$59FF, cell colours
+; $5C00 (sprite pointers $5FF8), bitmap $6000-$7F3F, receive ring $8000-$8FFF
+; (4K: a bitmap scroll takes ~90 ms), SID scripts $9000-$9FFF.
 ;
 ; The combined client (mainall.s) also assembles this file, in a scope with MULTI
 ; defined: then only the screen's own part is here (.ifndef MULTI marks the rest).

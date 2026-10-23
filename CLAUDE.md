@@ -1,8 +1,12 @@
 # PETTY: notes for Claude
 
 Bridge (Node, `bridge/`) plus 6502 clients (`c64/`, `c128/`). `make test` runs the bridge tests, `make` builds the clients,
-`make game-check` checks the game hardware in VICE (opens a window), `make mode-check` the combined client's screens against
-the single-screen clients'.
+`make game-check` checks the game hardware in VICE on every C64 client, `make mode-check` the combined client's screens against
+the single-screen clients', `make picture-check` full-screen pictures, CELLS and underline (they need `x64sc`; a headless VICE build
+works).
+
+The C64 clients share what they can: game hardware (`game.inc`, `move.inc`), pictures (`view.inc`), sound, the dial. A capability
+added to one should go to the others where the machine allows (README, "What each client can do").
 
 The combined C64 client (`c64/mainall.s`, `pettyall.prg`) assembles `main.s`, `mainhires.s`, `main80.s` and `main53.s` each in a
 `.scope` with `MULTI` defined; their `.ifndef MULTI` parts are what the core has once. A change to one of those files must keep both
@@ -40,14 +44,19 @@ From a code review. Not fixed on purpose or for lack of a way to test; pick them
   reference decoder after random frames; sound, RUN/STOP+RESTORE and the dial were not tried on it (the code is the soft 80-column
   client's).
 - **The combined client (`pettyall.prg`) is tested in VICE only.** Each screen matches its own client's bytes after random frames
-  (`make mode-check`), the game checks pass on its text and hi-res screens, and the dial, `DIALASK`'s setup screen and RUN/STOP+RESTORE
-  (faked as above) were tried once by hand. C=+F3 was not pressed in VICE: the key is covered by the bridge's tests. `PETTY.CFG` does
+  (`make mode-check`), the game and picture checks pass on every screen, and the dial, `DIALASK`'s setup screen and RUN/STOP+RESTORE
+  (faked as above) were tried once by hand, before the game hardware, pictures and images came to the soft screens. C=+F3 was not pressed in VICE: the key is covered by the bridge's tests. `PETTY.CFG` does
   not hold the screen to start on (only `make START=...` does).
 - **A connection that never says HELLO still takes the session over first.** `Session.attach` drops the current client as soon as a
   TCP connection arrives, before `onData` sees whether it opens with HELLO, so anything connecting to the client port (a port scan, a
   mistyped `petty-ctl --port`) hangs up the real C64. Seen while testing; not fixed.
-- **SID scripts past `$A000` on the single-screen text and hi-res clients** are probably read from BASIC's ROM: `game.js` hands out
-  `$9000-$BFFF`, but those clients leave BASIC's ROM in (`$01` = `$37`), so `gget` would read ROM for a script above 4 KB of others.
-  Unverified; the combined client switches BASIC out.
+- **Game hardware, pictures, inline images and underline on the soft screens, and images on the C128, are tested in VICE only**
+  (x64sc, x128, headless), never on hardware. On the soft screens a sprite that repaints a colour draws the character but not its
+  underline, and text written over part of an image's cell takes that cell's colour. C128 images were looked at in an x128 screenshot,
+  whose VDC pixels are square, not as on a monitor.
+- **SID scripts now have 4 KB, `$9000-$9FFF`** (`game.js` SCRIPT_END), where they had `$9000-$BFFF`: past `$A000` the text and hi-res
+  clients read BASIC's ROM, and that RAM now holds the soft screens' glyph tables. A program that defines more gets "script memory is full".
+- **Images converted for one display show on another as best they can.** An image is converted when it arrives, for the display then:
+  after a switch (or if it arrived before the client's HELLO), a soft screen shows a hi-res image as blocks, and so on.
 - **Untested on hardware.** The lost-ACK resync (2400 no-op bytes) has only been tested against the reference decoder, not a
   client in VICE. The W65C51N transmit-empty caveat in the README is unverified.

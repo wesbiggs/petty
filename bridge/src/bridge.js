@@ -187,8 +187,9 @@ class Session {
       });
     }
     term.onWriteParsed(() => { this.dirty = true; });
-    // Inline images (imgcat): drawn on the hi-res screen, as blocks
-    // on the others. Transparency shows the theme's screen colour. On the C64
+    // Inline images (imgcat): drawn in pixels on the hi-res, soft and C128
+    // screens, as blocks on the C64 text one. Transparency shows the theme's
+    // screen colour. On the C64
     // clients a Koala picture (or any, with imgcat -t koala), and anything
     // petty-view sends, shows full screen until a key is pressed.
     this.images = new InlineImages(term, () => {

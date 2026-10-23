@@ -15,17 +15,19 @@
 ; it has no screen for gets the HELLO_ON of the screen it is on.
 ;
 ; Memory (the VIC uses its second bank, $4000-$7FFF, on every screen):
+;   $0400-$07FF  the character ROM's lowercase half, copied once
 ;   $0801-$3FFF  the program
-;   $4000-$4FFF  the screen's font: text and hi-res $4000-$47FF (with sprite shapes
-;                $4800-$57FF), soft 80 columns its two tables
-;   $5000-$51FF  soft 80 and 53 columns: the sprites that repaint colours
+;   $4000-$47FF  the text and hi-res screens' font, or a soft 53-column table
+;   $4800-$57FF  the game's sprite shapes
+;   $5800-$59FF  soft 80 and 53 columns: the sprites that repaint colours
 ;   $5C00-$5FFF  the text screen, or the bitmap's colours; sprite pointers at $5FF8
-;   $6000-$7F3F  the bitmap
+;   $6000-$7F3F  the bitmap (and a full-screen picture's, on any screen)
 ;   $8000-$8FFF  the receive ring
-;   $9000-$BFFF  game scripts (text, hi-res), or the soft 53-column tables (BASIC's
-;                ROM is switched out)
-;   $C000-$C05F  game variables; $C800-$CBFF the character ROM's lowercase half,
-;                copied once; $CD00-$CFFF sound
+;   $9000-$9FFF  SID scripts
+;   $A000-$BFFF  under BASIC's ROM, switched out: the soft 80- or 53-column tables
+;   $C000-$C05F  game variables; $C100-$C8FF a soft 53-column table; $CD00-$CFFF sound
+; Each screen's own code is as in its own client; VIEW, CELLS, POKE, copy, fill, the
+; row tables and MOVE's bitmap rows are here once, for all of them.
 
 MULTI       = 1
 GAME_BANK1  = 1                 ; the game's sprite shapes at $4800 on every screen

@@ -5,12 +5,16 @@
 ; bitmap cell holds two characters and one colour; the bridge sends both the
 ; same colour, and hardware sprites (SPRITE) that repaint the character that
 ; lost its colour. Only non-space characters set a cell's colour, so writing a
-; space never recolours its neighbour.
+; space never recolours its neighbour. UNDERLINE underlines the bottom pixel
+; row of a character. It also has the game hardware (game.inc; MOVE moves pairs
+; of columns, whole cells), full-screen pictures (view.inc) and inline images in
+; whole cells (cells.inc).
 ;
-; Memory (the VIC uses its second bank, $4000-$7FFF): glyph tables
-; $4000-$4FFF, sprite data $5000-$51FF, cell colours $5C00 (sprite pointers
-; $5FF8), bitmap $6000-$7F3F, receive ring $8000-$8FFF (4K: a bitmap scroll
-; takes ~90 ms).
+; Memory (the VIC uses its second bank, $4000-$7FFF): the game's sprite shapes
+; $4800-$57FF, the colour sprites' data $5800-$59FF, cell colours $5C00 (sprite
+; pointers $5FF8), bitmap $6000-$7F3F, receive ring $8000-$8FFF (4K: a bitmap
+; scroll takes ~90 ms); SID scripts $9000-$9FFF, glyph tables $A000-$AFFF, under
+; BASIC's ROM, which is switched out.
 ;
 ; The combined client (mainall.s) also assembles this file, in a scope with MULTI
 ; defined: then only the screen's own part is here (.ifndef MULTI marks the rest).
