@@ -92,9 +92,9 @@ import { IMAGE, imageCell } from './image.js';
 export const DISPLAY = {
   C64: { id: 0, key: 'c64', name: 'C64', cols: 40, rows: 25, sound: true, game: true },
   C128: { id: 1, key: 'c128', name: 'C128 VDC', cols: 80, rows: 25, reverse: true, ext: true, sound: true },
-  C64_80: { id: 2, key: 'c64-80', name: 'C64 soft-80', cols: 80, rows: 25, pair: true, sound: true },
+  C64_80: { id: 2, key: 'c64-80', name: 'C64 soft-80', cols: 80, rows: 25, pair: true, sound: true, game: true },
   C64_HIRES: { id: 3, key: 'c64-hires', name: 'C64 hi-res', cols: 40, rows: 25, hires: true, ext: true, sound: true, game: true },
-  C64_53: { id: 4, key: 'c64-53', name: 'C64 soft-53', cols: 53, rows: 25, quad: true, sound: true },
+  C64_53: { id: 4, key: 'c64-53', name: 'C64 soft-53', cols: 53, rows: 25, quad: true, sound: true, game: true },
 };
 export const displayById = id => Object.values(DISPLAY).find(d => d.id === id);
 export const displayByKey = key => Object.values(DISPLAY).find(d => d.key === key);
@@ -158,7 +158,9 @@ export const encodeSidW = pairs => [OP.SIDW, pairs.length / 2, ...pairs];
 export const encodeSidPlay = (ch, addr, mask) => [OP.SIDPLAY, ch, addr & 0xFF, addr >> 8, mask & 0xFF, mask >> 8 & 0xFF, mask >> 16 & 0xFF, mask >>> 24 & 0xFF];
 export const encodeSidStop = ch => [OP.SIDSTOP, ch];
 const SPRITES = 8;
-const spriteKey = s => s ? `${s.col},${s.row},${s.color},${s.data.join(',')}` : null;
+// In a snapshot's `sprites` (soft 80 and 53 columns): a sprite the game has (game.js), left alone.
+export const GAME_SPRITE = 'game';
+const spriteKey = s => s === GAME_SPRITE ? s : s ? `${s.col},${s.row},${s.color},${s.data.join(',')}` : null;
 // VDC attribute bits beyond the colour.
 export const VDC = { UNDERLINE: 0x20, RVS: 0x40, ALT: 0x80 };
 export const MSG = { ACK: 1, KEY: 2, HELLO: 3, HELLO_ON: 4, DONE: 5, CREDIT: 6, PROBE: 7, ABORT: 8, GLIDE: 9, MODES: 10 };
@@ -316,7 +318,7 @@ export function encodeFrame(state, want, budget = Infinity) {
     const frame = encodeScrolled(state, want, n);
     if (!best || frame.bytes.length < best.bytes.length) best = frame;
   }
-  if (want.move && !best.partial) best = bestMove(state, want, best);
+  if (want.move && !best.partial) best = bestMove(state, want, best, want.group ?? 1);
   if (best.bytes.length > budget) best = encodeScrolled(state, want, best.n, budget);
   if (want.sprites) encodeSprites(best.state, want.sprites, best.bytes);
   best.bytes.push(OP.FRAME);
@@ -327,18 +329,19 @@ export function encodeFrame(state, want, budget = Infinity) {
 // follows the player) is cheaper to say with MOVE than to draw again. Looks
 // for the shifts (dx, dy) under which cells of the new screen match the old
 // ones where they didn't without, takes the rectangle they fill, and keeps
-// the frame if it comes out shorter than `best`.
+// the frame if it comes out shorter than `best`. On the soft screens a MOVE is
+// of whole `group`s of columns (2 at 80 columns, 4 at 53), by whole groups.
 const MOVE_MAX = 3, MOVE_MIN_GAIN = 24, MOVE_MIN_CHANGES = 40;
-function bestMove(state, want, best) {
+function bestMove(state, want, best, group = 1) {
   const { cols, rows } = state;
   const cells = cols * rows;
   let changed = 0;
   for (let i = 0; i < cells; i++) if (!state.matches(i, want.glyph[i], want.color[i])) changed++;
   if (changed < MOVE_MIN_CHANGES) return best;
   for (let dy = -MOVE_MAX; dy <= MOVE_MAX; dy++) {
-    for (let dx = -MOVE_MAX; dx <= MOVE_MAX; dx++) {
+    for (let dx = -MOVE_MAX * group; dx <= MOVE_MAX * group; dx += group) {
       if (!dx && !dy) continue;
-      const rect = moveRect(state, want, dx, dy);
+      const rect = moveRect(state, want, dx, dy, group);
       if (!rect) continue;
       const s = state.clone();
       const out = [...encodeMove(rect.x, rect.y, rect.w, rect.h, dx, dy)];
@@ -354,7 +357,7 @@ function bestMove(state, want, best) {
 // only when shifted, in the run of rows and the run of columns that hold most
 // of them (so a stray match elsewhere doesn't widen it), all of which fit the screen both
 // before and after. Null if there are too few.
-function moveRect(state, want, dx, dy) {
+function moveRect(state, want, dx, dy, group = 1) {
   const { cols, rows } = state;
   const rowN = new Int16Array(rows), colN = new Int16Array(cols);
   let gain = 0;
@@ -388,8 +391,10 @@ function moveRect(state, want, dx, dy) {
   };
   const ry = span(rowN, rows), rx = span(colN, cols);
   if (!ry || !rx) return null;
-  // Destination x0..x1, y0..y1 (end exclusive); the source is shifted back.
-  const x0 = Math.max(rx[0], dx), x1 = Math.min(rx[1], cols + dx);
+  // Destination x0..x1, y0..y1 (end exclusive); the source is shifted back. Columns in whole groups, of the
+  // groups that are whole (not the 53-column screen's last column).
+  const last = Math.floor(cols / group) * group;
+  const x0 = Math.max(Math.floor(rx[0] / group) * group, dx), x1 = Math.min(Math.ceil(rx[1] / group) * group, last, last + dx);
   const y0 = Math.max(ry[0], dy), y1 = Math.min(ry[1], rows + dy);
   if (x1 - x0 < 2 || y1 - y0 < 2) return null;
   return { x: x0 - dx, y: y0 - dy, w: x1 - x0, h: y1 - y0 };
@@ -417,6 +422,7 @@ function encodeSprites(state, sprites, out) {
     const s = sprites[n] ?? null;
     const key = spriteKey(s);
     if (state.sprites[n] === key) continue;
+    if (s === GAME_SPRITE) { state.sprites[n] = key; continue; } // its SPR sets it all; a repair after it sets it back
     if (s) out.push(OP.SPRITE, n, s.col, s.row, s.color, ...s.data);
     else out.push(OP.NOSPRITE, n);
     state.sprites[n] = key;

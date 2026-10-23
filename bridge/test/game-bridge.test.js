@@ -74,9 +74,15 @@ stty raw -echo; dd bs=1 count=9 2>/dev/null | od -c | head -1 > /dev/null; print
   assert.ok(dec.glyph.some((g, i) => i < 40 && g !== 32), `the program ran on after the sync reply (${log})`);
 });
 
-test('a client without game hardware (soft 80 columns) gets none of it', async () => {
+test('the soft 80-column client gets them too', async () => {
+  const script = `printf '${osc(8348, 'def', 1, b64(new Uint8Array(63)))}${osc(8348, 'set', 2, 1, 10, 20, 3)}ok'; sleep 5`;
+  const { dec } = await run(script, { display: DISPLAY.C64_80, wait: 8000, until: d => d.hw[2] });
+  assert.equal(dec.hw[2].x, 34);
+});
+
+test('a client without game hardware (the C128) gets none of it', async () => {
   const script = `printf '${osc(8348, 'def', 0, b64(new Uint8Array(63)))}${osc(8348, 'set', 0, 0, 10, 10, 1)}${osc(8349, 'w', 24, 15)}ok'; sleep 3`;
-  const { dec } = await run(script, { display: DISPLAY.C64_80, wait: 8000, until: d => d.glyph.some(g => g !== 32) });
+  const { dec } = await run(script, { display: DISPLAY.C128, wait: 8000, until: d => d.glyph.some(g => g !== 32) });
   assert.equal(dec.shapes.size, 0);
   assert.equal(dec.hw.filter(Boolean).length, 0);
   assert.equal(dec.sid.length, 0);
@@ -87,8 +93,8 @@ test('a client without game hardware (soft 80 columns) gets none of it', async (
 for (const [display, want] of [
   [DISPLAY.C64, 'c64;40;25;game,sound'],
   [DISPLAY.C64_HIRES, 'c64-hires;40;25;hires,ext,game,sound'],
-  [DISPLAY.C64_80, 'c64-80;80;25;sound,pair'],
-  [DISPLAY.C64_53, 'c64-53;53;25;sound,quad'],
+  [DISPLAY.C64_80, 'c64-80;80;25;game,sound,pair'],
+  [DISPLAY.C64_53, 'c64-53;53;25;game,sound,quad'],
   [DISPLAY.C128, 'c128;80;25;ext,sound,reverse'],
 ]) {
   test(`OSC 8350 display: the program is told it is on the ${display.name}`, async () => {

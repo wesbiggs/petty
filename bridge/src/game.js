@@ -49,9 +49,10 @@
 
 import { OP, SPR, SPRITE_SLOTS, encodeSprDef, encodeSpr, encodeGlide, encodeSidW, encodeSidPlay, encodeSidStop, encodePoke } from './protocol.js';
 
-export const SCRIPT_BASE = 0x9000; // where the C64 clients have room for scripts (the hi-res one's ring ends there; the
-// combined client's soft 53-column screen keeps its tables there, and they are sent again when it is back on a game screen)
-export const SCRIPT_END = 0xC000;
+// Where the C64 clients have room for scripts: after the bitmap clients' receive ring, before the glyph tables
+// under BASIC's ROM.
+export const SCRIPT_BASE = 0x9000;
+export const SCRIPT_END = 0xA000;
 const SCREEN_X = 24, SCREEN_Y = 50; // the VIC's coordinates of the text's top left
 const MAX_QUEUE = 32768; // bytes held for a client that is not taking them
 const FLAG = { x: SPR.WIDE, y: SPR.TALL, m: SPR.MULTI, b: SPR.BEHIND };
@@ -187,6 +188,11 @@ export class GameHardware {
     } else {
       throw new Error(`unknown OSC 8348 command ${verb}`);
     }
+  }
+
+  // The sprites the program has used (bit n: sprite n), which the soft screens' colour repairs leave alone.
+  spriteMask() {
+    return this.sprites.reduce((m, s, n) => (s ? m | 1 << n : m), 0);
   }
 
   setSprite(n, s, on) {

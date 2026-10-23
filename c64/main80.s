@@ -16,9 +16,9 @@
 ; defined: then only the screen's own part is here (.ifndef MULTI marks the rest).
 
 ; --- hardware ---------------------------------------------------------------
-TBL_L       = $4000             ; 8 pages: glyph row r of code c, left half
-TBL_R       = $4800             ; 8 pages: the same in the right half
-SPRDATA     = $5000             ; 8 sprites of 64 bytes
+TBL_L       = $A000             ; 8 pages: glyph row r of code c, left half (under BASIC's ROM)
+TBL_R       = $A800             ; 8 pages: the same in the right half
+SPRDATA     = $5800             ; 8 sprites of 64 bytes, after the game's shapes
 COLRAM      = $5C00             ; bitmap colours: high nibble fg, low nibble bg
 SPRPTR      = COLRAM + $3F8
 BITMAP      = $6000
@@ -68,7 +68,7 @@ OP_CLS      = 7
 OP_FRAME    = 8
 OP_SPRITE   = 9
 OP_NOSPRITE = 10
-NUM_OPS     = 18                ; 16 and 17 (SOUND, PROBE) are in sound.inc
+NUM_OPS     = GAME_OPS          ; 16 and 17 (SOUND, PROBE) are in sound.inc, 18 up in game.inc
 
 MSG_ACK     = 1
 MSG_KEY     = 2
@@ -126,9 +126,12 @@ CLIENT_ASK  = 1                 ; this client can ask for the dial's settings (d
 start:
         .assert start = 2061, error, "SYS address mismatch"
         sei
+        lda #$36                ; BASIC's ROM out: RAM at $A000-$BFFF (glyph tables)
+        sta $01
         jsr init_tables
         jsr init_screen
         jsr sound_init
+        jsr game_init
         lda #<RBUF
         sta rp
         sta wp
@@ -170,11 +173,8 @@ optable:
         .word op_sprite-1, op_nosprite-1, cmdloop-1, cmdloop-1
         .word cmdloop-1, cmdloop-1, op_poke-1
         .word op_sound-1, op_probe-1
-.ifdef MULTI
-.repeat ::NUM_OPS_MULTI - NUM_OPS           ; the game's opcodes, which this screen does without
-        .word cmdloop-1
-.endrep
-.endif
+        .word op_sprdef-1, op_spr-1, op_glide-1, op_move-1
+        .word op_sidw-1, op_sidplay-1, op_sidstop-1, op_sidreset-1, op_sprmc-1
 
 op_goto:
         jsr rb_get
@@ -339,6 +339,22 @@ op_sprite:
         lda SPR_ON
         ora bitmask,x
         sta SPR_ON
+        txa                     ; its own block, hi-res, unexpanded, in front: the game
+        clc                     ; may have had this sprite before
+        adc #(SPRDATA & $3FFF) / 64
+        sta SPRPTR,x
+        lda notbit,x
+        and SPR_MULTI
+        sta SPR_MULTI
+        lda notbit,x
+        and SPR_XEXP
+        sta SPR_XEXP
+        lda notbit,x
+        and SPR_YEXP
+        sta SPR_YEXP
+        lda notbit,x
+        and SPR_PRIO
+        sta SPR_PRIO
         jmp cmdloop
 
 op_nosprite:
@@ -350,8 +366,7 @@ op_nosprite:
         sta SPR_ON
         jmp cmdloop
 
-bitmask: .byte $01, $02, $04, $08, $10, $20, $40, $80
-notbit: .byte $FE, $FD, $FB, $F7, $EF, $DF, $BF, $7F
+notbit: .byte $FE, $FD, $FB, $F7, $EF, $DF, $BF, $7F   ; (bitmask is game.inc's)
 
 ; POKE lo hi n d1..dn: n bytes (0 = 256) from lo + 256 * hi on (sound's tables).
 op_poke:
@@ -748,6 +763,7 @@ ui_clear:
 
 ; Once per jiffy: send KEY for new presses and auto-repeats. Clobbers A.
 keypoll:
+        jsr game_poll
         lda JIFFY_LO
         cmp lastjiffy
         beq @out
@@ -908,7 +924,11 @@ o40hi:
         .byte >(i * 40)
 .endrep
 
-.ifndef MULTI
+.ifdef MULTI
+MOVE_BITMAP = 1
+MOVE_GROUP  = 2
+.include "move.inc"
+.else
 .macro RX_PENDING target
         lda rp
         cmp wp
@@ -918,5 +938,9 @@ o40hi:
         bne target
 .endmacro
 .include "sound.inc"
+GAME_BANK1  = 1
+MOVE_BITMAP = 1
+MOVE_GROUP  = 2
+.include "game.inc"
 .endif
 .include "font4x8.inc"

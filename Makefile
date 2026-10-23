@@ -140,13 +140,14 @@ test: bridge/node_modules
 clean:
 	rm -rf $(BUILD)
 
-# The text client's game hardware, checked in VICE (opens a window); also on the
-# combined client's text and hi-res screens.
-game-check: $(PRG) $(PRGHI) $(PRGALL)
+# The C64 clients' game hardware, checked in VICE (opens a window); also on each of
+# the combined client's screens.
+game-check: $(PRG) $(PRGHI) $(PRG80) $(PRG53) $(PRGALL)
 	node bridge/scripts/vice-game-check.js $(PRG)
-	node bridge/scripts/vice-game-check.js --hires $(PRGHI)
-	node bridge/scripts/vice-game-check.js --all $(PRGALL)
-	node bridge/scripts/vice-game-check.js --all --hires $(PRGALL)
+	node bridge/scripts/vice-game-check.js --display c64-hires $(PRGHI)
+	node bridge/scripts/vice-game-check.js --display c64-80 $(PRG80)
+	node bridge/scripts/vice-game-check.js --display c64-53 $(PRG53)
+	for d in c64 c64-hires c64-80 c64-53; do node bridge/scripts/vice-game-check.js --all --display $$d $(PRGALL) || exit 1; done
 
 # The combined client's screens against the single-screen clients', in VICE.
 mode-check: $(PRG) $(PRGHI) $(PRG80) $(PRG53) $(PRGALL)

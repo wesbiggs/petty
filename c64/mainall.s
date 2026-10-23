@@ -28,11 +28,12 @@
 ;                copied once; $CD00-$CFFF sound
 
 MULTI       = 1
+GAME_BANK1  = 1                 ; the game's sprite shapes at $4800 on every screen
 
 ; --- hardware ---------------------------------------------------------------
 RBUF        = $8000
 RBUF_END    = $9000
-ROMCHARS    = $C800             ; the screens' fonts are built from this copy of the ROM's
+ROMCHARS    = $0400             ; the screens' fonts are built from this copy of the ROM's
 ROMFONT     = $D800             ; lowercase half, made while nothing can interrupt
 
 ACIA_DATA   = $DE00

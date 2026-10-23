@@ -153,11 +153,11 @@ const REGIONS = {
     ['border and background', 0x20, 0x20, 2, 'io', 15]],
   [DISPLAY.C64_HIRES.id]: [['bitmap', 0x6000, 0x6000, 8000], ['colours', 0x5C00, 0x5C00, 1000], ['font', 0x4000, 0x4000, 0x800],
     ['border', 0x20, 0x20, 1, 'io', 15]],
-  [DISPLAY.C64_80.id]: [['bitmap', 0x6000, 0x6000, 8000], ['colours', 0x5C00, 0x5C00, 1000], ['font tables', 0x4000, 0x4000, 0x1000],
-    ['sprite data', 0x5000, 0x5000, 0x200, 'sprites'], ['sprite pointers', 0x5FF8, 0x5FF8, 8], ['sprite registers', 0x00, 0x00, 0x11, 'io'],
+  [DISPLAY.C64_80.id]: [['bitmap', 0x6000, 0x6000, 8000], ['colours', 0x5C00, 0x5C00, 1000], ['font tables', 0xA000, 0xA000, 0x1000],
+    ['sprite data', 0x5800, 0x5800, 0x200, 'sprites'], ['sprite pointers', 0x5FF8, 0x5FF8, 8], ['sprite registers', 0x00, 0x00, 0x11, 'io'],
     ['sprites on', 0x15, 0x15, 1, 'io'], ['sprite colours', 0x27, 0x27, 8, 'io', 15], ['border', 0x20, 0x20, 1, 'io', 15]],
-  [DISPLAY.C64_53.id]: [['bitmap', 0x6000, 0x6000, 8000], ['colours', 0x5C00, 0x5C00, 1000], ['font tables', 0x2000, 0x9000, 0x3000],
-    ['sprite data', 0x5000, 0x5000, 0x200, 'sprites'], ['sprite pointers', 0x5FF8, 0x5FF8, 8], ['sprite registers', 0x00, 0x00, 0x11, 'io'],
+  [DISPLAY.C64_53.id]: [['bitmap', 0x6000, 0x6000, 8000], ['colours', 0x5C00, 0x5C00, 1000], ['font tables', 0xA000, 0xA000, 0x2000], ['font table 2B', 0x4000, 0x4000, 0x800], ['font table 3', 0xC100, 0xC100, 0x800],
+    ['sprite data', 0x5800, 0x5800, 0x200, 'sprites'], ['sprite pointers', 0x5FF8, 0x5FF8, 8], ['sprite registers', 0x00, 0x00, 0x11, 'io'],
     ['sprites on', 0x15, 0x15, 1, 'io'], ['sprite colours', 0x27, 0x27, 8, 'io', 15], ['border', 0x20, 0x20, 1, 'io', 15]],
 };
 // The VIC's set-up on the combined client's screens: $D011, $D016, $D018, and the bank (CIA 2 port A, bits 0-1:

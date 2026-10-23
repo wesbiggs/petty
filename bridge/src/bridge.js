@@ -632,7 +632,7 @@ class Connection {
   sendFrame() {
     const { s } = this;
     const { display } = s;
-    const want = snapshot(s.term, s.panX, display, s.theme, s.panY, s.own);
+    const want = snapshot(s.term, s.panX, display, s.theme, s.panY, s.own, display.game ? s.game.spriteMask() : 0);
     want.move &&= s.game.used; // MOVE, for a program that is a game (the search for one costs a little)
     const reset = !this.state;
     const pal = paletteFor(display, s.theme);

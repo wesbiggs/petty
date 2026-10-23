@@ -1,7 +1,7 @@
 // Convert the headless xterm's visible buffer into screen codes + colours
 // (C64 colour numbers, or VDC attributes on a C128).
 
-import { DISPLAY, VDC, HIRES_UNDERLINE } from './protocol.js';
+import { DISPLAY, VDC, HIRES_UNDERLINE, GAME_SPRITE } from './protocol.js';
 import { toScreenCode, INVERSE, SPACE } from './glyphs.js';
 import { palette, VIC_RGB } from './colors.js';
 import { IMAGE, imageCell, imageKey, imageShade } from './image.js';
@@ -54,9 +54,11 @@ export function cursorVisible(term) {
 // glyphcache.js). On a `hires` display, colours are foreground << 4 |
 // background, and inline images are glyphs from IMAGE up (image.js); other
 // displays show an image as blocks of its colours. On a display with `pair`
-// or `quad` cells, the result also has `sprites` (see soft80.js).
+// or `quad` cells, the result also has `sprites` (see soft80.js): the hardware sprites
+// that repaint colours, in the numbers the game's sprites (bit n of `gameSprites`, game.js)
+// leave free, and GAME_SPRITE in the others.
 // `own`: characters --charset gave codes of their own on this display (charset.js charsFor).
-export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', panY = 0, own = null) {
+export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', panY = 0, own = null, gameSprites = 0) {
   const { cols, rows } = display;
   const pal = paletteFor(display, theme);
   const glyph = new Int32Array(cols * rows);
@@ -137,10 +139,14 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', 
       color[i] = display.reverse && inv ? c | VDC.RVS : c;
     }
   }
-  const screen = { cols, rows, glyph, color, hires: !!display.hires, move: !!display.game };
+  // MOVE on the soft screens moves whole groups of columns (the cells that share a colour).
+  const screen = { cols, rows, glyph, color, hires: !!display.hires, move: !!display.game, group: display.quad ? 4 : display.pair ? 2 : 1 };
   if (display.pair || display.quad) {
     const focus = cursorRow >= 0 && cursorRow < rows ? cursorRow : rows - 1;
-    screen.sprites = shareColours(screen, focus, display.quad ? 6 : 4);
+    const free = [...Array(8).keys()].filter(n => !(gameSprites >> n & 1));
+    const repairs = shareColours(screen, focus, display.quad ? 6 : 4, free.length);
+    screen.sprites = Array.from({ length: 8 }, () => GAME_SPRITE);
+    free.forEach((n, k) => { screen.sprites[n] = repairs[k] ?? null; });
   }
   return screen;
 }

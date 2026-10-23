@@ -22,25 +22,15 @@
 ; --- hardware ---------------------------------------------------------------
 ; Glyph tables, 8 pages each: row r of screen code c at table + r * 256 + c,
 ; codes 128-255 inverted. G is the glyph row in the top 6 bits.
-.ifdef MULTI
-; The combined client has its code at $2000-$3FFF: the tables go where the game's
-; scripts would be ($9000-$BFFF, under BASIC's ROM, which it switches out), as this
-; screen has no game hardware.
-TBL_0       = $9000
-TBL_1A      = $9800
-TBL_1B      = $A000
-TBL_2A      = $A800
-TBL_2B      = $B000
-TBL_3       = $B800
-.else
-TBL_0       = $2000             ; phase 0: G, in cell 0
-TBL_1A      = $2800             ; phase 1: G >> 6, in cell 0's last 2 pixels
-TBL_1B      = $3000             ;          G << 2, in cell 1's first 4
-TBL_2A      = $3800             ; phase 2: G >> 4, in cell 1's last 4
+; Under BASIC's ROM (switched out), in the VIC's bank before the game's sprite shapes,
+; and after the game's variables.
+TBL_0       = $A000             ; phase 0: G, in cell 0
+TBL_1A      = $A800             ; phase 1: G >> 6, in cell 0's last 2 pixels
+TBL_1B      = $B000             ;          G << 2, in cell 1's first 4
+TBL_2A      = $B800             ; phase 2: G >> 4, in cell 1's last 4
 TBL_2B      = $4000             ;          G << 4, in cell 2's first 2
-TBL_3       = $4800             ; phase 3: G >> 2, in cell 2's last 6
-.endif
-SPRDATA     = $5000             ; 8 sprites of 64 bytes
+TBL_3       = $C100             ; phase 3: G >> 2, in cell 2's last 6
+SPRDATA     = $5800             ; 8 sprites of 64 bytes, after the game's shapes
 COLRAM      = $5C00             ; bitmap colours: high nibble fg, low nibble bg
 SPRPTR      = COLRAM + $3F8
 BITMAP      = $6000
@@ -90,7 +80,7 @@ OP_CLS      = 7
 OP_FRAME    = 8
 OP_SPRITE   = 9
 OP_NOSPRITE = 10
-NUM_OPS     = 18                ; 16 and 17 (SOUND, PROBE) are in sound.inc
+NUM_OPS     = GAME_OPS          ; 16 and 17 (SOUND, PROBE) are in sound.inc, 18 up in game.inc
 
 MSG_ACK     = 1
 MSG_KEY     = 2
@@ -149,9 +139,12 @@ CLIENT_ASK  = 1                 ; this client can ask for the dial's settings (d
 start:
         .assert start = 2061, error, "SYS address mismatch"
         sei
+        lda #$36                ; BASIC's ROM out: RAM at $A000-$BFFF (glyph tables)
+        sta $01
         jsr init_tables
         jsr init_screen
         jsr sound_init
+        jsr game_init
         lda #<RBUF
         sta rp
         sta wp
@@ -193,11 +186,8 @@ optable:
         .word op_sprite-1, op_nosprite-1, cmdloop-1, cmdloop-1
         .word cmdloop-1, cmdloop-1, op_poke-1
         .word op_sound-1, op_probe-1
-.ifdef MULTI
-.repeat ::NUM_OPS_MULTI - NUM_OPS           ; the game's opcodes, which this screen does without
-        .word cmdloop-1
-.endrep
-.endif
+        .word op_sprdef-1, op_spr-1, op_glide-1, op_move-1
+        .word op_sidw-1, op_sidplay-1, op_sidstop-1, op_sidreset-1, op_sprmc-1
 
 op_goto:
         jsr rb_get
@@ -366,6 +356,22 @@ op_sprite:
         lda SPR_ON
         ora bitmask,x
         sta SPR_ON
+        txa                     ; its own block, hi-res, unexpanded, in front: the game
+        clc                     ; may have had this sprite before
+        adc #(SPRDATA & $3FFF) / 64
+        sta SPRPTR,x
+        lda notbit,x
+        and SPR_MULTI
+        sta SPR_MULTI
+        lda notbit,x
+        and SPR_XEXP
+        sta SPR_XEXP
+        lda notbit,x
+        and SPR_YEXP
+        sta SPR_YEXP
+        lda notbit,x
+        and SPR_PRIO
+        sta SPR_PRIO
         jmp cmdloop
 
 op_nosprite:
@@ -377,8 +383,7 @@ op_nosprite:
         sta SPR_ON
         jmp cmdloop
 
-bitmask: .byte $01, $02, $04, $08, $10, $20, $40, $80
-notbit: .byte $FE, $FD, $FB, $F7, $EF, $DF, $BF, $7F
+notbit: .byte $FE, $FD, $FB, $F7, $EF, $DF, $BF, $7F   ; (bitmask is game.inc's)
 
 ; POKE lo hi n d1..dn: n bytes (0 = 256) from lo + 256 * hi on (sound's tables).
 op_poke:
@@ -822,6 +827,7 @@ ui_clear:
 
 ; Once per jiffy: send KEY for new presses and auto-repeats. Clobbers A.
 keypoll:
+        jsr game_poll
         lda JIFFY_LO
         cmp lastjiffy
         beq @out
@@ -960,7 +966,11 @@ o40hi:
         .byte >(i * 40)
 .endrep
 
-.ifndef MULTI
+.ifdef MULTI
+MOVE_BITMAP = 1
+MOVE_GROUP  = 4
+.include "move.inc"
+.else
 .macro RX_PENDING target
         lda rp
         cmp wp
@@ -970,5 +980,9 @@ o40hi:
         bne target
 .endmacro
 .include "sound.inc"
+GAME_BANK1  = 1
+MOVE_BITMAP = 1
+MOVE_GROUP  = 4
+.include "game.inc"
 .endif
 .include "font6x8.inc"

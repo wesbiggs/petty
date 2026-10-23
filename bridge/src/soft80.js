@@ -32,11 +32,11 @@ const WEIGHT = { 4: weights(ROWS[4]), 6: weights(ROWS[6]) };
 const groupOf = width => { let n = 1; while ((n * width) % 8) n++; return n; };
 
 // Make the characters of each group the same colour, in place, and return up
-// to MAX_SPRITES sprites ({col, row, color, data}) that repaint the characters
+// to `max` (MAX_SPRITES) sprites ({col, row, color, data}) that repaint the characters
 // that lost their colour: letters and digits first, then those nearest
 // `focusRow` (the cursor). Each sprite takes as many losers of its colour as
 // fit in it.
-export function shareColours({ cols, glyph, color }, focusRow, width = 4) {
+export function shareColours({ cols, glyph, color }, focusRow, width = 4, max = MAX_SPRITES) {
   const rowsOfCode = ROWS[width], weight = WEIGHT[width], group = groupOf(width);
   const losers = [];
   for (let row = 0; row * cols < glyph.length; row++) {
@@ -65,7 +65,7 @@ export function shareColours({ cols, glyph, color }, focusRow, width = 4) {
   const inside = (m, col, row, color) => m.color === color &&
     m.col >= col && m.col < col + spriteCols && m.row >= row && m.row < row + SPRITE_ROWS;
   const sprites = [];
-  while (losers.length && sprites.length < MAX_SPRITES) {
+  while (losers.length && sprites.length < max) {
     // Of the placements that cover the first loser, the one covering most;
     // on a tie, the one starting at it.
     const first = losers[0];

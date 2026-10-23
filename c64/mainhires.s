@@ -119,6 +119,8 @@ CLIENT_ASK  = 1                 ; this client can ask for the dial's settings (d
 start:
         .assert start = 2061, error, "SYS address mismatch"
         sei
+        lda #$36                ; BASIC's ROM out, as on every C64 client (the SID scripts' RAM is under it)
+        sta $01
         jsr init_font
         jsr init_screen
         jsr sound_init
@@ -863,6 +865,7 @@ o40hi:
 
 .ifdef MULTI
 MOVE_BITMAP = 1
+MOVE_GROUP  = 1
 .include "move.inc"
 .else
 .macro RX_PENDING target
@@ -874,7 +877,9 @@ MOVE_BITMAP = 1
         bne target
 .endmacro
 .include "sound.inc"
-GAME_HIRES = 1
+GAME_BANK1  = 1
+MOVE_BITMAP = 1
+MOVE_GROUP  = 1
 .include "game.inc"
 .include "glyphs.inc"
 .endif

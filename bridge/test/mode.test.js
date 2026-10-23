@@ -24,7 +24,8 @@ test('parseMode: display keys, flags and a width', () => {
 
 test('pickDisplay: the current display if it will do, else the fastest that will', () => {
   const pick = (spec, cur, ids = ALL) => pickDisplay(parseMode(spec), ids, cur)?.key ?? null;
-  assert.equal(pick('game', DISPLAY.C64_80), 'c64');
+  assert.equal(pick('game', DISPLAY.C64_80), 'c64-80', 'the soft screens have game hardware too');
+  assert.equal(pick('ext', DISPLAY.C64_80), 'c64-hires');
   assert.equal(pick('game', DISPLAY.C64_HIRES), 'c64-hires', 'hi-res has game hardware too');
   assert.equal(pick('ext,game', DISPLAY.C64), 'c64-hires');
   assert.equal(pick('50', DISPLAY.C64), 'c64-53');

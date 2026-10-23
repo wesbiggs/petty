@@ -1,6 +1,9 @@
-; PETTY - MOVE for the C64 text and hi-res clients (game.inc), which differ in how: the
-; text client copies screen codes and colours, the hi-res one bitmap bytes and colours.
-; MOVE_BITMAP says which (the combined client includes this once for each).
+; PETTY - MOVE for the C64 clients (game.inc), which differ in how: the text client
+; copies screen codes and colours, the bitmap ones bitmap bytes and colours. The includer
+; says which with MOVE_BITMAP, and MOVE_GROUP: the columns a group of bitmap cells holds
+; (1 on the 40-column screens; 2 columns a cell at 80 columns; 4 columns three cells at
+; 53), as the soft screens move whole groups only. (The combined client includes this
+; once for each screen.)
 
 ; MOVE x y w h dx dy: the w by h cells (screen codes and colours) at x, y
 ; copy to x + dx, y + dy (dx and dy signed), as if all at once. A rectangle
@@ -18,6 +21,33 @@ op_move:
         sta mdx
         jsr rb_get
         sta mdy
+.if MOVE_GROUP > 1
+        lda mx                  ; whole groups only, then counted in bitmap cells
+        ora mw
+        ora mdx
+        and #MOVE_GROUP - 1
+        beq :+
+        jmp @bad
+:
+        lda mx
+        jsr move_cells
+        sta mx
+        lda mw
+        jsr move_cells
+        sta mw
+        lda mdx                 ; signed: shift right keeping the sign
+        cmp #$80
+        ror
+.if MOVE_GROUP = 4
+        cmp #$80
+        ror
+        sta ma                  ; three cells a group
+        asl
+        clc
+        adc ma
+.endif
+        sta mdx
+.endif
         lda mw
         beq @bad
         lda mh
@@ -83,6 +113,19 @@ op_move:
         cmp mh
         bcc :-
         jmp cmdloop
+
+.if MOVE_GROUP > 1
+; A (whole groups of columns) as bitmap cells.
+move_cells:
+        lsr
+.if MOVE_GROUP = 4
+        lsr
+        sta ma
+        asl
+        adc ma                  ; (C clear: A was at most 127)
+.endif
+        rts
+.endif
 
 .if MOVE_BITMAP
 ; (hi-res) byte offsets: x * 8, the destination's, and the width * 8.

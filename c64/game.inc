@@ -82,7 +82,7 @@ GV_END      = GV + 95
 
 gp          = $F7               ; script read pointer (BASIC's RS-232 pointers: unused)
 
-.if .defined(GAME_HIRES) .or .defined(MULTI)
+.ifdef GAME_BANK1                  ; the bitmap clients, and the combined one
 SPR_BLOCKS  = $4800             ; in the VIC's second bank, after the font and before the colours
 SPR_PTRS    = $5FF8             ; the colours at $5C00 are the "screen matrix"
 SPR_PTR0    = $20               ; the pointer for the first block: (SPR_BLOCKS - $4000) / 64
@@ -340,8 +340,7 @@ op_sprmc:
 ; --- MOVE ----------------------------------------------------------------------
 
 .ifndef MULTI
-MOVE_BITMAP = .defined(GAME_HIRES)
-.include "move.inc"
+.include "move.inc"                 ; with the client's MOVE_BITMAP and MOVE_GROUP
 .endif
 
 ; --- SID ---------------------------------------------------------------------

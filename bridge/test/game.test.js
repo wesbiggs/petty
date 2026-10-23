@@ -194,3 +194,33 @@ test('no MOVE when nothing moved as a block', () => {
   const { state } = encodeReset(before);
   assert.ok(!encodeFrame(state, after).bytes.includes(OP.MOVE));
 });
+
+// The soft screens: a map of pairs (80 columns) or groups of 4 (53), each group one colour, scrolled by a group.
+function groupScreen(display, m, x0, y0, g) {
+  const { cols, rows } = display;
+  const glyph = new Int16Array(cols * rows).fill(32), color = new Int16Array(cols * rows).fill(15);
+  for (let y = 0; y < 19; y++) for (let x = 0; x < 40; x++) {
+    const [ch, c] = m[y0 + y][x0 + Math.floor(x / g)];
+    glyph[y * cols + x + g] = ch;
+    color[y * cols + x + g] = c;
+  }
+  return { cols, rows, glyph, color, move: true, group: g };
+}
+
+for (const [display, g] of [[DISPLAY.C64_80, 2], [DISPLAY.C64_53, 4]]) {
+  for (const dx of [1, -1]) {
+    test(`${display.name}: a map scrolled by a group goes by MOVE of whole groups`, () => {
+      const m = map(40, 40);
+      const before = groupScreen(display, m, 5, 5, g), after = groupScreen(display, m, 5 + dx, 5, g);
+      const { state } = encodeReset(before);
+      const { bytes } = encodeFrame(state, after);
+      assert.equal(bytes[0], OP.MOVE, 'starts with MOVE');
+      const [, x, , w, , ddx] = bytes;
+      for (const v of [x, w, ddx << 24 >> 24]) assert.equal(((v % g) + g) % g, 0, `${v} is whole groups`);
+      const dec = new Decoder(display.cols, display.rows);
+      dec.feed(encodeReset(before).bytes);
+      dec.feed(bytes);
+      assert.deepEqual([...dec.glyph], [...after.glyph]);
+    });
+  }
+}
