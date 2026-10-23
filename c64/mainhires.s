@@ -67,9 +67,6 @@ OP_VIEW     = 14
 OP_POKE     = 15
 NUM_OPS     = GAME_OPS          ; 16 and 17 (SOUND, PROBE) are in sound.inc, 18 up in game.inc
 
-VIEW_TERMINAL = 0
-VIEW_LOAD   = 1
-
 MSG_ACK     = 1
 MSG_KEY     = 2
 MSG_HELLO_ON = 4
@@ -311,32 +308,14 @@ op_bits:
         bne @cell
 @done:  jmp cmdloop
 
-; VIEW mode bg: a full-screen multicolour picture (loaded with POKE into the
-; bitmap, the cell colours and colour RAM). LOAD blanks the screen in colour
-; bg and switches to multicolour, SHOW shows the picture, TERMINAL goes back
-; to hi-res (the bridge then redraws the terminal).
-op_view:
-        jsr rb_get
-        sta tmp2
-        jsr rb_get
-        ldx tmp2
-        cpx #VIEW_LOAD
-        beq @load
-        lda #$3B                ; screen on: the picture, or the terminal
-        sta VIC_CR1
-        cpx #VIEW_TERMINAL
-        bne @done
-        lda #$C8                ; no multicolour
-        sta VIC_CR2
-@done:  jmp cmdloop
-@load:  sta BORDER
-        sta VIC_BG
-        lda #$2B                ; screen off (the border colour) while it loads
-        sta VIC_CR1
-        lda #$D8                ; multicolour
-        sta VIC_CR2
-        jmp cmdloop
+.ifndef MULTI                   ; (the combined client's core has this once)
+VIEW_TERM_CR1 = $3B             ; the terminal: hi-res bitmap (view.inc)
+VIEW_TERM_MEM = ((COLRAM & $3FFF) / $400) << 4 | ((BITMAP & $3FFF) / $2000) << 3
+VIEW_BANK0  = 0
+.include "view.inc"
+.endif
 
+.ifndef MULTI                   ; (the combined client's core has this once)
 ; POKE lo hi n d1..dn: n bytes (0 = 256) from lo + 256 * hi on.
 op_poke:
         jsr rb_get
@@ -355,6 +334,7 @@ op_poke:
         bne @loop
         jmp cmdloop
 
+.endif
 ; SCROLL top bot n: rows top..bot move up n, vacated rows cleared. The write
 ; position is unchanged.
 op_scroll:
@@ -536,6 +516,7 @@ clear_screen:
         jsr fill
         jmp home
 
+.ifndef MULTI                   ; (the combined client's core has this once)
 ; Copy cnt bytes from (src) to (dst), ascending, so dst may overlap above src.
 copy:
         ldy #0
@@ -577,6 +558,7 @@ fill:
         bne @byte
 @done:  rts
 
+.endif
 .ifndef MULTI
 ; --- serial ------------------------------------------------------------------
 
@@ -845,6 +827,7 @@ store_glyph:
         inc src+1
 :       rts
 
+.ifndef MULTI                   ; (the combined client's core has these once)
 ; Byte offsets of text rows 0-25 in the bitmap (320 per row) and colours (40).
 o320lo:
 .repeat ROWS+1, i
@@ -862,6 +845,7 @@ o40hi:
 .repeat ROWS+1, i
         .byte >(i * 40)
 .endrep
+.endif
 
 .ifdef MULTI
 MOVE_BITMAP = 1

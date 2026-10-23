@@ -24,11 +24,12 @@
 //                               write from now on (0 = off)
 //   0D n (d0..d7 color)*n  BITS (C64 hi-res) write n cells of raw pixels, each
 //                               8 bitmap bytes and its colour, advancing
-//   0E mode bg         VIEW     (C64 hi-res) 1: blank the screen in colour bg and
-//                               switch to multicolour, to load a picture; 2: show
-//                               it; 0: back to the hi-res terminal screen (the
-//                               host then redraws it)
-//   0F lo hi n d1..dn  POKE     (C64 hi-res) write n bytes (0 = 256) at lo + 256 * hi
+//   0E mode bg         VIEW     (C64) 1: blank the screen in colour bg and switch to
+//                               a multicolour bitmap, to load a picture; 3: the same
+//                               in hi-res; 2: show it; 0: back to the terminal
+//                               screen (the host then redraws it). Sprites are
+//                               hidden while a picture is up
+//   0F lo hi n d1..dn  POKE     (C64) write n bytes (0 = 256) at lo + 256 * hi
 //   10 var delay lat_lo lat_hi n_lo n_hi n_ex
 //                      SOUND    (C64 hi-res) play n bytes of 2-bit codes (4 samples each; see
 //                               sound/codec.js) that follow the command as raw bytes: modally,
@@ -90,15 +91,15 @@ import { IMAGE, imageCell } from './image.js';
 
 // key: what OSC 8350 `display` tells a program (see displayReport).
 export const DISPLAY = {
-  C64: { id: 0, key: 'c64', name: 'C64', cols: 40, rows: 25, sound: true, game: true },
+  C64: { id: 0, key: 'c64', name: 'C64', cols: 40, rows: 25, sound: true, game: true, picture: true },
   C128: { id: 1, key: 'c128', name: 'C128 VDC', cols: 80, rows: 25, reverse: true, ext: true, sound: true },
-  C64_80: { id: 2, key: 'c64-80', name: 'C64 soft-80', cols: 80, rows: 25, pair: true, sound: true, game: true },
-  C64_HIRES: { id: 3, key: 'c64-hires', name: 'C64 hi-res', cols: 40, rows: 25, hires: true, ext: true, sound: true, game: true },
-  C64_53: { id: 4, key: 'c64-53', name: 'C64 soft-53', cols: 53, rows: 25, quad: true, sound: true, game: true },
+  C64_80: { id: 2, key: 'c64-80', name: 'C64 soft-80', cols: 80, rows: 25, pair: true, sound: true, game: true, picture: true },
+  C64_HIRES: { id: 3, key: 'c64-hires', name: 'C64 hi-res', cols: 40, rows: 25, hires: true, ext: true, sound: true, game: true, picture: true },
+  C64_53: { id: 4, key: 'c64-53', name: 'C64 soft-53', cols: 53, rows: 25, quad: true, sound: true, game: true, picture: true },
 };
 export const displayById = id => Object.values(DISPLAY).find(d => d.id === id);
 export const displayByKey = key => Object.values(DISPLAY).find(d => d.key === key);
-const FLAGS = ['hires', 'ext', 'game', 'sound', 'reverse', 'pair', 'quad'];
+const FLAGS = ['hires', 'ext', 'game', 'sound', 'reverse', 'pair', 'quad', 'picture'];
 
 // A client that can switch displays (MODES) is put on the first of these that has what is asked for:
 // the fastest to draw first (text, then the bitmap screens, the narrowest first).
@@ -138,7 +139,7 @@ export const ROWS = DISPLAY.C64.rows;
 export const CELLS = COLS * ROWS;
 
 export const OP = { GOTO: 1, COLOR: 2, PUT: 3, REPEAT: 4, SCROLL: 5, COLORS: 6, CLS: 7, FRAME: 8, SPRITE: 9, NOSPRITE: 10, GLYPH: 11, UNDERLINE: 12, BITS: 13, VIEW: 14, POKE: 15, SOUND: 16, PROBE: 17, SPRDEF: 18, SPR: 19, GLIDE: 20, MOVE: 21, SIDW: 22, SIDPLAY: 23, SIDSTOP: 24, SIDRESET: 25, SPRMC: 26, MODE: 27 };
-export const VIEW = { TERMINAL: 0, LOAD: 1, SHOW: 2 };
+export const VIEW = { TERMINAL: 0, LOAD: 1, SHOW: 2, LOAD_HIRES: 3 };
 // Where SOUND's tables go in the C64 (c64/sound.inc).
 export const SOUND_ADDR = { OUTTAB: 0xCD00, DTAB: 0xCE00, NIDX: 0xCE40 };
 export const SOUND_WINDOW = 128; // bytes of codes the C64 holds, which the bridge keeps in flight
@@ -453,17 +454,18 @@ export function encodeReset(want, border = 0, bg = 0, color = 15, budget = Infin
   return { bytes: out.concat(frame.bytes), state: frame.state, partial: frame.partial };
 }
 
-// Where the C64 hi-res client keeps a picture shown with VIEW: the bitmap
-// and colours of its terminal screen, and the VIC's colour RAM.
+// Where the C64 clients keep a picture shown with VIEW (in the VIC's second
+// bank: the bitmap screens' own bitmap and colours), and the VIC's colour RAM.
 const PICTURE = { bitmap: 0x6000, screen: 0x5C00, colram: 0xD800 };
 
-// Frames of at most about `budget` bytes that show a Koala Painter picture
-// ({bitmap, screen, colram, bg}, see image.js) full screen on the C64 hi-res
-// client: blank the screen, load it, show it. The terminal comes back with
-// VIEW TERMINAL and a reset.
+// Frames of at most about `budget` bytes that show a picture full screen on a
+// C64 client: Koala Painter data ({bitmap, screen, colram, bg}) or a hi-res
+// picture ({bitmap, screen, bg, hires: true}), see image.js. Blank the
+// screen, load it, show it. The terminal comes back with VIEW TERMINAL and a
+// reset.
 export function encodePicture(pic, budget = Infinity) {
-  const cmds = [[OP.VIEW, VIEW.LOAD, pic.bg]];
-  for (const part of ['bitmap', 'screen', 'colram']) {
+  const cmds = [[OP.VIEW, pic.hires ? VIEW.LOAD_HIRES : VIEW.LOAD, pic.bg]];
+  for (const part of pic.hires ? ['bitmap', 'screen'] : ['bitmap', 'screen', 'colram']) {
     const data = pic[part];
     for (let k = 0; k < data.length; k += 256) {
       const addr = PICTURE[part] + k, chunk = data.subarray(k, k + 256);
@@ -544,7 +546,7 @@ export class Decoder {
         }
         case OP.NOSPRITE: this.sprites[next()] = null; break;
         case OP.GLYPH: { const code = next() | next() << 8; this.glyphs.set(code, Uint8Array.from({ length: 8 }, next)); break; }
-        case OP.VIEW: this.view = next(); if (this.view === VIEW.LOAD) this.border = this.bg = next(); else next(); break;
+        case OP.VIEW: this.view = next(); if (this.view === VIEW.LOAD || this.view === VIEW.LOAD_HIRES) this.border = this.bg = next(); else next(); break;
         case OP.SOUND: this.sounds.push({ variant: next(), delay: next(), latch: next() | next() << 8, n: next() | next() << 8 | next() << 16 }); break;
         case OP.PROBE: break;
         case OP.SPRDEF: { const slot = next(); this.shapes.set(slot, Uint8Array.from({ length: 63 }, next)); break; }
@@ -595,7 +597,8 @@ export class Decoder {
 /**
  * What a program is told when it asks (OSC 8350 ; display): `KEY;COLS;ROWS;FLAGS`, FLAGS a comma-separated list
  * of what the display can do: `hires` (per-cell colours, 128-255 free for glyphs), `ext` (the extended glyphs),
- * `game` (sprites and SID: OSC 8348/8349), `sound`, `reverse` (C128), `pair` (soft 80), `quad` (soft 53).
+ * `game` (sprites and SID: OSC 8348/8349), `sound`, `reverse` (C128), `pair` (soft 80), `quad` (soft 53),
+ * `picture` (full-screen pictures: petty-view).
  */
 export function displayReport(d) {
   const flags = FLAGS.filter(f => d[f]);

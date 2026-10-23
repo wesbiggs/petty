@@ -58,6 +58,7 @@ VIC_CR1     = $D011
 VIC_CR2     = $D016
 VIC_MEM     = $D018
 BORDER      = $D020
+VIC_BG      = $D021
 
 ; KERNAL
 NMIVEC      = $0318
@@ -184,7 +185,7 @@ optable:
         .word cmdloop-1, op_goto-1, op_color-1, op_put-1, op_repeat-1
         .word op_scroll-1, op_colors-1, op_cls-1, op_frame-1
         .word op_sprite-1, op_nosprite-1, cmdloop-1, cmdloop-1
-        .word cmdloop-1, cmdloop-1, op_poke-1
+        .word cmdloop-1, op_view-1, op_poke-1
         .word op_sound-1, op_probe-1
         .word op_sprdef-1, op_spr-1, op_glide-1, op_move-1
         .word op_sidw-1, op_sidplay-1, op_sidstop-1, op_sidreset-1, op_sprmc-1
@@ -385,6 +386,14 @@ op_nosprite:
 
 notbit: .byte $FE, $FD, $FB, $F7, $EF, $DF, $BF, $7F   ; (bitmask is game.inc's)
 
+.ifndef MULTI                   ; (the combined client's core has this once)
+VIEW_TERM_CR1 = $3B             ; the terminal: hi-res bitmap (view.inc)
+VIEW_TERM_MEM = ((COLRAM & $3FFF) / $400) << 4 | ((BITMAP & $3FFF) / $2000) << 3
+VIEW_BANK0  = 0
+.include "view.inc"
+.endif
+
+.ifndef MULTI                   ; (the combined client's core has this once)
 ; POKE lo hi n d1..dn: n bytes (0 = 256) from lo + 256 * hi on (sound's tables).
 op_poke:
         jsr rb_get
@@ -403,6 +412,7 @@ op_poke:
         bne @loop
         jmp cmdloop
 
+.endif
 ; SCROLL top bot n: rows top..bot move up n, vacated rows cleared. The write
 ; position is unchanged.
 op_scroll:
@@ -655,6 +665,7 @@ clear_screen:
         jsr fill
         jmp home
 
+.ifndef MULTI                   ; (the combined client's core has this once)
 ; Copy cnt bytes from (src) to (dst), ascending, so dst may overlap above src.
 copy:
         ldy #0
@@ -696,6 +707,7 @@ fill:
         bne @byte
 @done:  rts
 
+.endif
 .ifndef MULTI
 ; --- serial ------------------------------------------------------------------
 
@@ -948,6 +960,7 @@ init_tables:
         jmp @code
 :       rts
 
+.ifndef MULTI                   ; (the combined client's core has these once)
 ; Byte offsets of text rows 0-25 in the bitmap (320 per row) and colours (40).
 o320lo:
 .repeat ROWS+1, i
@@ -965,6 +978,7 @@ o40hi:
 .repeat ROWS+1, i
         .byte >(i * 40)
 .endrep
+.endif
 
 .ifdef MULTI
 MOVE_BITMAP = 1

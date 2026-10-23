@@ -16,7 +16,7 @@ DIALASK ?=
 VICE_FLAGS := -acia1 -acia1mode 1 -acia1base 0xDE00 -acia1irq 1 \
               -myaciadev 0 -rsdev1 127.0.0.1:$(PORT) +rsdev1ip232 -rsdev1baud 38400
 
-.PHONY: all clean bridge theme title vice vice128 vice80 vice53 vicehires viceall run test game-check mode-check
+.PHONY: all clean bridge theme title vice vice128 vice80 vice53 vicehires viceall run test game-check mode-check picture-check
 
 all: $(PRG) $(PRG128) $(PRG80) $(PRG53) $(PRGHI) $(PRGALL)
 
@@ -152,3 +152,7 @@ game-check: $(PRG) $(PRGHI) $(PRG80) $(PRG53) $(PRGALL)
 # The combined client's screens against the single-screen clients', in VICE.
 mode-check: $(PRG) $(PRGHI) $(PRG80) $(PRG53) $(PRGALL)
 	node bridge/scripts/vice-mode-check.js $(BUILD)
+
+# Full-screen pictures (petty-view) on every C64 client, in VICE.
+picture-check: $(PRG) $(PRGHI) $(PRG80) $(PRG53) $(PRGALL)
+	node bridge/scripts/vice-picture-check.js $(BUILD)

@@ -6,89 +6,18 @@
 // VICE's SwiftLink dials it. Needs x64sc.
 //
 // usage: node scripts/vice-mode-check.js [--keep] [build dir]
-import net from 'node:net';
-import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, copyFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import assert from 'node:assert/strict';
-import { MSG, OP, DISPLAY, ScreenState, encodeFrame, encodeReset, HIRES_UNDERLINE } from '../src/protocol.js';
+import { MSG, OP, DISPLAY, encodeFrame, encodeReset, HIRES_UNDERLINE } from '../src/protocol.js';
+import { startVice as start } from './vice.js';
 
 const { values: opt, positionals } = parseArgs({ allowPositionals: true, options: { keep: { type: 'boolean', default: false } } });
 const build = resolve(positionals[0] ?? fileURLToPath(new URL('../../build', import.meta.url)));
-const sleep = ms => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.error('[vice-mode]', ...a);
-const freePort = () => new Promise((ok, fail) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => ok(port)); }).on('error', fail); });
+const startVice = prg => start(prg, { keep: opt.keep, log });
 const MODES_MASK = 0x80 | 1 << DISPLAY.C64.id | 1 << DISPLAY.C64_80.id | 1 << DISPLAY.C64_HIRES.id | 1 << DISPLAY.C64_53.id;
-
-// --- a client in VICE, with us as its bridge -----------------------------------
-
-async function startVice(prg) {
-  const work = mkdtempSync(join(tmpdir(), 'petty-mode-'));
-  copyFileSync(prg, join(work, 'petty.prg'));
-  const linkPort = await freePort(), monPort = await freePort();
-  const c = { rx: [], sock: null, work };
-  const waiters = [];
-  c.link = net.createServer(s => {
-    c.sock = s;
-    s.on('data', d => { c.rx.push(...d); for (const w of [...waiters]) w(); });
-  }).listen(linkPort, '127.0.0.1');
-  c.waitFor = async (pred, what, ms = 20000) => {
-    const until = Date.now() + ms;
-    while (Date.now() < until) {
-      const r = pred();
-      if (r) return r;
-      await new Promise(res => { waiters.push(res); setTimeout(res, 50); });
-      waiters.length = 0;
-    }
-    throw new Error(`timed out waiting for ${what}`);
-  };
-  // The next n bytes from the client.
-  c.read = async (n, what) => { await c.waitFor(() => c.rx.length >= n, what); return c.rx.splice(0, n); };
-  c.vice = spawn('x64sc', [
-    '-autostartprgmode', '1', '-autostart', 'petty.prg',
-    '-acia1', '-acia1mode', '1', '-acia1base', '0xDE00', '-acia1irq', '1', '-myaciadev', '0',
-    '-rsdev1', `127.0.0.1:${linkPort}`, '+rsdev1ip232', '-rsdev1baud', '38400',
-    '-sound', '-sounddev', 'dummy',
-    '-remotemonitor', '-remotemonitoraddress', `ip4://127.0.0.1:${monPort}`,
-  ], { cwd: work, stdio: 'ignore' });
-  c.vice.on('error', e => { log(`can't run x64sc: ${e.message}`); process.exit(2); });
-  c.monitor = async cmds => {
-    const s = net.connect(monPort, '127.0.0.1');
-    await new Promise((ok, fail) => s.once('connect', ok).once('error', fail));
-    let text = '';
-    s.on('data', d => { text += d; });
-    const prompt = async () => {
-      for (let t = 0; t < 100 && !/\(C:\$[0-9a-f]{4}\) $/i.test(text); t++) await sleep(50);
-      text = '';
-    };
-    for (const cmd of [...cmds, 'x']) { await prompt(); s.write(cmd + '\n'); }
-    await sleep(100);
-    s.destroy();
-  };
-  // All of RAM, and the I/O area (VIC, SID, colour RAM).
-  c.machine = async () => {
-    await c.monitor(['bank io', 'bsave "io.bin" 0 d000 dfff', 'bank ram', 'bsave "ram.bin" 0 0000 ffff']);
-    const io = readFileSync(join(work, 'io.bin')), ram = readFileSync(join(work, 'ram.bin'));
-    rmSync(join(work, 'io.bin')); rmSync(join(work, 'ram.bin'));
-    return { io, ram };
-  };
-  // A frame (ending in FRAME), and its ACK.
-  c.frame = async bytes => {
-    c.sock.write(Buffer.from(bytes));
-    const ack = await c.read(1, 'ACK');
-    assert.deepEqual(ack, [MSG.ACK], 'ACK');
-  };
-  c.stop = () => {
-    if (opt.keep) return log(`kept ${work}`);
-    c.vice.kill();
-    c.link.close();
-    rmSync(work, { recursive: true, force: true });
-  };
-  return c;
-}
 
 // --- the frames ------------------------------------------------------------------
 

@@ -196,6 +196,10 @@ set_screen:
         sta optab
         lda screen_ops_hi,x
         sta optab+1
+        lda screen_cr1,x        ; what VIEW TERMINAL goes back to
+        sta view_cr1
+        lda screen_mem,x
+        sta view_mem
         lda screen_init_hi,x
         pha
         lda screen_init_lo,x
@@ -215,6 +219,8 @@ screen_ops_lo:  .byte <text::optable, <hires::optable, <s80::optable, <s53::opta
 screen_ops_hi:  .byte >text::optable, >hires::optable, >s80::optable, >s53::optable
 screen_init_lo: .byte <(init_text-1), <(init_hires-1), <(init_s80-1), <(init_s53-1)
 screen_init_hi: .byte >(init_text-1), >(init_hires-1), >(init_s80-1), >(init_s53-1)
+screen_cr1:     .byte $1B, $3B, $3B, $3B
+screen_mem:     .byte $70, $78, $78, $78
 
 init_text:
         jsr text::init_charset
@@ -427,6 +433,95 @@ keypoll:
 .include "sound.inc"
 .include "game.inc"
 .include "glyphs.inc"
+
+; --- what the screens share --------------------------------------------------
+
+; POKE lo hi n d1..dn: n bytes (0 = 256) from lo + 256 * hi on (sound's tables, pictures).
+op_poke:
+        jsr rb_get
+        sta dst
+        jsr rb_get
+        sta dst+1
+        jsr rb_get
+        sta count
+@loop:  jsr rb_get
+        ldy #0
+        sta (dst),y
+        inc dst
+        bne :+
+        inc dst+1
+:       dec count
+        bne @loop
+        jmp cmdloop
+
+; Copy cnt bytes from (src) to (dst), ascending, so dst may overlap above src.
+copy:
+        ldy #0
+        ldx cnt+1
+        beq @part
+@page:  lda (src),y
+        sta (dst),y
+        iny
+        bne @page
+        inc src+1
+        inc dst+1
+        dex
+        bne @page
+@part:  ldx cnt
+        beq @done
+@byte:  lda (src),y
+        sta (dst),y
+        iny
+        dex
+        bne @byte
+@done:  rts
+
+; Fill cnt bytes from (dst) on with A.
+fill:
+        ldy #0
+        ldx cnt+1
+        beq @part
+@page:  sta (dst),y
+        iny
+        bne @page
+        inc dst+1
+        dex
+        bne @page
+@part:  ldx cnt
+        beq @done
+@byte:  sta (dst),y
+        iny
+        dex
+        bne @byte
+@done:  rts
+
+; Byte offsets of text rows 0-25 in the bitmap (320 per row) and colours (40).
+o320lo:
+.repeat 26, i
+        .byte <(i * 320)
+.endrep
+o320hi:
+.repeat 26, i
+        .byte >(i * 320)
+.endrep
+o40lo:
+.repeat 26, i
+        .byte <(i * 40)
+.endrep
+o40hi:
+.repeat 26, i
+        .byte >(i * 40)
+.endrep
+
+; MOVE's rows on the bitmap screens; VIEW on every screen.
+BITMAP      = $6000
+COLRAM      = $5C00
+.include "movebits.inc"
+VIEW_VARS   = 1
+VIEW_BANK0  = 0
+.include "view.inc"
+view_cr1:   .byte 0
+view_mem:   .byte 0
 
 ; --- the screens -------------------------------------------------------------
 

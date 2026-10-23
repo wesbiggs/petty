@@ -30,6 +30,11 @@ ACIA_CTRL   = $DE03
 VIC_MEM     = $D018
 BORDER      = $D020
 BGCOLOR     = $D021
+VIC_BG      = $D021
+VIC_CR1     = $D011
+VIC_CR2     = $D016
+SPR_ON      = $D015
+CIA2_PRA    = $DD00             ; bits 0-1: VIC bank, inverted
 
 ; KERNAL
 NMIVEC      = $0318
@@ -145,7 +150,7 @@ optable:
         .word cmdloop-1, op_goto-1, op_color-1, op_put-1, op_repeat-1
         .word op_scroll-1, op_colors-1, op_cls-1, op_frame-1
         .word cmdloop-1, cmdloop-1, cmdloop-1, cmdloop-1
-        .word cmdloop-1, cmdloop-1, op_poke-1
+        .word cmdloop-1, op_view-1, op_poke-1
         .word op_sound-1, op_probe-1
         .word op_sprdef-1, op_spr-1, op_glide-1, op_move-1
         .word op_sidw-1, op_sidplay-1, op_sidstop-1, op_sidreset-1, op_sprmc-1
@@ -218,7 +223,21 @@ op_frame:
         jsr send
         jmp cmdloop
 
-; POKE lo hi n d1..dn: n bytes (0 = 256) from lo + 256 * hi on (sound's tables).
+.ifndef MULTI                   ; (the combined client's core has this once)
+; Pictures (view.inc) are in the VIC's second bank, which the text screen leaves free.
+VIEW_TERM_CR1 = $1B             ; the terminal: text
+.ifdef MULTI
+VIEW_TERM_MEM = ((SCREEN & $3FFF) / $400) << 4 | ((CHARSET & $3FFF) / $800) << 1
+VIEW_BANK0  = 0
+.else
+VIEW_TERM_MEM = $1E             ; screen $0400, charset $3800, in the first bank
+VIEW_BANK0  = 1
+.endif
+.include "view.inc"
+.endif
+
+.ifndef MULTI                   ; (the combined client's core has this once)
+; POKE lo hi n d1..dn: n bytes (0 = 256) from lo + 256 * hi on (sound's tables, pictures).
 op_poke:
         jsr rb_get
         sta dst
@@ -236,6 +255,7 @@ op_poke:
         bne @loop
         jmp cmdloop
 
+.endif
 ; SCROLL top bot n: rows top..bot move up n, vacated rows cleared.
 op_scroll:
         jsr rb_get

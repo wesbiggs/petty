@@ -27,7 +27,7 @@ import { THEME_NAMES, stepTheme, oscReply } from './colors.js';
 import { keyToBytes, MATRIX } from './keymap.js';
 import { GlyphCache } from './glyphcache.js';
 import { openSerial } from './serial.js';
-import { InlineImages, multicolourPicture } from './image.js';
+import { InlineImages, fullScreenPicture } from './image.js';
 import { GameHardware } from './game.js';
 
 const { values: opt, positionals } = parseArgs({
@@ -188,14 +188,14 @@ class Session {
     }
     term.onWriteParsed(() => { this.dirty = true; });
     // Inline images (imgcat): drawn on the hi-res screen, as blocks
-    // on the others. Transparency shows the theme's screen colour. On the
-    // hi-res screen, a Koala picture (or any, with imgcat -t koala) shows full
-    // screen, in multicolour, until a key is pressed.
+    // on the others. Transparency shows the theme's screen colour. On the C64
+    // clients a Koala picture (or any, with imgcat -t koala), and anything
+    // petty-view sends, shows full screen until a key is pressed.
     this.images = new InlineImages(term, () => {
       const vic = paletteFor(DISPLAY.C64_HIRES, this.theme);
       return { maxCols: this.display.cols, maxRows: this.display.rows, bg: vic.rgb[vic.screenBg] };
     }, this.log, (file, args) => {
-      const pic = this.display.hires && this.conn && multicolourPicture(file, args);
+      const pic = this.display.picture && this.conn && fullScreenPicture(file, args);
       if (pic) this.conn.showPicture(pic);
       return !!pic;
     });

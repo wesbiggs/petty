@@ -146,10 +146,23 @@ export function decodePNG(buf) {
 // hi-res Doodle! and Art Studio, multicolour Koala Painter. All 320x200.
 const C64_FORMATS = [
   { name: 'Doodle', size: 9218, hires: true, bitmap: 1026, screen: 2 },
-  { name: 'Art Studio', size: 9009, hires: true, bitmap: 2, screen: 8002 },
+  { name: 'Art Studio', size: 9009, hires: true, bitmap: 2, screen: 8002, border: 9002 },
   { name: 'Art Studio', size: 9002, hires: true, bitmap: 2, screen: 8002 },
   { name: 'Koala', size: 10003, hires: false, bitmap: 2, screen: 8002, colram: 9002, bg: 10002 },
 ];
+
+// A hi-res picture's parts (Doodle! or Art Studio), as the VIC shows them in
+// hi-res bitmap mode: {bitmap, screen, bg (the border), hires: true}, or null.
+export function hiresPicture(buf) {
+  const f = C64_FORMATS.find(f => f.size === buf.length);
+  if (!f || !f.hires) return null;
+  return {
+    bitmap: buf.subarray(f.bitmap, f.bitmap + 8000),
+    screen: buf.subarray(f.screen, f.screen + 1000),
+    bg: f.border ? buf[f.border] & 15 : 0,
+    hires: true,
+  };
+}
 
 // A Koala Painter picture's parts, as the VIC shows them in multicolour
 // bitmap mode: {bitmap, screen, colram, bg}, or null for anything else.
@@ -327,7 +340,7 @@ function colours(img, max) {
 // ones, are `clear`. `order(x, y)` gives each pixel's place in the result.
 function flatPixels(img, list, w, h, cw, ch, ox, oy, order, clear) {
   const index = new Map(list.map((c, i) => [c, i]));
-  const px = new Int16Array(cw * ch).fill(clear);
+  const px = new Int32Array(cw * ch).fill(clear); // (a photo forced flat can have more than 32767 colours)
   for (let y = 0; y < h; y++) {
     const y0 = Math.floor(y * img.height / h), y1 = Math.max(y0 + 1, Math.floor((y + 1) * img.height / h));
     for (let x = 0; x < w; x++) {
@@ -468,15 +481,16 @@ function ditheredCell(p) {
   return hiresCell([bi, bj], k => (mix(p, k * 3, bi, bj, MIX_HIRES).t > BAYER[k] ? 1 : 0));
 }
 
-// The image as `cols` x `rows` hi-res cells: {cols, rows, keys}. What's
-// left of the cells around it, and clear pixels, are `bg` (0xRRGGBB, a VIC
-// colour). args.type: flat or dither (see DITHER), else flat art isn't.
-export function toCells(img, args, maxCols, maxRows, bg) {
+// The image as `cols` x `rows` hi-res cells: {cols, rows, cells}, 9 bytes a
+// cell (CELL_BYTES). What's left of the cells around it, and clear pixels,
+// are `bg` (0xRRGGBB, a VIC colour). args.type: flat or dither (see DITHER),
+// else flat art isn't.
+export function hiresCells(img, args, maxCols, maxRows, bg) {
   const { w, h } = fitSize(img.width, img.height, args, Math.min(maxCols, MAX_COLS), Math.min(maxRows, MAX_ROWS));
   const cols = Math.ceil(w / 8), rows = Math.ceil(h / 8);
   const cw = cols * 8, ch = rows * 8, n = cols * rows;
-  const keys = new Uint32Array(n);
-  const dither = DITHER[args.type?.toLowerCase()];
+  const cells = new Uint8Array(n * CELL_BYTES);
+  const dither = DITHER[args.type?.toLowerCase().split(':').pop()];
   const list = dither ? null : colours(img, dither === false ? Infinity : FLAT_COLOURS);
 
   if (list) {
@@ -484,9 +498,9 @@ export function toCells(img, args, maxCols, maxRows, bg) {
     const px = flatPixels(img, list, w, h, cw, ch, 0, 0, hiresOrder(cols), list.indexOf(bg));
     const cost = flatCosts(list, px);
     flatCells(px, cost, n, 64, [], 2).forEach(({ colours: set }, i) => {
-      keys[i] = addCell(hiresCell(set, k => nearestIn(cost, px[i * 64 + k], set)));
+      cells.set(hiresCell(set, k => nearestIn(cost, px[i * 64 + k], set)), i * CELL_BYTES);
     });
-    return { cols, rows, keys };
+    return { cols, rows, cells };
   }
 
   const rgb = resample(img, w, h, cw, ch, bg);
@@ -496,10 +510,34 @@ export function toCells(img, args, maxCols, maxRows, bg) {
       for (let y = 0; y < 8; y++) {
         for (let x = 0; x < 8; x++) p.set(lab(rgbAt(rgb, ((cy * 8 + y) * cw + cx * 8 + x) * 3)), (y * 8 + x) * 3);
       }
-      keys[cy * cols + cx] = addCell(ditheredCell(p));
+      cells.set(ditheredCell(p), (cy * cols + cx) * CELL_BYTES);
     }
   }
+  return { cols, rows, cells };
+}
+
+// The same, each cell given a key (for the terminal's placeholders): {cols, rows, keys}.
+export function toCells(img, args, maxCols, maxRows, bg) {
+  const { cols, rows, cells } = hiresCells(img, args, maxCols, maxRows, bg);
+  const keys = new Uint32Array(cols * rows);
+  for (let i = 0; i < keys.length; i++) keys[i] = addCell(cells.subarray(i * CELL_BYTES, (i + 1) * CELL_BYTES));
   return { cols, rows, keys };
+}
+
+// A picture as a full hi-res screen ({bitmap, screen, bg, hires: true}, as
+// Art Studio keeps one): as large as it fits, in the middle, on black.
+export function toHiresPicture(img, args = {}) {
+  const { cols, rows, cells } = hiresCells(img, args, 40, 25, VIC_RGB[0]);
+  const bitmap = new Uint8Array(8000), screen = new Uint8Array(1000);
+  const x0 = (40 - cols) >> 1, y0 = (25 - rows) >> 1;
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const c = cells.subarray((y * cols + x) * CELL_BYTES), at = (y0 + y) * 40 + x0 + x;
+      bitmap.set(c.subarray(0, 8), at * 8);
+      screen[at] = c[8];
+    }
+  }
+  return { bitmap, screen, bg: 0, hires: true };
 }
 
 // --- multicolour conversion ------------------------------------------------------
@@ -660,18 +698,25 @@ export function toKoala(img, dither) {
   return list ? flatKoala(img, list) : ditheredKoala(img);
 }
 
-// The types (imgcat -t) that ask for a picture in multicolour, full screen,
-// and after a colon, how: flat (no dithering) or dither.
+// The types (imgcat -t, petty-view -t) that ask for a picture in multicolour
+// or hi-res, full screen, and after a colon, how: flat (no dithering) or dither.
 const MULTICOLOUR = new Set(['koala', 'multicolour', 'multicolor']);
+const HIRES = new Set(['hires', 'hi-res', 'art']);
 
-// What to show full screen in multicolour, instead of in the terminal: a
-// Koala picture, or any picture sent with -t koala (or multicolour, either
-// with :flat or :dither). Koala Painter data (see koala()), or null.
-export function multicolourPicture(file, args = {}) {
-  const pic = koala(file);
+// What to show full screen instead of in the terminal: Koala Painter data
+// (see koala()) or a hi-res picture (see hiresPicture()), or null. A Koala
+// picture always is, and any picture sent with -t koala (or multicolour,
+// either with :flat or :dither). petty-view (args.view) shows anything full
+// screen: Doodle! and Art Studio pictures as they are, others in multicolour
+// unless -t hires.
+export function fullScreenPicture(file, args = {}) {
+  const pic = koala(file) ?? (args.view ? hiresPicture(file) : null);
   if (pic) return pic;
   const [kind, how] = (args.type ?? '').toLowerCase().split(':');
-  return MULTICOLOUR.has(kind) ? toKoala(decodeImage(file), DITHER[how]) : null;
+  if (MULTICOLOUR.has(kind)) return toKoala(decodeImage(file), DITHER[how]);
+  if (!args.view) return null;
+  if (HIRES.has(kind)) return toHiresPicture(decodeImage(file), { type: how });
+  return toKoala(decodeImage(file), DITHER[kind] ?? DITHER[how]);
 }
 
 // --- the terminal side -------------------------------------------------------------
@@ -712,7 +757,7 @@ export function printText(term, s) {
 // iTerm2's image escapes (OSC 1337, the part after "1337;"): File=args:base64
 // in one, or MultipartFile=args, FilePart=base64..., FileEnd. `opts()` gives
 // {maxCols, maxRows, bg}, what the client can show. `fullScreen(file, args)`
-// may show a file itself, away from the terminal (see multicolourPicture),
+// may show a file itself, away from the terminal (see fullScreenPicture),
 // and returns true if it does. Returns false for other OSC 1337 commands.
 export class InlineImages {
   constructor(term, opts, log = () => {}, fullScreen = () => false) {

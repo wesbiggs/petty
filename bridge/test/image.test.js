@@ -5,7 +5,7 @@ import xterm from '@xterm/headless';
 import { DISPLAY, OP, VIEW, Decoder, encodeFrame, encodeReset, encodePicture } from '../src/protocol.js';
 import { snapshot } from '../src/screen.js';
 import { INVERSE } from '../src/glyphs.js';
-import { IMAGE, InlineImages, decodePNG, decodeImage, fitSize, imageCell, koala, multicolourPicture, toCells, toKoala } from '../src/image.js';
+import { IMAGE, InlineImages, decodePNG, decodeImage, fitSize, imageCell, koala, fullScreenPicture, hiresCells, toCells, toKoala } from '../src/image.js';
 import { VIC_RGB } from '../src/colors.js';
 
 // A PNG from unfiltered rows of raw samples.
@@ -241,16 +241,16 @@ test('a blue close to the VIC blue stays blue, not purple', () => {
 test('imgcat -t koala:flat and koala:dither pick the conversion', () => {
   const file = png(8, 8, 2, 8, Array.from({ length: 8 }, (_, y) => Array.from({ length: 24 }, (_, k) => (k % 3 === 0 ? y * 32 : 90))));
   for (const type of ['koala:flat', 'multicolour:dither', 'KOALA']) {
-    assert.equal(multicolourPicture(file, { type }).bitmap.length, 8000, type);
+    assert.equal(fullScreenPicture(file, { type }).bitmap.length, 8000, type);
   }
 });
 
 test('imgcat -t koala shows any picture in multicolour; otherwise only Koala files', () => {
   const file = png(16, 8, 2, 8, Array.from({ length: 8 }, () => Array(48).fill(255)));
-  assert.equal(multicolourPicture(file, {}), null);
-  const k = multicolourPicture(file, { type: 'Koala' });
+  assert.equal(fullScreenPicture(file, {}), null);
+  const k = fullScreenPicture(file, { type: 'Koala' });
   assert.deepEqual([k.bitmap.length, k.screen.length, k.colram.length], [8000, 1000, 1000]);
-  assert.ok(multicolourPicture(koalaFile(), {}));
+  assert.ok(fullScreenPicture(koalaFile(), {}));
 });
 
 test('a picture shown full screen leaves the terminal alone', async () => {
@@ -270,4 +270,59 @@ test('an unsupported file says so in the terminal', async () => {
   const term = terminal();
   await write(term, osc(Buffer.from('hello'), `name=${Buffer.from('x.txt').toString('base64')};`));
   assert.match(term.buffer.active.getLine(0).translateToString(true), /^\[x\.txt: unsupported image/);
+});
+
+// --- full-screen hi-res pictures (petty-view) ------------------------------------
+
+test('petty-view: a Doodle! or Art Studio picture shows full screen in hi-res, as it is', () => {
+  const file = doodle(3);
+  assert.equal(fullScreenPicture(file, {}), null, 'imgcat keeps it in the terminal');
+  const pic = fullScreenPicture(file, { view: '1' });
+  assert.equal(pic.hires, true);
+  assert.ok(Buffer.from(pic.bitmap).equals(file.subarray(1026, 9026)));
+  assert.ok(Buffer.from(pic.screen).equals(file.subarray(2, 1002)));
+  // Art Studio: bitmap, then screen, then the border.
+  const art = Buffer.alloc(9009);
+  for (let i = 2; i < 9002; i++) art[i] = (i * 13) & 0xff;
+  art[9002] = 14;
+  const a = fullScreenPicture(art, { view: '1' });
+  assert.deepEqual([a.hires, a.bg], [true, 14]);
+  assert.ok(Buffer.from(a.screen).equals(art.subarray(8002, 9002)));
+});
+
+test('petty-view: a hi-res picture loads with VIEW LOAD_HIRES, bitmap and screen only', () => {
+  const pic = fullScreenPicture(doodle(4), { view: '1' });
+  const frames = encodePicture(pic, 2048);
+  const dec = new Decoder(40, 25);
+  for (const [k, f] of frames.entries()) {
+    dec.feed(f);
+    if (k === 0) assert.equal(dec.view, VIEW.LOAD_HIRES);
+  }
+  assert.equal(dec.view, VIEW.SHOW);
+  assert.ok(Buffer.from(dec.mem.subarray(0x6000, 0x6000 + 8000)).equals(Buffer.from(pic.bitmap)));
+  assert.ok(Buffer.from(dec.mem.subarray(0x5c00, 0x5c00 + 1000)).equals(Buffer.from(pic.screen)));
+  assert.ok(dec.mem.subarray(0xd800, 0xd800 + 1000).every(b => b === 0), 'no colour RAM for hi-res');
+  assert.ok(frames.reduce((n, f) => n + f.length, 0) < 9500, "no colour RAM sent (a Koala picture is over 10000)");
+});
+
+test('petty-view: a PNG goes to multicolour, or with -t hires to hi-res, in the middle on black', () => {
+  const file = png(16, 8, 2, 8, Array.from({ length: 8 }, () => Array(48).fill(255)));
+  const m = fullScreenPicture(file, { view: '1' });
+  assert.ok(m.colram && !m.hires, 'multicolour');
+  const h = fullScreenPicture(file, { view: '1', type: 'hires' });
+  assert.ok(h.hires && !h.colram);
+  // 16x8 white pixels: 2 cells in the middle of the screen, white on whatever; the rest black.
+  const lit = [];
+  for (let i = 0; i < 1000; i++) if (h.bitmap.subarray(i * 8, i * 8 + 8).some(b => b) || h.screen[i]) lit.push(i);
+  assert.deepEqual(lit, [12 * 40 + 19, 12 * 40 + 20]);
+  for (const i of lit) assert.deepEqual(cellPixels([...h.bitmap.subarray(i * 8, i * 8 + 8), h.screen[i]]), new Array(64).fill(1));
+});
+
+test('flat forced on a photograph with more than 32767 colours keeps them all', () => {
+  const img = { width: 320, height: 200, rgba: new Uint8Array(320 * 200 * 4) };
+  for (let y = 0; y < 200; y++) for (let x = 0; x < 320; x++) img.rgba.set([x * 0.8 | 0, y * 1.2 | 0, 255 - x * 0.7 | 0, 255], (y * 320 + x) * 4);
+  const { cells } = hiresCells(img, { type: 'flat' }, 40, 25, 0);
+  const black = [];
+  for (let i = 0; i < 1000; i++) if (cellPixels(cells.subarray(i * 9, i * 9 + 9)).every(c => c === 0)) black.push(i);
+  assert.deepEqual(black, [], 'no cell is all black: the gradient has none');
 });
