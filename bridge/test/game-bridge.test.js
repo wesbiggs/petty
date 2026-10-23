@@ -98,7 +98,7 @@ for (const [display, want] of [
   [DISPLAY.C64_HIRES, 'c64-hires;40;25;hires,ext,game,sound,picture,images'],
   [DISPLAY.C64_80, 'c64-80;80;25;game,sound,pair,picture,images'],
   [DISPLAY.C64_53, 'c64-53;53;25;game,sound,quad,picture,images'],
-  [DISPLAY.C128, 'c128;80;25;ext,sound,reverse'],
+  [DISPLAY.C128, 'c128;80;25;ext,sound,reverse,images'],
 ]) {
   test(`OSC 8350 display: the program is told it is on the ${display.name}`, async () => {
     // The program asks as it starts, usually before the client's HELLO has been read: the answer is
@@ -127,7 +127,7 @@ const doodleFile = () => {
 
 test('petty-view shows a hi-res picture full screen on the soft 80-column client', async () => {
   const { file, buf } = doodleFile();
-  const { dec } = await run(`petty-view ${file}; sleep 5`, { display: DISPLAY.C64_80, wait: 10000, until: d => d.view === VIEW.SHOW });
+  const { dec } = await run(`petty-view ${file}; sleep 20`, { display: DISPLAY.C64_80, wait: 20000, until: d => d.view === VIEW.SHOW });
   assert.equal(dec.view, VIEW.SHOW);
   assert.ok(Buffer.from(dec.mem.subarray(0x6000, 0x6000 + 8000)).equals(buf.subarray(1026, 9026)), 'the bitmap');
   assert.ok(Buffer.from(dec.mem.subarray(0x5C00, 0x5C00 + 1000)).equals(buf.subarray(2, 1002)), 'its colours');

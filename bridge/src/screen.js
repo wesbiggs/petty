@@ -4,7 +4,7 @@
 import { DISPLAY, VDC, HIRES_UNDERLINE, GAME_SPRITE } from './protocol.js';
 import { toScreenCode, INVERSE, SPACE } from './glyphs.js';
 import { palette, VIC_RGB } from './colors.js';
-import { IMAGE, imageCell, imageKey, imagePart, imageShade } from './image.js';
+import { IMAGE, imageCell, imageKey, imagePart, imageShade, vdcCell } from './image.js';
 import { shareColours } from './soft80.js';
 import { FONT4 } from './font4x8.js';
 import { EXT, EXT_GLYPHS, extendedGlyph } from './extglyphs.js';
@@ -86,6 +86,12 @@ export function snapshot(term, panX = 0, display = DISPLAY.C64, theme = 'dark', 
         } else if (group && part?.group === group && start >= 0 && start % group === 0 && start + group <= Math.floor(cols / group) * group) {
           glyph[i] = IMAGE + key;
           color[i] = imageCell(key)[8];
+        } else if (display.reverse && vdcCell(key)) {
+          // The C128: a character of its own (glyphcache.js), but for blank and solid cells.
+          const { bits, fg } = vdcCell(key);
+          const solid = bits.every(b => b === 0xFF);
+          glyph[i] = solid || bits.every(b => b === 0) ? SPACE : IMAGE + key;
+          color[i] = solid ? fg | VDC.RVS : fg;
         } else {
           // A block of the colour covering more of the cell: an inverse space.
           const c = pal.bg('rgb', VIC_RGB[imageShade(key)]);

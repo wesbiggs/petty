@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { deflateSync } from 'node:zlib';
 import xterm from '@xterm/headless';
-import { DISPLAY, OP, VIEW, Decoder, encodeFrame, encodeReset, encodePicture } from '../src/protocol.js';
+import { DISPLAY, OP, VIEW, VDC, Decoder, encodeFrame, encodeReset, encodePicture } from '../src/protocol.js';
+import { GlyphCache } from '../src/glyphcache.js';
 import { snapshot } from '../src/screen.js';
 import { INVERSE } from '../src/glyphs.js';
 import { IMAGE, InlineImages, decodePNG, decodeImage, fitSize, imageCell, koala, fullScreenPicture, hiresCells, toCells, toKoala } from '../src/image.js';
@@ -380,4 +381,57 @@ test('imgcat on the soft 80-column screen: text over half a cell is drawn after 
   dec.feed(bytes);
   assert.equal(dec.glyph[1], 17);
   assert.ok(dec.cells[0] && dec.cells[1]);
+});
+
+// --- inline images on the C128 ------------------------------------------------------
+
+test('imgcat on the C128: a character a cell in one colour on the screen colour, loaded with GLYPH', async () => {
+  const term = new xterm.Terminal({ cols: 80, rows: 25, allowProposedApi: true });
+  const images = new InlineImages(term, () => ({ maxCols: 80, maxRows: 25, vdcBg: 0 }));
+  term.parser.registerOscHandler(1337, data => images.osc(data));
+  // 8x8 pixels: the left half red, the right half black (the screen colour): twice as wide on the VDC.
+  const file = png(8, 8, 2, 8, Array.from({ length: 8 }, () => Array.from({ length: 24 }, (_, k) => (k < 12 && k % 3 === 0 ? 255 : 0))));
+  await write(term, osc(file));
+  const want = snapshot(term, 0, DISPLAY.C128);
+  // 16x8 VDC pixels: two cells, the first solid red (a reversed space, no character), the second blank.
+  assert.equal(want.glyph[0], 32);
+  assert.ok(want.color[0] & VDC.RVS, 'solid: reversed');
+  assert.ok([8, 9].includes(want.color[0] & 15), 'red (RGBI)');
+  assert.equal(want.glyph[1], 32);
+});
+
+test('imgcat on the C128: cells with pixels get characters; identical ones share one; past the free ones, blocks', async () => {
+  const term = new xterm.Terminal({ cols: 80, rows: 25, allowProposedApi: true });
+  const images = new InlineImages(term, () => ({ maxCols: 80, maxRows: 25, vdcBg: 0 }));
+  term.parser.registerOscHandler(1337, data => images.osc(data));
+  // Vertical stripes, one pixel wide (two on the VDC): every cell the same pattern.
+  const file = png(32, 16, 2, 8, Array.from({ length: 16 }, () => Array.from({ length: 96 }, (_, k) => (Math.floor(k / 3) % 2 ? 255 : 0))));
+  await write(term, osc(file, 'type=flat;'));
+  const want = snapshot(term, 0, DISPLAY.C128);
+  const image = [...want.glyph.keys()].filter(i => want.glyph[i] >= IMAGE);
+  assert.equal(image.length, 8 * 2, '64x16 VDC pixels: 8 by 2 cells');
+  const cache = new GlyphCache(DISPLAY.C128);
+  const glyphs = cache.place(want, null);
+  assert.equal(glyphs.filter((b, k) => b === OP.GLYPH && k % 11 === 0).length, 1, 'one character for all of them');
+  assert.ok(image.every(i => want.glyph[i] === want.glyph[image[0]]), 'all the same slot');
+  const dec = new Decoder(80, 25);
+  dec.feed([...glyphs, ...encodeReset(want).bytes]);
+  const slot = want.glyph[image[0]] | (want.color[image[0]] & VDC.ALT ? 256 : 0);
+  assert.deepEqual([...dec.glyphs.get(slot)], new Array(8).fill(0b00110011), 'black, white, ... each two VDC pixels wide');
+});
+
+test('imgcat on the C128: past the free characters, image cells are blocks', async () => {
+  const term = new xterm.Terminal({ cols: 80, rows: 25, allowProposedApi: true });
+  const images = new InlineImages(term, () => ({ maxCols: 80, maxRows: 25, vdcBg: 0 }));
+  term.parser.registerOscHandler(1337, data => images.osc(data));
+  // Two different patterns: stripes, and stripes with a dot.
+  const file = png(8, 8, 2, 8, Array.from({ length: 8 }, (_, y) => Array.from({ length: 24 }, (_, k) => (Math.floor(k / 3) % 2 || (y === 0 && k < 3) ? 255 : 0))));
+  await write(term, osc(file, 'type=flat;'));
+  const want = snapshot(term, 0, DISPLAY.C128);
+  assert.equal(want.glyph.filter(g => g >= IMAGE).length, 2);
+  const all = [];
+  for (let s = 128; s < 512; s++) all.push(s);
+  const cache = new GlyphCache(DISPLAY.C128, all.slice(1)); // one slot left
+  cache.place(want, null);
+  assert.equal(want.glyph.filter(g => g === 32).length, 80 * 25 - 1, 'the other is a space (half lit: a block of the screen colour)');
 });

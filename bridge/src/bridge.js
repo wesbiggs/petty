@@ -195,6 +195,8 @@ class Session {
       const vic = paletteFor(DISPLAY.C64_HIRES, this.theme), d = this.display;
       // The soft screens: in groups of columns that show whole bitmap cells, padded with the screen colour.
       if (d.pair || d.quad) return { maxCols: d.cols, maxRows: d.rows, bg: vic.screenBg, group: d.quad ? 4 : 2, perGroup: d.quad ? 3 : 1 };
+      // The C128: characters in one colour each on the screen colour.
+      if (d.reverse) return { maxCols: d.cols, maxRows: d.rows, vdcBg: paletteFor(d, this.theme).screenBg };
       return { maxCols: d.cols, maxRows: d.rows, bg: vic.rgb[vic.screenBg] };
     }, this.log, (file, args) => {
       const pic = this.display.picture && this.conn && fullScreenPicture(file, args);

@@ -12,7 +12,7 @@
 // more than the terminal and its scrollback can hold.
 
 import { inflateSync } from 'node:zlib';
-import { VIC_RGB } from './colors.js';
+import { VIC_RGB, RGBI_RGB } from './colors.js';
 
 export const IMAGE = 0x10000; // snapshot glyphs from here on are image cells
 export const PLACEHOLDER = 0x100000; // image cell `key` in the terminal
@@ -34,6 +34,7 @@ function addCell(bytes) {
   nextKey = (nextKey + 1) % KEYS;
   cells.set(bytes, key * CELL_BYTES);
   parts[key] = undefined;
+  vdcCells[key] = undefined;
   return key;
 }
 
@@ -51,6 +52,11 @@ function addPart(data, phase, group) {
 
 // The group image cell `key` is a column of (see addPart), or undefined.
 export const imagePart = key => parts[key];
+
+// On the C128: a cell's 8 rows of pixels and its colour (RGBI), drawn on the screen colour (see toVdcCells).
+// Its cell in `cells` is the nearest the C64 has, for the other screens.
+const vdcCells = new Array(KEYS);
+export const vdcCell = key => vdcCells[key];
 
 // The 9 bytes BITS sends for image cell `key`.
 export const imageCell = key => cells.subarray(key * CELL_BYTES, (key + 1) * CELL_BYTES);
@@ -454,9 +460,9 @@ function nearestIn(cost, s, set) {
 // How far point p[k..k+2] is from the dithered mixes of VIC colours i and j,
 // scoring a mix `spread` times its own spread, and where on the way it is
 // (t: 0 = i, 1 = j).
-function mix(p, k, i, j, spread) {
-  const [ar, ag, ab] = PAL_LAB[i];
-  const dr = PAL_LAB[j][0] - ar, dg = PAL_LAB[j][1] - ag, db = PAL_LAB[j][2] - ab;
+function mix(p, k, i, j, spread, labs = PAL_LAB) {
+  const [ar, ag, ab] = labs[i];
+  const dr = labs[j][0] - ar, dg = labs[j][1] - ag, db = labs[j][2] - ab;
   const len = dr * dr + dg * dg + db * db;
   const pr = p[k] - ar, pg = p[k + 1] - ag, pb = p[k + 2] - ab;
   let t = len ? (pr * dr + pg * dg + pb * db) / len : 0;
@@ -577,6 +583,70 @@ export function toHiresPicture(img, args = {}) {
     }
   }
   return { bitmap, screen, bg: 0, hires: true };
+}
+
+// --- the C128's VDC --------------------------------------------------------------
+
+const RGBI_LAB = RGBI_RGB.map(lab);
+// Image cells a C128 image may have: each is a character of its own (but for blank and solid ones), and they
+// share the 383 the bridge can load with the extended glyphs on the screen (glyphcache.js).
+export const VDC_CELLS = 300;
+const MIX_VDC = 0.25;
+const nearestVic = rgb => { const q = lab(rgb); return PAL_LAB.reduce((b, p, c) => (dist2(p, q) < dist2(PAL_LAB[b], q) ? c : b), 0); };
+
+// The image twice as wide: the VDC's pixels are half as wide as they are tall.
+function stretch({ width, height, rgba }) {
+  const out = new Uint8Array(width * 2 * height * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const o = (y * width + x) * 4;
+      out.set(rgba.subarray(o, o + 4), (y * width * 2 + x * 2) * 4);
+      out.set(rgba.subarray(o, o + 4), (y * width * 2 + x * 2 + 1) * 4);
+    }
+  }
+  return { width: width * 2, height, rgba: out };
+}
+
+// The image as C128 cells: in each, the colour (an RGBI index) that comes closest with the screen colour `bg`
+// (the VDC has one background for the whole screen), and which pixels are it, ordered-dithered unless the image
+// is flat art (args.type: flat or dither, as for the C64). At most VDC_CELLS cells. {cols, rows, keys}.
+export function toVdcCells(img, args, maxCols, maxRows, bg) {
+  const wide = stretch(img);
+  let { w, h } = fitSize(wide.width, wide.height, args, maxCols, maxRows);
+  while (Math.ceil(w / 8) * Math.ceil(h / 8) > VDC_CELLS) { w = Math.max(1, Math.floor(w * 0.95)); h = Math.max(1, Math.floor(h * 0.95)); }
+  const cols = Math.ceil(w / 8), rows = Math.ceil(h / 8), cw = cols * 8;
+  const rgb = resample(wide, w, h, cw, rows * 8, RGBI_RGB[bg]);
+  const dither = DITHER[args.type?.toLowerCase()] ?? !colours(img, FLAT_COLOURS);
+  const keys = new Uint32Array(cols * rows);
+  const p = new Float32Array(192);
+  const bgVic = nearestVic(RGBI_RGB[bg]);
+  for (let cy = 0; cy < rows; cy++) {
+    for (let cx = 0; cx < cols; cx++) {
+      for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) p.set(lab(rgbAt(rgb, ((cy * 8 + y) * cw + cx * 8 + x) * 3)), (y * 8 + x) * 3);
+      }
+      let best = Infinity, fg = bg === 15 ? 0 : 15;
+      for (let c = 0; c < 16; c++) {
+        if (c === bg) continue;
+        let err = 0;
+        for (let k = 0; k < 192 && err < best; k += 3) {
+          err += dither ? mix(p, k, bg, c, MIX_VDC, RGBI_LAB).err
+            : Math.min(dist2(p.subarray(k, k + 3), RGBI_LAB[bg]), dist2(p.subarray(k, k + 3), RGBI_LAB[c]));
+        }
+        if (err < best) { best = err; fg = c; }
+      }
+      const bits = new Uint8Array(8);
+      for (let k = 0; k < 64; k++) {
+        const on = dither ? mix(p, k * 3, bg, fg, MIX_VDC, RGBI_LAB).t > BAYER[k]
+          : dist2(p.subarray(k * 3, k * 3 + 3), RGBI_LAB[fg]) < dist2(p.subarray(k * 3, k * 3 + 3), RGBI_LAB[bg]);
+        if (on) bits[k >> 3] |= 0x80 >> (k & 7);
+      }
+      const key = addCell([...bits, nearestVic(RGBI_RGB[fg]) << 4 | bgVic]);
+      vdcCells[key] = { bits, fg };
+      keys[cy * cols + cx] = key;
+    }
+  }
+  return { cols, rows, keys };
 }
 
 // --- multicolour conversion ------------------------------------------------------
@@ -797,8 +867,9 @@ export function printText(term, s) {
 
 // iTerm2's image escapes (OSC 1337, the part after "1337;"): File=args:base64
 // in one, or MultipartFile=args, FilePart=base64..., FileEnd. `opts()` gives
-// {maxCols, maxRows, bg, group, perGroup}, what the client can show (group:
-// the soft screens, see toGroups; bg is then a VIC colour index, else RGB). `fullScreen(file, args)`
+// {maxCols, maxRows, bg, group, perGroup, vdcBg}, what the client can show
+// (group: the soft screens, see toGroups; bg is then a VIC colour index, else
+// RGB. vdcBg: the C128, its screen colour, see toVdcCells). `fullScreen(file, args)`
 // may show a file itself, away from the terminal (see fullScreenPicture),
 // and returns true if it does. Returns false for other OSC 1337 commands.
 export class InlineImages {
@@ -837,8 +908,9 @@ export class InlineImages {
         return;
       }
       const img = decodeImage(file);
-      const { maxCols, maxRows, bg, group, perGroup } = this.opts();
-      const cells = group ? toGroups(img, args, maxCols, maxRows, bg, group, perGroup) : toCells(img, args, maxCols, maxRows, bg);
+      const { maxCols, maxRows, bg, group, perGroup, vdcBg } = this.opts();
+      const cells = vdcBg !== undefined ? toVdcCells(img, args, maxCols, maxRows, vdcBg)
+        : group ? toGroups(img, args, maxCols, maxRows, bg, group, perGroup) : toCells(img, args, maxCols, maxRows, bg);
       placeImage(this.term, cells);
       this.log(`image ${name}${img.format ? ` (${img.format})` : ''}: ${img.width}x${img.height} as ${cells.cols}x${cells.rows} cells`);
     } catch (e) {

@@ -97,7 +97,7 @@ import { IMAGE, imageCell, imagePart } from './image.js';
 // key: what OSC 8350 `display` tells a program (see displayReport).
 export const DISPLAY = {
   C64: { id: 0, key: 'c64', name: 'C64', cols: 40, rows: 25, sound: true, game: true, picture: true },
-  C128: { id: 1, key: 'c128', name: 'C128 VDC', cols: 80, rows: 25, reverse: true, ext: true, sound: true },
+  C128: { id: 1, key: 'c128', name: 'C128 VDC', cols: 80, rows: 25, reverse: true, ext: true, sound: true, images: true },
   C64_80: { id: 2, key: 'c64-80', name: 'C64 soft-80', cols: 80, rows: 25, pair: true, sound: true, game: true, picture: true, images: true },
   C64_HIRES: { id: 3, key: 'c64-hires', name: 'C64 hi-res', cols: 40, rows: 25, hires: true, ext: true, sound: true, game: true, picture: true, images: true },
   C64_53: { id: 4, key: 'c64-53', name: 'C64 soft-53', cols: 53, rows: 25, quad: true, sound: true, game: true, picture: true, images: true },
