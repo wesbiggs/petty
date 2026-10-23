@@ -1,0 +1,58 @@
+#!/bin/sh
+# petty-mode: ask PETTY for a display (OSC 8350 mode), on a C64 client that can
+# switch between them. The bridge puts this at the end of the PATH of the
+# program it runs.
+#
+# usage: petty-mode SPEC                 switch, and print what the display is
+#        petty-mode SPEC command [args]  switch, run the command, switch back
+#        petty-mode restore              take back an earlier request
+#
+# SPEC is a comma-separated list of display keys (any of them: c64, c64-hires,
+# c64-53, c64-80), flags (all of them: hires, ext, game, sound, pair, quad)
+# and a number (at least that many columns): petty-mode 80 rogue, petty-mode
+# game ./mygame. The display is the current one if it will do, else the
+# fastest that will; a client that can't switch stays as it is.
+
+if [ $# -lt 1 ]; then
+  echo "usage: petty-mode SPEC [command [args...]]" >&2
+  exit 2
+fi
+spec=$1
+shift
+
+# Asks, and waits for the answer (ESC ] 8350 ; display ; KEY;COLS;ROWS;FLAGS BEL), which comes once the client
+# is on its new display, so the command starts at the new size. Up to 5 s without one: not PETTY.
+ask() {
+  if [ ! -t 0 ]; then
+    printf '\033]8350;mode;%s\007' "$1"
+    return
+  fi
+  old=$(stty -g)
+  stty -icanon -echo min 0 time 50
+  printf '\033]8350;mode;%s\007' "$1"
+  bel=$(printf '\007')
+  reply=
+  while c=$(dd bs=1 count=1 2>/dev/null) && [ -n "$c" ]; do
+    [ "$c" = "$bel" ] && break
+    reply=$reply$c
+  done
+  stty "$old"
+  reply=${reply##*;display;}
+}
+
+if [ "$spec" = restore ]; then
+  printf '\033]8350;mode;restore\007'
+  exit 0
+fi
+if [ $# -eq 0 ]; then
+  ask "$spec"
+  echo "$reply"
+  exit 0
+fi
+
+ask "$spec"
+trap 'printf "\033]8350;mode;restore\007"' EXIT
+trap 'exit 130' INT TERM
+"$@"
+status=$?
+exit $status

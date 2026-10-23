@@ -54,6 +54,9 @@
 //   18 ch              SIDSTOP  (C64 text, hi-res) stop channel ch (255: all), gates down
 //   19                 SIDRESET (C64 text, hi-res) stop all channels, zero the SID
 //   1A c1 c2           SPRMC    (C64 text, hi-res) the sprites' two shared multicolour colours
+//   1B display         MODE     (a client that sent MODES) switch to that display: the client clears
+//                               its screen and says HELLO_ON display again, then MODES; the bridge
+//                               sends nothing from MODE until that HELLO_ON. Sent only between frames
 //   (opcodes are in hexadecimal above 9; the numbers are in OP below)
 //
 // C64 -> host:
@@ -67,6 +70,9 @@
 //   08                 ABORT    SOUND stopped by RUN/STOP; the C64 has thrown away what
 //                               was in flight, so the bridge may carry on at once
 //   09                 GLIDE    every sprite glide has ended
+//   0A mask            MODES    after HELLO_ON: the client can switch (MODE) to the displays whose
+//                               id is a bit of mask; bit 7 is always set, so that a bridge that
+//                               doesn't know MODES skips both bytes as junk
 //
 // Rows and columns are those of the client's display: 40x25 on the C64, 80x25
 // on the C128's VDC and on the C64's soft 80-column bitmap screen, 53x25 on
@@ -90,13 +96,47 @@ export const DISPLAY = {
   C64_53: { id: 4, key: 'c64-53', name: 'C64 soft-53', cols: 53, rows: 25, quad: true, sound: true },
 };
 export const displayById = id => Object.values(DISPLAY).find(d => d.id === id);
+export const displayByKey = key => Object.values(DISPLAY).find(d => d.key === key);
+const FLAGS = ['hires', 'ext', 'game', 'sound', 'reverse', 'pair', 'quad'];
+
+// A client that can switch displays (MODES) is put on the first of these that has what is asked for:
+// the fastest to draw first (text, then the bitmap screens, the narrowest first).
+export const MODE_ORDER = [DISPLAY.C64, DISPLAY.C64_HIRES, DISPLAY.C64_53, DISPLAY.C64_80, DISPLAY.C128];
+
+/**
+ * What a mode request asks for (OSC 8350 `mode`, the control port's `mode`, --mode): a comma-separated list of
+ * display keys (any of them), flags (all of them; see displayReport) and a number (at least that many columns),
+ * as `c64-80`, `game` or `ext,game` or `80`. Returns { keys, flags, cols }, or null if a word is none of these.
+ */
+export function parseMode(spec) {
+  const need = { keys: [], flags: [], cols: 0 };
+  const words = String(spec).split(',').map(w => w.trim()).filter(Boolean);
+  if (!words.length) return null;
+  for (const w of words) {
+    if (displayByKey(w)) need.keys.push(w);
+    else if (FLAGS.includes(w)) need.flags.push(w);
+    else if (/^\d+$/.test(w)) need.cols = Math.max(need.cols, Number(w));
+    else return null;
+  }
+  return need;
+}
+
+export const satisfies = (d, need) =>
+  (!need.keys.length || need.keys.includes(d.key)) && need.flags.every(f => d[f]) && d.cols >= need.cols;
+
+// The display to be on, of those whose ids are in `ids`: the current one if it will do (a switch costs a
+// redraw), else the first in MODE_ORDER that will. Null if none will.
+export function pickDisplay(need, ids, current) {
+  if (ids.has(current.id) && satisfies(current, need)) return current;
+  return MODE_ORDER.find(d => ids.has(d.id) && satisfies(d, need)) ?? null;
+}
 
 // C64 defaults, for callers that only deal with one screen size.
 export const COLS = DISPLAY.C64.cols;
 export const ROWS = DISPLAY.C64.rows;
 export const CELLS = COLS * ROWS;
 
-export const OP = { GOTO: 1, COLOR: 2, PUT: 3, REPEAT: 4, SCROLL: 5, COLORS: 6, CLS: 7, FRAME: 8, SPRITE: 9, NOSPRITE: 10, GLYPH: 11, UNDERLINE: 12, BITS: 13, VIEW: 14, POKE: 15, SOUND: 16, PROBE: 17, SPRDEF: 18, SPR: 19, GLIDE: 20, MOVE: 21, SIDW: 22, SIDPLAY: 23, SIDSTOP: 24, SIDRESET: 25, SPRMC: 26 };
+export const OP = { GOTO: 1, COLOR: 2, PUT: 3, REPEAT: 4, SCROLL: 5, COLORS: 6, CLS: 7, FRAME: 8, SPRITE: 9, NOSPRITE: 10, GLYPH: 11, UNDERLINE: 12, BITS: 13, VIEW: 14, POKE: 15, SOUND: 16, PROBE: 17, SPRDEF: 18, SPR: 19, GLIDE: 20, MOVE: 21, SIDW: 22, SIDPLAY: 23, SIDSTOP: 24, SIDRESET: 25, SPRMC: 26, MODE: 27 };
 export const VIEW = { TERMINAL: 0, LOAD: 1, SHOW: 2 };
 // Where SOUND's tables go in the C64 (c64/sound.inc).
 export const SOUND_ADDR = { OUTTAB: 0xCD00, DTAB: 0xCE00, NIDX: 0xCE40 };
@@ -120,7 +160,7 @@ const SPRITES = 8;
 const spriteKey = s => s ? `${s.col},${s.row},${s.color},${s.data.join(',')}` : null;
 // VDC attribute bits beyond the colour.
 export const VDC = { UNDERLINE: 0x20, RVS: 0x40, ALT: 0x80 };
-export const MSG = { ACK: 1, KEY: 2, HELLO: 3, HELLO_ON: 4, DONE: 5, CREDIT: 6, PROBE: 7, ABORT: 8, GLIDE: 9 };
+export const MSG = { ACK: 1, KEY: 2, HELLO: 3, HELLO_ON: 4, DONE: 5, CREDIT: 6, PROBE: 7, ABORT: 8, GLIDE: 9, MODES: 10 };
 
 const SPACE = 32;
 const MAX_GAP = 3; // unchanged cells worth rewriting instead of a 3-byte GOTO
@@ -523,6 +563,8 @@ export class Decoder {
         case OP.SIDSTOP: this.sid.push({ op: 'stop', ch: next() }); break;
         case OP.SIDRESET: this.sid.push({ op: 'reset' }); break;
         case OP.SPRMC: this.sprmc = [next(), next()]; break;
+        case 0: break; // a no-op: the resync after a lost ACK is made of them
+        case OP.MODE: this.mode = next(); break; // the client switches; what follows is for the new display
         case OP.POKE: {
           let addr = next() | next() << 8;
           const n = next() || 256;
@@ -549,6 +591,6 @@ export class Decoder {
  * `game` (sprites and SID: OSC 8348/8349), `sound`, `reverse` (C128), `pair` (soft 80), `quad` (soft 53).
  */
 export function displayReport(d) {
-  const flags = ['hires', 'ext', 'game', 'sound', 'reverse', 'pair', 'quad'].filter(f => d[f]);
+  const flags = FLAGS.filter(f => d[f]);
   return `${d.key};${d.cols};${d.rows};${flags.join(',')}`;
 }

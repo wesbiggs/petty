@@ -1,9 +1,11 @@
 // Pretends to be the C64 (or a C128, or the C64 in soft 80 or 53 columns or
 // hi-res): connects to the bridge, types keys, prints the decoded screen.
-// usage: node scripts/fake-c64.js [--c128 | --soft80 | --soft53 | --hires] [--serial dev] [port] "text to type"
+// With --modes, it can switch between the C64's displays (MODES, MODE), as the
+// combined C64 client does.
+// usage: node scripts/fake-c64.js [--c128 | --soft80 | --soft53 | --hires] [--modes] [--serial dev] [port] "text to type"
 import net from 'node:net';
 import { parseArgs } from 'node:util';
-import { Decoder, DISPLAY, MSG, OP, VDC } from '../src/protocol.js';
+import { Decoder, DISPLAY, MSG, OP, VDC, displayById } from '../src/protocol.js';
 import { MATRIX, SHIFT } from '../src/keymap.js';
 import { screenCodeToChar } from '../src/glyphs.js';
 import { EXT_GLYPHS } from '../src/extglyphs.js';
@@ -16,22 +18,31 @@ const { values: opt, positionals } = parseArgs({
     soft80: { type: 'boolean', default: false },
     soft53: { type: 'boolean', default: false },
     hires: { type: 'boolean', default: false },
+    modes: { type: 'boolean', default: false },
     serial: { type: 'string' },
     baud: { type: 'string', default: '38400' },
   },
 });
 const port = Number(positionals[0] ?? 6464);
 const typed = positionals[1] ?? 'echo hello from the c64\r';
-const display = opt.c128 ? DISPLAY.C128 : opt.soft80 ? DISPLAY.C64_80 : opt.soft53 ? DISPLAY.C64_53 : opt.hires ? DISPLAY.C64_HIRES : DISPLAY.C64;
-const { cols, rows } = display;
-const hello = display === DISPLAY.C64 ? [MSG.HELLO] : [MSG.HELLO_ON, display.id];
-const dec = new Decoder(cols, rows);
+let display = opt.c128 ? DISPLAY.C128 : opt.soft80 ? DISPLAY.C64_80 : opt.soft53 ? DISPLAY.C64_53 : opt.hires ? DISPLAY.C64_HIRES : DISPLAY.C64;
+const MODES = [DISPLAY.C64, DISPLAY.C64_HIRES, DISPLAY.C64_80, DISPLAY.C64_53];
+const hello = () => opt.modes
+  ? [MSG.HELLO_ON, display.id, MSG.MODES, 0x80 | MODES.reduce((m, d) => m | 1 << d.id, 0)]
+  : display === DISPLAY.C64 ? [MSG.HELLO] : [MSG.HELLO_ON, display.id];
+let dec = new Decoder(display.cols, display.rows);
 const sock = opt.serial ? openSerial(opt.serial, Number(opt.baud)) : net.connect(port, '127.0.0.1');
-if (opt.serial) sock.write(Buffer.from(hello));
-else sock.on('connect', () => sock.write(Buffer.from(hello)));
+if (opt.serial) sock.write(Buffer.from(hello()));
+else sock.on('connect', () => sock.write(Buffer.from(hello())));
 sock.on('data', d => {
   dec.feed(d);
   for (const b of d) if (b === OP.FRAME) sock.write(Buffer.from([MSG.ACK]));
+  // MODE comes last (the bridge waits for the HELLO_ON).
+  if (dec.mode !== undefined && MODES.includes(displayById(dec.mode))) {
+    display = displayById(dec.mode);
+    dec = new Decoder(display.cols, display.rows);
+    sock.write(Buffer.from(hello()));
+  }
 });
 
 // Characters from 128 up (on the C128, with the alternate set attribute)
@@ -59,9 +70,9 @@ setTimeout(async () => {
     await new Promise(r => setTimeout(r, 20));
   }
   setTimeout(() => {
-    for (let r = 0; r < rows; r++) {
+    for (let r = 0; r < display.rows; r++) {
       let line = '';
-      for (let c = 0; c < cols; c++) line += charAt(r * cols + c);
+      for (let c = 0; c < display.cols; c++) line += charAt(r * display.cols + c);
       console.log('|' + line + '|');
     }
     process.exit(0); // closing a serial stream reports an abort
