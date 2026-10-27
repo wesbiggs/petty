@@ -24,8 +24,8 @@
 - Fix: flat conversion (`-t flat`) of a picture with more than 32767 colours drew much of it black.
 - **VICE tests in CI**: `make vice-test` runs the clients in VICE (`bridge/vice/`) against a pretend bridge, the real
   bridge and a pretend modem: each screen's hello and display, random drawing against the reference decoder,
-  RUN/STOP+RESTORE and a dialling build's `ATDT`, `+++` and `ATH`. CI runs them, and the screen and picture checks,
-  with a headless VICE built from its release (`.github/build-vice.sh`).
+  RUN/STOP+RESTORE and a dialling build's `ATDT`, `+++` and `ATH`. CI runs them with a headless VICE built from its
+  release (`.github/build-vice.sh`); the screen, picture and game checks stay by hand for now.
 - **RUN/STOP+RESTORE restarts the client** (both): the screen, SID, sprites and interrupts are set up again, the client says
   HELLO anew (the bridge redraws everything) and, in a build that dials, hangs the modem up (`+++`, `ATH`) and dials again.
   RESTORE alone does nothing, as before. `c64/restart.inc`; `bridge/scripts/fake-modem.js` understands `+++` and `ATH`.

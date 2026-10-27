@@ -76,9 +76,9 @@ export async function startVice(prg, { keep = false, log = console.error } = {})
     assert.deepEqual(ack, [MSG.ACK], 'ACK');
   };
   c.stop = () => {
-    if (keep || process.env.PETTY_KEEP) return log(`kept ${work}`);
     c.vice.kill();
     c.link.close();
+    if (keep || process.env.PETTY_KEEP) return log(`kept ${work}`);
     rmSync(work, { recursive: true, force: true });
   };
   return c;

@@ -784,9 +784,9 @@ git commit -am "Version 1.0.0" && git tag v1.0.0 && git push origin main v1.0.0
 
 CI (`.github/workflows/ci.yml`) runs the tests, builds both clients and
 checks that `bridge/title.ans` and the generated includes are up to date; a second job
-runs the screen and picture checks and `make vice-test` with a headless VICE built from
-its release by `.github/build-vice.sh` (cached; Ubuntu's VICE has no ROMs), and keeps
-VICE's logs if it fails. A `v*` tag
+runs `make vice-test` with a headless VICE built from its release by
+`.github/build-vice.sh` (cached; Ubuntu's VICE has no ROMs), and keeps VICE's logs if it
+fails. The screen, picture and game checks are run by hand. A `v*` tag
 runs it again, then `release.yml` checks the tag against the version and
 publishes a GitHub release with the `.prg` files, a zip of them, a `.d64`
 disk image holding both and `staircase`, and the bridge as `petty-bridge-<tag>.tar.gz`

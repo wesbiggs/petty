@@ -80,17 +80,11 @@ jobs:
         run: npm ci
         working-directory: bridge
 
-      # make game-check waits for the -pal fix to its SID frame check: the check counts PAL
-      # frames, and VICE takes the video standard from the user's own vicerc, so on an
-      # NTSC-configured machine it reads the script's three-frame wait as 2.6. A runner has no
-      # vicerc, so it would pass here; add it to this step once that fix is on main.
-      - name: Screen and picture checks
-        run: |
-          make screen-check
-          make picture-check
-        env:
-          PETTY_KEEP: 1
-
+      # make screen-check, picture-check and game-check are not run here yet. The first two were
+      # tried and are about half reliable on a runner: with the same code that passes locally
+      # every time, and that passed one run here, the client never reaches HELLO_ON and VICE
+      # leaves neither a log nor a word on stderr. They want looking at on a runner before the
+      # job depends on them; game-check additionally wants the -pal fix to its SID frame check.
       - name: VICE tests
         run: make vice-test VICE_JOBS=3
         env:
