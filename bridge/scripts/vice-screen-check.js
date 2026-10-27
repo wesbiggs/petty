@@ -195,7 +195,7 @@ const draw = async d => {
 };
 try {
   await check('it starts on hi-res and says what it can switch to', async () => {
-    assert.deepEqual(await c.read(4, 'HELLO_ON', 60000), [MSG.HELLO_ON, DISPLAY.C64_HIRES.id, MSG.MODES, MODES_MASK]);
+    assert.deepEqual(await c.read(4, 'HELLO_ON'), [MSG.HELLO_ON, DISPLAY.C64_HIRES.id, MSG.MODES, MODES_MASK]);
   });
   for (const d of ORDER) {
     await check(`${d.name}: MODE switches, and the screen is what the decoder says`, async () => {

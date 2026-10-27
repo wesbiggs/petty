@@ -95,12 +95,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: vice-logs
-          # vice.err is what VICE said if it would not start, before -logfile exists.
-          path: |
-            /tmp/petty-vice-*/vice.log
-            /tmp/petty-vice-*/vice.err
-            /tmp/petty-mode-*/vice.log
-            /tmp/petty-mode-*/vice.err
-            /tmp/petty-game-*/vice.log
-            /tmp/petty-game-*/vice.err
+          path: /tmp/petty-vice-*/vice.log
           if-no-files-found: warn

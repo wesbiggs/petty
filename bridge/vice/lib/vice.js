@@ -3,7 +3,7 @@
 // in front of one). VICE runs without warp, as a real machine would.
 import net from 'node:net';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, copyFileSync, rmSync, existsSync, openSync } from 'node:fs';
+import { mkdtempSync, readFileSync, copyFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -136,11 +136,7 @@ export async function vice(client, { port, prg, sound, args = [] } = {}) {
     ...(sound ? ['-sound', '-sounddev', 'dump', '-soundarg', sound] : ['-sounddev', 'dummy']),
     '-remotemonitor', '-remotemonitoraddress', `ip4://127.0.0.1:${monPort}`,
     ...args,
-  ], {
-    cwd: work,
-    // VICE's own stderr: what it says when it will not start at all, before -logfile exists.
-    stdio: ['ignore', 'ignore', openSync(join(work, 'vice.err'), 'w')],
-  });
+  ], { cwd: work, stdio: 'ignore' });
   let exited = false;
   const exit = new Promise(r => proc.once('exit', () => { exited = true; r(); }));
   proc.once('error', e => { console.error(`can't run ${c.emu}: ${e.message}`); });
