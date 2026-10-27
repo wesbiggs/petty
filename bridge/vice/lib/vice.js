@@ -127,7 +127,10 @@ export async function vice(client, { port, prg, sound, args = [] } = {}) {
   copyFileSync(prg, join(work, basename(prg)));
   const monPort = await freePort();
   const proc = spawn(c.emu, [
-    '-default', ...(c.emu === 'x128' ? ['-80col'] : []),
+    // +saveres because the user's vicerc may have SaveResourcesOnExit, and quit() ends VICE the
+    // way that writes it: without it a run would save -default's settings, and this run's
+    // temporary ports and paths, over whatever they keep in there.
+    '-default', '+saveres', ...(c.emu === 'x128' ? ['-80col'] : []),
     // VICE 3.10 crashes logging to a stdout that is not a terminal
     '+logtostdout', '-logfile', join(work, 'vice.log'),
     '-autostartprgmode', '1', '-autostart', basename(prg),

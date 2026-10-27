@@ -80,8 +80,10 @@ jobs:
         run: npm ci
         working-directory: bridge
 
-      # make game-check is left out: its SID timing check wants 2.7 to 3.3 frames between two
-      # records and measures 2.58 against VICE 3.10, whatever the load. Run it by hand.
+      # make game-check waits for the -pal fix to its SID frame check: the check counts PAL
+      # frames, and VICE takes the video standard from the user's own vicerc, so on an
+      # NTSC-configured machine it reads the script's three-frame wait as 2.6. A runner has no
+      # vicerc, so it would pass here; add it to this step once that fix is on main.
       - name: Screen and picture checks
         run: |
           make screen-check
