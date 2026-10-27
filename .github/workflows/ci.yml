@@ -88,6 +88,8 @@ jobs:
         run: |
           make screen-check
           make picture-check
+        env:
+          PETTY_KEEP: 1
 
       - name: VICE tests
         run: make vice-test VICE_JOBS=3
@@ -103,4 +105,8 @@ jobs:
           path: |
             /tmp/petty-vice-*/vice.log
             /tmp/petty-vice-*/vice.err
+            /tmp/petty-mode-*/vice.log
+            /tmp/petty-mode-*/vice.err
+            /tmp/petty-game-*/vice.log
+            /tmp/petty-game-*/vice.err
           if-no-files-found: warn

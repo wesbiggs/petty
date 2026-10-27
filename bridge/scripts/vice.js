@@ -2,7 +2,7 @@
 // and VICE's remote monitor reads its memory. For the vice-*-check.js scripts.
 import net from 'node:net';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, copyFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, copyFileSync, rmSync, openSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
@@ -32,15 +32,22 @@ export async function startVice(prg, { keep = false, log = console.error } = {})
     }
     throw new Error(`timed out waiting for ${what}`);
   };
-  // The next n bytes from the client.
-  c.read = async (n, what) => { await c.waitFor(() => c.rx.length >= n, what); return c.rx.splice(0, n); };
+  // The next n bytes from the client. `ms` for the first bytes after a start, where VICE has a
+  // machine to boot and a program to autostart: more than a wait gets by default.
+  c.read = async (n, what, ms) => { await c.waitFor(() => c.rx.length >= n, what, ms); return c.rx.splice(0, n); };
   c.vice = spawn('x64sc', [
+    // VICE 3.10 crashes logging to a stdout that is not a terminal, as it is here
+    '+logtostdout', '-logfile', join(work, 'vice.log'),
     '-autostartprgmode', '1', '-autostart', 'petty.prg',
     '-acia1', '-acia1mode', '1', '-acia1base', '0xDE00', '-acia1irq', '1', '-myaciadev', '0',
     '-rsdev1', `127.0.0.1:${linkPort}`, '+rsdev1ip232', '-rsdev1baud', '38400',
     '-sound', '-sounddev', 'dummy',
     '-remotemonitor', '-remotemonitoraddress', `ip4://127.0.0.1:${monPort}`,
-  ], { cwd: work, stdio: 'ignore' });
+  ], {
+    cwd: work,
+    // VICE's own stderr: what it says when it will not start at all.
+    stdio: ['ignore', 'ignore', openSync(join(work, 'vice.err'), 'w')],
+  });
   c.vice.on('error', e => { log(`can't run x64sc: ${e.message}`); process.exit(2); });
   c.monitor = async cmds => {
     const s = net.connect(monPort, '127.0.0.1');
@@ -69,7 +76,7 @@ export async function startVice(prg, { keep = false, log = console.error } = {})
     assert.deepEqual(ack, [MSG.ACK], 'ACK');
   };
   c.stop = () => {
-    if (keep) return log(`kept ${work}`);
+    if (keep || process.env.PETTY_KEEP) return log(`kept ${work}`);
     c.vice.kill();
     c.link.close();
     rmSync(work, { recursive: true, force: true });

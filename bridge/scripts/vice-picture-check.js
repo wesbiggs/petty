@@ -52,7 +52,7 @@ for (const client of CLIENTS) {
   };
   try {
     await check(`${client.name}: it starts`, async () => {
-      await c.read(4, 'HELLO_ON and MODES');
+      await c.read(4, 'HELLO_ON and MODES', 60000);
       c.sock.write(Buffer.from([OP.MODE, client.display.id]));
       assert.deepEqual((await c.read(4, 'HELLO_ON')).slice(0, 2), [MSG.HELLO_ON, client.display.id]);
       const want = { cols: client.display.cols, rows: client.display.rows, hires: client.display.hires };
