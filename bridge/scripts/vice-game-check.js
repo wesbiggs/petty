@@ -60,6 +60,12 @@ const take = type => { const i = rx.indexOf(type); if (i < 0) return false; rx.s
 const dumpFile = join(work, 'sid.dump');
 const vice = spawn('x64sc', [
   '-autostartprgmode', '1', '-autostart', 'petty.prg',
+  // The frames the SID check counts below are PAL ones. Without -pal VICE takes the video
+  // standard from whatever is in the user's own vicerc, and an NTSC machine runs 263 lines
+  // of 65 cycles (17095 a frame) rather than 312 of 63 (19656), so the script's three-frame
+  // wait measures 2.6. +saveres keeps this run's settings, and its temporary paths, out of
+  // that file.
+  '-pal', '+saveres',
   '-acia1', '-acia1mode', '1', '-acia1base', '0xDE00', '-acia1irq', '1', '-myaciadev', '0',
   '-rsdev1', `127.0.0.1:${linkPort}`, '+rsdev1ip232', '-rsdev1baud', '38400',
   '-sound', '-sounddev', 'dump', '-soundarg', dumpFile,
@@ -299,7 +305,8 @@ try {
     const regs = writes.map(w => [w[w.length - 2], w[w.length - 1]]);
     assert.ok(regs.some(([r, v]) => r === 14 && v === 0x31), 'the effect on voice 3');
     assert.ok(!regs.some(([r, v]) => r === 0 && v === 0xEE), "the effect's write to voice 1 is masked");
-    // Frames: the 0x25 write and the 0x28 write are 3 frames apart (a PAL frame is 19656 cycles).
+    // Frames: the 0x25 write ends the first record, whose delay is 3, so the 0x28 write in
+    // the record after it lands 3 frames later (a PAL frame is 312 lines of 63 cycles).
     let t = 0, at25 = null;
     for (const w of writes) {
       t += w[0];
