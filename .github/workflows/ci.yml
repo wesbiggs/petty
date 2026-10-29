@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_call:
 
+env:
+  VICE_VERSION: '3.10'
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -41,3 +44,56 @@ jobs:
         with:
           name: prg
           path: build/*.prg
+
+  # The C64 client's checks and the clients in VICE (bridge/vice/), with a headless VICE built from its
+  # release (Ubuntu's leaves out the ROMs).
+  vice:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bridge/package-lock.json
+
+      - name: Install cc65
+        run: sudo apt-get update && sudo apt-get install -y cc65
+
+      - uses: actions/cache@v4
+        id: vice
+        with:
+          path: ~/vice
+          key: vice-headless-${{ env.VICE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/build-vice.sh') }}
+
+      - name: Build VICE
+        if: steps.vice.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get install -y build-essential flex bison xa65 dos2unix texinfo pkg-config zlib1g-dev file
+          .github/build-vice.sh ~/vice "$VICE_VERSION"
+
+      - run: echo ~/vice/bin >> "$GITHUB_PATH"
+
+      - name: Install bridge dependencies
+        run: npm ci
+        working-directory: bridge
+
+      # make screen-check, picture-check and game-check are not run here yet. The first two were
+      # tried and are about half reliable on a runner: with the same code that passes locally
+      # every time, and that passed one run here, the client never reaches HELLO_ON and VICE
+      # leaves neither a log nor a word on stderr. They want looking at on a runner before the
+      # job depends on them; game-check additionally wants the -pal fix to its SID frame check.
+      - name: VICE tests
+        run: make vice-test VICE_JOBS=3
+        env:
+          PETTY_KEEP: 1
+
+      - name: VICE logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vice-logs
+          path: /tmp/petty-vice-*/vice.log
+          if-no-files-found: warn

@@ -600,6 +600,21 @@ make game-check      # sprites, glides, MOVE and SID scripts, on each screen
 make picture-check   # full-screen pictures, inline picture cells and underline, on each screen
 ```
 
+A fourth set (`bridge/vice/`) runs both clients against a pretend bridge, the real one and a pretend modem:
+
+```bash
+make vice-test                          # every screen and the C128 client
+make vice-test VICE_TESTS=restart.js    # one file of them
+```
+
+These start VICE with its SwiftLink and remote monitor on free ports, play the bridge (or a WiFi modem in front of
+one) on the other end, and read the machine's memory through the monitor: each screen's hello and display, random text,
+colour, scroll and clear commands drawn as the reference decoder draws them (the text screen, the hi-res, soft-80 and
+soft-53 bitmaps, the VDC's RAM), the real bridge's answer to OSC 8350 on each, RUN/STOP+RESTORE (faked: the monitor
+holds RUN/STOP and jumps to the client's NMI), and a dialling build's `ATDT`, `+++` and `ATH`. They take about a
+minute, two or three VICEs at a time (`VICE_JOBS=1` for one), each in a window unless VICE was built headless.
+`PETTY_KEEP=1` keeps each VICE's directory (its log, `vice.log`) in the temporary directory.
+
 To try the dial step in VICE, put a pretend WiFi modem between VICE and the
 bridge: it answers AT commands and dials `ATDT host:port` over TCP.
 
@@ -636,6 +651,7 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `bridge/src/game.js` | those OSCs: the program's sprites and scripts, kept for a client that restarts |
 | `bridge/lib/pettygame.py` | prints them from Python; `bridge/examples/game-demo.py` is a small game |
 | `bridge/scripts/vice-game-check.js` | runs the C64 client in VICE and checks the game hardware against the machine (`--display`) |
+| `bridge/vice/` | the VICE tests (`make vice-test`); `bridge/vice/lib/` starts VICE and reads its screens |
 | `c64/sound.inc` | sound for all the clients: SOUND and PROBE, the 2-bit decoder and the playback loop |
 | `c128/main.s` | C128 client: the same, drawing on the VDC at 2 MHz |
 | `c128/petty128.cfg` | linker config (program must end below `$3800`) |
@@ -767,7 +783,10 @@ git commit -am "Version 1.0.0" && git tag v1.0.0 && git push origin main v1.0.0
 ```
 
 CI (`.github/workflows/ci.yml`) runs the tests, builds both clients and
-checks that `bridge/title.ans` and the generated includes are up to date. A `v*` tag
+checks that `bridge/title.ans` and the generated includes are up to date; a second job
+runs `make vice-test` with a headless VICE built from its release by
+`.github/build-vice.sh` (cached; Ubuntu's VICE has no ROMs), and keeps VICE's logs if it
+fails. The screen, picture and game checks are run by hand. A `v*` tag
 runs it again, then `release.yml` checks the tag against the version and
 publishes a GitHub release with the `.prg` files, a zip of them, a `.d64`
 disk image holding both and `staircase`, and the bridge as `petty-bridge-<tag>.tar.gz`
