@@ -81,7 +81,7 @@ srow        = $2D
 sidx        = $2E
 inv         = $2F               ; init_tables: 0, or $FC for the inverse half
 
-uline       = $39               ; $FF: underline what is written, else 0 (after sound.inc's)
+uline       = $46               ; $FF: underline what is written, else 0 (past sound.inc's $30-$43)
 
 ; Opcodes 0-28 (main.s handles 27, MODE).
 optable:

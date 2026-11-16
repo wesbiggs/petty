@@ -94,7 +94,7 @@ repcnt      = $22
 top         = $23
 bot         = $24
 tmp         = $29
-optab       = $3A               ; the screen's opcode table
+optab       = $44               ; the screen's opcode table (past sound.inc's $30-$43)
 
 CLIENT_ASK  = 1                 ; this client can ask for the dial's settings (dialask.inc)
 

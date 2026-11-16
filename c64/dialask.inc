@@ -106,9 +106,77 @@ dbg_hex:
 :       adc #'0'
 @out:   jmp dbg_put
 
+; The progress area blank, and the next character at its start: each dial attempt shows on its own, so the
+; area holds the one that got through, not the first ones. Clobbers A, X, Y.
+dbg_clear:
+.if DIAL_ASKING
+        bit cfg_dbg
+        bmi :+
+        rts
+:
+.endif
+        lda #0
+        sta dbg_row
+        sta dbg_col
+@cell:  lda dbg_row
+        clc
+        adc #20
+        tay
+        ldx dbg_col
+        lda #' '
+        jsr ui_cell
+        inc dbg_col
+        lda dbg_col
+        cmp #UI_COLS
+        bcc @cell
+        lda #0
+        sta dbg_col
+        inc dbg_row
+        lda dbg_row
+        cmp #4
+        bcc @cell
+        lda #0
+        sta dbg_row
+        rts
+
+; When the call is up: a prompt in row 19 (just above the progress), and a wait for a key, so the progress can be read (or photographed)
+; before the bridge's first frame clears it. Keys pressed before the prompt don't count. Clobbers A, X, Y.
+dbg_pause:
+.if DIAL_ASKING
+        bit cfg_dbg
+        bmi :+
+        rts
+:
+.endif
+        lda #0
+        sta dbg_i
+@msg:   ldx dbg_i
+        lda dbg_msg,x
+        beq @flush
+        ldy #19
+        jsr ui_cell
+        inc dbg_i
+        bne @msg
+@flush: jsr $FFE4               ; GETIN: empty the keyboard buffer
+        cmp #0
+        bne @flush
+@wait:  jsr $FFE4
+        cmp #0
+        beq @wait
+        rts
+
+.repeat 26, i
+.charmap $61 + i, 1 + i
+.endrep
+dbg_msg: .byte "Connected: press a key to go on", 0
+.repeat 26, i
+.charmap $61 + i, $61 + i
+.endrep
+
 dbg_row: .byte 0
 dbg_col: .byte 0
 dbg_a:   .byte 0
+dbg_i:   .byte 0
 .endif
 
 .if DIAL_ASKING

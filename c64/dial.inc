@@ -22,7 +22,7 @@ dial_init = dial_init_def
 .endif
 
 ; DIALDEBUG=1 (c64 and c128 only): progress on the screen (c64: lines 21-24, c128: lines 3-5): the ACIA status in hex, then ">I" init sent, ">T" ATDT sent,
-; ">D" a redial, ">C" CONNECT seen, ">X" done, and what the modem sends (a byte that is not text as $ and its hex). The area fills once and then holds.
+; ">D" a redial, ">C" CONNECT seen, ">X" done, and what the modem sends (a byte that is not text as $ and its hex). Each attempt starts the area again; it fills and then holds, and once the call is up it waits for a key.
 .macro DBGM ch
 .if DIAL_DBGCODE
         pha
@@ -93,6 +93,9 @@ dial:
         rts
 :
 .endif
+.if DIAL_DBGCODE
+        jsr dbg_clear
+.endif
         DBGM 'D'
 .if DIAL_DBGCODE
         pha
@@ -136,6 +139,8 @@ dial:
         adc #DIAL_WAIT
         sta dial_until
         ldy #0                  ; characters of CONNECT matched so far
+        lda #13                 ; as if after a line end: a result may come first
+        sta dial_prev
 @wait:  lda JIFFY_MID
         cmp dial_until
 .if DIAL_ASKING
@@ -153,20 +158,47 @@ dial:
         jsr dial_rx             ; C = a byte, in A (clobbers X)
         bcc @wait
         DBGRX
-        cmp dial_connect,y
+        ; CONNECT counts only as a result line: at the start of a line, and not followed by a letter. An
+        ; Ethernet modem says "Ethernet CONNECTED" when its link comes up, whether or not a call does.
+        ; Letters match in either case (a modem may swap them for PETSCII).
+        cpy #7
+        beq @after
+        sta dial_prev+1         ; the byte itself, to remember as the line's last
+        and #$DF                ; (letters: either case; CONNECT has nothing else)
+        cpy #0
+        bne @more
+        ldx dial_prev           ; the first letter only after CR or LF
+        cpx #13
+        beq @more
+        cpx #10
+        bne @next
+@more:  cmp dial_connect,y
         beq @match
         ldy #0
-        cmp dial_connect
-        bne @wait
+        beq @next
 @match: iny
-        cpy #7
-        bne @wait
+@next:  lda dial_prev+1
+        sta dial_prev
+        jmp @wait
+@after: and #$DF                ; the byte after CONNECT: a letter means a longer word
+        cmp #'A'
+        bcc @conn
+        cmp #'Z' + 1
+        bcs @conn
+        ldy #0
+        lda #0                  ; (not a line end)
+        sta dial_prev
+        jmp @wait
+@conn:
         ; The rest of the result line, and the frame the bridge sent when the
         ; call came in, go; the bridge redraws everything after our hello.
         DBGM 'C'
         lda #DIAL_QUIET
         jsr dial_drain
         DBGM 'X'
+.if DIAL_DBGCODE
+        jsr dbg_pause
+.endif
         rts
 
 ; Discard received bytes until none has come for A jiffies.
@@ -193,3 +225,4 @@ dial_connect: .byte "CONNECT"
 dial_until:   .byte 0
 dial_since:   .byte 0
 dial_quiet:   .byte 0
+dial_prev:    .byte 0, 0        ; the last byte the modem sent; the one being looked at

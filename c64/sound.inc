@@ -59,6 +59,7 @@ CIA2_CRA    = $DD0E
 CIA2_CRB    = $DD0F
 
 ; --- zero page, clear of the client's (this stays put while the screen waits) -
+; $30-$43: main.s and the screens keep theirs out of this range.
 acc         = $30               ; the decoder's accumulator,
 idx4        = $31               ; step index * 4,
 cur         = $32               ; the byte of codes being played,

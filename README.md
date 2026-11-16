@@ -732,7 +732,8 @@ Two ways to reach the bridge from a SwiftLink:
   before every dial.
 
   At startup, such a client sends `ATDT 192.168.1.20:6464` and waits for
-  `CONNECT`, dialling again every half minute until one comes. Then it
+  `CONNECT`, dialling again every half minute until one comes. Only a result line counts: `CONNECT` at the start of a
+  line, not followed by a letter (an Ethernet modem's "Ethernet CONNECTED", when its link comes up, is not a call). Then it
   discards the rest of the modem's result line and says hello. A client
   built without `DIAL` doesn't dial. Pass the same `DIAL` to every `make`
   that builds the clients (`make vice DIAL=...` too): a different one,
@@ -750,6 +751,8 @@ Two ways to reach the bridge from a SwiftLink:
   `DIALDEBUG=1` (or the question) shows the dial's progress in rows 21-24 of the screen, on both clients (the C64's on its text screen, before it switches): `>D` and the ACIA status
   (`10`, say, as two hex digits), `>I` after the start-up command, `>T` after `ATDT`, what the modem sends, `>C` on
   CONNECT. Status `aa` or `5a` and nothing else moving means the cartridge is not presenting a SwiftLink at `$DE00`.
+  Each dial attempt clears the rows first, so they show the latest one. Once the call is up it says `Connected: press a key
+  to go on` and waits, so the rows can be read before the bridge's first frame clears them.
 
 Other notes:
 

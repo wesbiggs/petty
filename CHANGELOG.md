@@ -21,6 +21,14 @@
 - **`petty-view FILE`** shows a picture full screen until a key is pressed, on any C64 screen: Koala in multicolour, Art Studio
   and Doodle! in hi-res (the new `VIEW` mode 3), and anything else converted (`-t hires` for hi-res).
 - SID scripts have `$9000-$9FFF` (4 KB), not `$9000-$BFFF`: above `$A000` the old text and hi-res clients read BASIC's ROM.
+- Fix: the C64 client froze, or fell into BASIC's READY., after any sound (`say`, `play`): the screen's command table pointer
+  (`optab`) shared zero page with the sound player's, which overwrote it. On the soft screens the underline switch shared a
+  byte with the sound's underrun count, so text could come out underlined after a sound. Both now sit past `$43`.
+- Fix: a dialling client took an Ethernet modem's "Ethernet CONNECTED" (printed when its link comes up) for the call, said
+  hello to the modem's command line and drew its echo, then waited for ever when the bridge was not up yet. Only a result
+  line counts now: `CONNECT` at the start of a line, not followed by a letter.
+- `DIALDEBUG=1`: the progress rows start again at each dial attempt, and once the call is up the client waits for a key
+  before saying hello, so they can be read before the bridge's first frame clears them.
 - Fix: flat conversion (`-t flat`) of a picture with more than 32767 colours drew much of it black.
 - **VICE tests in CI**: `make vice-test` runs the clients in VICE (`bridge/vice/`) against a pretend bridge, the real
   bridge and a pretend modem: each screen's hello and display, random drawing against the reference decoder,
