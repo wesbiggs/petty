@@ -610,6 +610,7 @@ init_acia:
         lda ACIA_DATA           ; discard anything pending
         rts
 
+.include "version.inc"          ; PETTY_VERSION, from bridge/package.json
 .include "dial.inc"
 .include "restart.inc"
 
@@ -760,9 +761,9 @@ init_screen:
         bne :-
 :       rts
 
-; Screen codes for "PETTY: Waiting for bridge..." (lowercase set).
+; Screen codes for "PETTY128 v<version>: Waiting for bridge..." (lowercase set).
 banner:
-        .byte 80,69,84,84,89,": ",87,1,9,20,9,14,7," ",6,15,18," ",2,18,9,4,7,5,"...",0
+        .byte 80,69,84,84,89,"128 ",22,PETTY_VERSION,": ",87,1,9,20,9,14,7," ",6,15,18," ",2,18,9,4,7,5,"...",0
 
 ; Build characters 0-127 in FONTBUF from the ROM and the custom glyphs, then
 ; upload them to the VDC and clear 128-511. Called with interrupts off.

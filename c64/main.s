@@ -76,6 +76,7 @@ DISPLAY_C64_HIRES = 3
 DISPLAY_C64_53 = 4
 MODES_MASK  = $80 | 1 << DISPLAY_C64 | 1 << DISPLAY_C64_80 | 1 << DISPLAY_C64_HIRES | 1 << DISPLAY_C64_53
 .include "start.inc"            ; START_DISPLAY, from make START=...
+.include "version.inc"          ; PETTY_VERSION, from bridge/package.json
 
 REPEAT_DELAY = 20               ; jiffies before auto-repeat
 REPEAT_RATE  = 3                ; jiffies between repeats

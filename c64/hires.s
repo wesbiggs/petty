@@ -436,9 +436,9 @@ init_screen:
         bne :-
 :       rts
 
-; Screen codes for "petty: waiting for bridge..." (lowercase set).
+; Screen codes for "petty v<version>: waiting for bridge..." (lowercase set).
 banner:
-        .byte 16,5,20,20,25,": ",23,1,9,20,9,14,7," ",6,15,18," ",2,18,9,4,7,5,"...",0
+        .byte 16,5,20,20,25," ",22,PETTY_VERSION,": ",23,1,9,20,9,14,7," ",6,15,18," ",2,18,9,4,7,5,"...",0
 
 ; FONT: codes 0-127 from the character ROM's lowercase half with the custom
 ; glyphs patched over it, turned into one page per pixel row; 128-255 blank
