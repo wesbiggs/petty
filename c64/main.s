@@ -136,7 +136,7 @@ start:
         cmp display
         beq :+
         jsr set_screen
-:       jsr hello
+:       jsr hello_wait          ; hello, until the bridge answers (welcome.inc)
 
 ; --- main loop: decode commands forever ------------------------------------
 cmdloop:
@@ -410,6 +410,8 @@ keypoll:
         bne target
 .endmacro
 .include "sound.inc"
+say_hello = hello
+.include "welcome.inc"
 .include "game.inc"
 .include "glyphs.inc"
 

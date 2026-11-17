@@ -6,7 +6,7 @@ import { mkdtempSync, readFileSync, copyFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
-import { MSG } from '../src/protocol.js';
+import { MSG, WELCOME } from '../src/protocol.js';
 
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
 const freePort = () => new Promise((ok, fail) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => ok(port)); }).on('error', fail); });
@@ -20,7 +20,12 @@ export async function startVice(prg, { keep = false, log = console.error } = {})
   const waiters = [];
   c.link = net.createServer(s => {
     c.sock = s;
-    s.on('data', d => { c.rx.push(...d); for (const w of [...waiters]) w(); });
+    s.on('data', d => {
+      // The client's first hello: answered as the bridge would, or the client waits for ever (and says it again).
+      if (!c.welcomed && d.includes(MSG.HELLO_ON)) { c.welcomed = true; s.write(Buffer.from(WELCOME)); }
+      c.rx.push(...d);
+      for (const w of [...waiters]) w();
+    });
   }).listen(linkPort, '127.0.0.1');
   c.waitFor = async (pred, what, ms = 20000) => {
     const until = Date.now() + ms;

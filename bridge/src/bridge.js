@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import pty from 'node-pty';
 import xterm from '@xterm/headless';
-import { DISPLAY, MSG, OP, VIEW, MODE_ORDER, displayById, displayReport, encodeFrame, encodeReset, encodePicture, parseMode, pickDisplay } from './protocol.js';
+import { DISPLAY, MSG, OP, VIEW, WELCOME, MODE_ORDER, displayById, displayReport, encodeFrame, encodeReset, encodePicture, parseMode, pickDisplay } from './protocol.js';
 import { loadLut } from './sound/lut.js';
 import { SoundManager } from './sound/manager.js';
 import { classifyRegion } from './sound/probe.js';
@@ -551,6 +551,9 @@ class Connection {
         this.region = null;
         this.since = Date.now();
         this.lastKey = Date.now();
+        // Before anything else: the client throws away all it receives until WELCOME (protocol.js).
+        this.sock.write(Buffer.from(WELCOME));
+        this.bytesSent += WELCOME.length;
         if (this.hasSound) this.sock.write(Buffer.from([OP.PROBE]));
         if (s.holding) s.showTitle();
         this.state = null;

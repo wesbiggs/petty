@@ -13,7 +13,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import assert from 'node:assert/strict';
-import { MSG, OP, Decoder, encodeSprDef, encodeSpr, encodeGlide, encodeMove, encodeSidW, encodeSidPlay, encodeSidStop, encodePoke, DISPLAY } from '../src/protocol.js';
+import { MSG, OP, WELCOME, Decoder, encodeSprDef, encodeSpr, encodeGlide, encodeMove, encodeSidW, encodeSidPlay, encodeSidStop, encodePoke, DISPLAY } from '../src/protocol.js';
 import { compileScript, SCRIPT_BASE } from '../src/game.js';
 
 const { values: opt, positionals } = parseArgs({ allowPositionals: true, options: { keep: { type: 'boolean', default: false }, display: { type: 'string', default: 'c64' } } });
@@ -109,6 +109,7 @@ async function check(name, fn) {
 
 try {
   await waitFor(() => take(MSG.HELLO_ON), 'HELLO_ON from the client', 60000);
+  sock.write(Buffer.from(WELCOME)); // the client waits for it
   await waitFor(() => take(MSG.MODES), 'MODES');
   await sleep(300);
   rx.length = 0;

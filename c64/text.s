@@ -288,9 +288,9 @@ init_screen:
         bne :-
 :       rts
 
-; Screen codes for "petty: waiting for bridge..." (lowercase set).
+; Screen codes for "PETTY: Waiting for bridge..." (lowercase set).
 banner:
-        .byte 16,5,20,20,25,": ",23,1,9,20,9,14,7," ",6,15,18," ",2,18,9,4,7,5,"...",0
+        .byte 80,69,84,84,89,": ",87,1,9,20,9,14,7," ",6,15,18," ",2,18,9,4,7,5,"...",0
 
 ; Called with interrupts off, from main.s's copy of the ROM's font.
 init_charset:

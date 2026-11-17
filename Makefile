@@ -46,14 +46,14 @@ $(shell mkdir -p $(BUILD) && \
 # The C64 client: its core (main.s) and its four screens.
 C64_SRC := c64/main.s c64/text.s c64/hires.s c64/soft80.s c64/soft53.s c64/glyphs.inc c64/font4x8.inc c64/font6x8.inc \
            c64/sound.inc c64/game.inc c64/move.inc c64/movebits.inc c64/view.inc c64/cells.inc \
-           c64/dial.inc c64/dialask.inc c64/restart.inc
+           c64/dial.inc c64/dialask.inc c64/restart.inc c64/welcome.inc
 $(BUILD)/main.o: $(C64_SRC) $(DIALSTR) $(STARTINC) | $(BUILD)
 	ca65 -I c64 -I $(BUILD) -l $(BUILD)/main.lst -o $@ c64/main.s
 
 $(PRG): $(BUILD)/main.o c64/petty.cfg
 	ld65 -C c64/petty.cfg -m $(BUILD)/petty.map -o $@ $(BUILD)/main.o
 
-$(BUILD)/main128.o: c128/main.s c64/glyphs.inc c64/sound.inc c64/dial.inc c64/dialask.inc c64/restart.inc $(DIALSTR) | $(BUILD)
+$(BUILD)/main128.o: c128/main.s c64/glyphs.inc c64/sound.inc c64/dial.inc c64/dialask.inc c64/restart.inc c64/welcome.inc $(DIALSTR) | $(BUILD)
 	ca65 -I c64 -I $(BUILD) -l $(BUILD)/main128.lst -o $@ c128/main.s
 
 $(PRG128): $(BUILD)/main128.o c128/petty128.cfg

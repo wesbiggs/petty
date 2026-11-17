@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
-import { DISPLAY, MSG, OP } from '../../src/protocol.js';
+import { DISPLAY, MSG, OP, WELCOME } from '../../src/protocol.js';
 
 export const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 export const BUILD = process.env.PETTY_BUILD ?? join(ROOT, 'build');
@@ -45,9 +45,10 @@ export const MODES_MASK = 0x80 | 1 << DISPLAY.C64.id | 1 << DISPLAY.C64_80.id | 
 
 // Waits for a client's hello and leaves it on c.display. The C64 client boots on the screen `make START` chose and
 // says which others it has (MODES), so a MODE follows: it clears the screen and says HELLO_ON and MODES again. Used
-// after RUN/STOP+RESTORE too, which starts it over on START's screen.
+// after RUN/STOP+RESTORE too, which starts it over on START's screen. The client waits for WELCOME after its first hello.
 export async function hello(l, c, ms = 60000) {
   await l.until(() => l.take(MSG.HELLO_ON), 'HELLO_ON', ms);
+  l.write(WELCOME); // the client throws away what comes before it, and says hello again until it comes
   if (!c.switches) return void await l.until(() => l.take(c.display.id), `display ${c.display.id}`);
   await l.until(() => l.take(MSG.MODES), 'MODES');
   await sleep(300); // the mask, and whatever the screen it booted on sent

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { Decoder, MSG, OP } from '../src/protocol.js';
+import { Decoder, MSG, OP, WELCOME } from '../src/protocol.js';
 
 const BRIDGE = fileURLToPath(new URL('../src/bridge.js', import.meta.url));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -47,6 +47,25 @@ test('a TCP connection that does not open with HELLO is dropped: an HTTP body ca
     const ok = client(b.port, [MSG.HELLO, MSG.KEY, 29, 0, MSG.KEY, 33, 0]);
     assert.ok(await waitFor(() => ok.dec.glyph[0] === 8 && ok.dec.glyph[1] === 9), 'h and i echoed');
     ok.sock.destroy();
+  } finally { b.stop(); }
+});
+
+test('every hello is answered with WELCOME before anything else', async () => {
+  const b = await start();
+  try {
+    const got = [];
+    const sock = net.connect(b.port, '127.0.0.1', () => sock.write(Buffer.from([MSG.HELLO_ON, 3, MSG.MODES, 0x9D])));
+    sock.on('data', d => got.push(...d));
+    sock.on('error', () => {});
+    assert.ok(await waitFor(() => got.length >= WELCOME.length + 4), 'answered');
+    assert.deepEqual(got.slice(0, WELCOME.length), WELCOME, 'WELCOME first');
+    // A client that says hello again (it did not hear the answer, or restarted) is answered again.
+    await sleep(300); // the first frame (no ACK is sent, so no other follows)
+    got.length = 0;
+    sock.write(Buffer.from([MSG.HELLO_ON, 3, MSG.MODES, 0x9D]));
+    assert.ok(await waitFor(() => got.length >= WELCOME.length), 'answered again');
+    assert.deepEqual(got.slice(0, WELCOME.length), WELCOME, 'WELCOME first again');
+    sock.destroy();
   } finally { b.stop(); }
 });
 

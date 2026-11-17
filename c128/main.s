@@ -154,10 +154,7 @@ start:
         jsr init_acia
         cli
         jsr dial                ; through a WiFi modem, if built with DIAL
-        lda #MSG_HELLO_ON
-        jsr send
-        lda #DISPLAY_C128
-        jsr send
+        jsr hello_wait          ; hello, until the bridge answers (welcome.inc)
 
 ; --- main loop: decode commands forever ------------------------------------
 cmdloop:
@@ -763,9 +760,9 @@ init_screen:
         bne :-
 :       rts
 
-; Screen codes for "petty: waiting for bridge..." (lowercase set).
+; Screen codes for "PETTY: Waiting for bridge..." (lowercase set).
 banner:
-        .byte 16,5,20,20,25,": ",23,1,9,20,9,14,7," ",6,15,18," ",2,18,9,4,7,5,"...",0
+        .byte 80,69,84,84,89,": ",87,1,9,20,9,14,7," ",6,15,18," ",2,18,9,4,7,5,"...",0
 
 ; Build characters 0-127 in FONTBUF from the ROM and the custom glyphs, then
 ; upload them to the VDC and clear 128-511. Called with interrupts off.
@@ -877,4 +874,11 @@ rowhi:
         bne target
 .endmacro
 .include "sound.inc"
+.include "welcome.inc"
+
+say_hello:
+        lda #MSG_HELLO_ON
+        jsr send
+        lda #DISPLAY_C128
+        jmp send
 .include "glyphs.inc"

@@ -21,6 +21,11 @@
 - **`petty-view FILE`** shows a picture full screen until a key is pressed, on any C64 screen: Koala in multicolour, Art Studio
   and Doodle! in hi-res (the new `VIEW` mode 3), and anything else converted (`-t hires` for hi-res).
 - SID scripts have `$9000-$9FFF` (4 KB), not `$9000-$BFFF`: above `$A000` the old text and hi-res clients read BASIC's ROM.
+- **WELCOME** (protocol, both clients): the bridge answers every hello with `$FF "PTY"`, and a client that has just
+  started throws away everything until it sees it, saying hello again every 3 seconds. A modem's echo of the hello (the three
+  stray characters a build without `DIAL` drew when nothing had dialled), its messages, and a serial bridge's frames from
+  before the hello are no longer run as commands, and a client whose link comes up late is heard on its next hello. Clients
+  and bridge must be updated together: a new client waits for ever on an older bridge. `c64/welcome.inc`.
 - Fix: the C64 client froze, or fell into BASIC's READY., after any sound (`say`, `play`): the screen's command table pointer
   (`optab`) shared zero page with the sound player's, which overwrote it. On the soft screens the underline switch shared a
   byte with the sound's underrun count, so text could come out underlined after a sound. Both now sit past `$43`.

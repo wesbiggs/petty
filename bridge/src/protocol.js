@@ -64,6 +64,12 @@
 //                               its screen and says HELLO_ON display again, then MODES (HELLO_ON of the
 //                               one it is on, if it has no such screen); the bridge sends it only with
 //                               no frame in flight, and nothing more until that HELLO_ON
+//   FF 50 54 59        WELCOME  the answer to every HELLO and HELLO_ON, sent before anything else for it.
+//                               A client that has just started (or restarted) throws away all it receives
+//                               until it sees these four bytes, saying hello again every 3 seconds meanwhile:
+//                               a modem's echo, its messages, or frames a serial bridge sent before the hello
+//                               are not commands. Each byte is above every opcode, so a client already
+//                               running (after a MODE's HELLO_ON) skips them.
 //   (opcodes are in hexadecimal above 9; the numbers are in OP below)
 //
 // C64 -> host:
@@ -169,6 +175,7 @@ export const GAME_SPRITE = 'game';
 const spriteKey = s => s === GAME_SPRITE ? s : s ? `${s.col},${s.row},${s.color},${s.data.join(',')}` : null;
 // VDC attribute bits beyond the colour.
 export const VDC = { UNDERLINE: 0x20, RVS: 0x40, ALT: 0x80 };
+export const WELCOME = [0xFF, 0x50, 0x54, 0x59]; // $FF "PTY"
 export const MSG = { ACK: 1, KEY: 2, HELLO: 3, HELLO_ON: 4, DONE: 5, CREDIT: 6, PROBE: 7, ABORT: 8, GLIDE: 9, MODES: 10 };
 
 const SPACE = 32;
@@ -618,6 +625,7 @@ export class Decoder {
         case OP.SIDRESET: this.sid.push({ op: 'reset' }); break;
         case OP.SPRMC: this.sprmc = [next(), next()]; break;
         case 0: break; // a no-op: the resync after a lost ACK is made of them
+        case WELCOME[0]: i += WELCOME.length - 1; this.welcomes = (this.welcomes ?? 0) + 1; break; // skipped, as a running client does
         case OP.MODE: this.mode = next(); break; // the client switches; what follows is for the new display
         case OP.POKE: {
           let addr = next() | next() << 8;

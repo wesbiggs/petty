@@ -577,6 +577,13 @@ and key codes go up to 87 with ALT as modifier bit 3. For
 the hi-res C64, a colour is foreground × 16 + background, and underline is
 switched with UNDERLINE.
 
+The bridge answers every HELLO and HELLO_ON first with WELCOME, the bytes `$FF "PTY"`. A client that has just
+started (or restarted with RUN/STOP+RESTORE) throws away everything it receives until those four bytes, saying hello
+again every 3 seconds meanwhile, so a modem's echo or messages (when nothing has dialled), or the frames a serial
+bridge sent before it heard from the client, are never run as commands; once the link is up, its next hello gets
+through. Each byte of WELCOME is above every opcode, so a client that is already running skips the later ones. A
+client and a bridge from before WELCOME don't work together: update both.
+
 For each frame the encoder tries every full-screen scroll offset and picks the
 cheapest encoding. A spinner tick costs about 7 bytes, and a full redraw about
 700–1500 at 40 columns, or up to about 3000 at 80.
