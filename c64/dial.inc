@@ -7,6 +7,7 @@
 ; send.
 
 .include "dialstr.inc"          ; dial_host_def, dial_init_def: DIAL and DIALINIT, 0-terminated
+; DIAL_DEBUG and DIAL_ASK come from dialopt.inc, which the client includes before its code.
 
 ; A client that can ask (c64/main.s defines CLIENT_ASK, includes dialask.inc) and was built with DIALASK=1 keeps the
 ; values in a buffer it edits (cfg_host, cfg_init, cfg_dbg), loads them from PETTY.CFG, and asks when there is none

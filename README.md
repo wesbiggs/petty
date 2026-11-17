@@ -453,7 +453,8 @@ be on. The text screen draws fastest, the hi-res one has a colour per cell and t
 80-column ones fit wider programs ([What each screen can do](#what-each-screen-can-do)). A switch clears the screen, resizes the program's terminal (the program gets a
 SIGWINCH, and a shell rewraps its lines) and redraws it all: quick on the text screen, about a second at 80 columns.
 
-The client starts on hi-res (`make START=c64-80`: another; `c64`, `c64-hires`, `c64-53` or `c64-80`). Then the
+The client starts on hi-res (`make START=c64-80`: another; `c64`, `c64-hires`, `c64-53` or `c64-80`; built with `DIALASK=1`,
+the screen `PETTY.CFG` names, once the call is up). Then the
 screen is chosen by, last word first:
 
 - **A program,** with `ESC ] 8350 ; mode ; SPEC BEL`, until it sends `ESC ] 8350 ; mode ; restore BEL` or exits. It
@@ -688,7 +689,7 @@ cube, a truecolor sweep and the custom glyphs. Regenerate it with
 | `bridge/scripts/ask-display.js` | asks the bridge which client it is drawing on (OSC 8350) and prints the answer |
 | `bridge/scripts/gen-title.js` | writes `bridge/title.ans`, the start screen |
 
-C64: code `$0801–$35B8` (`$3AFD` with `DIALASK=1`). BASIC's ROM is switched out (the client never returns to BASIC), and
+C64: code `$0801–$365A` (`$3D12` with `DIALASK=1`). BASIC's ROM is switched out (the client never returns to BASIC), and
 the VIC uses its second bank on every screen.
 
 | Address | What |
@@ -749,11 +750,13 @@ Two ways to reach the bridge from a SwiftLink:
   **Setting it up on the C64 instead.** `make DIALASK=1` (both clients) takes these from the client: it
   loads `PETTY.CFG` from the last device used (8 if that is not a disk drive), and if there is none, asks on the screen for
   the modem's start-up command (`DIALINIT`: `ATC` for a TeensyROM, blank for none), the bridge's address (`DIAL`, as
-  `host:port`) and whether to show the dial's progress, then saves the answers. Each question shows the built-in `DIAL`,
+  `host:port`), whether to show the dial's progress and, on the C64, which screen to go to once the call is up (T text,
+  H hi-res, 8 for 80 columns, 5 for 53; `START`'s until answered), then saves the answers. Each question shows the built-in `DIAL`,
   `DIALINIT` and `DIALDEBUG` as its answer, so `make DIALASK=1 DIALINIT=ATC` asks with `ATC` already in. RETURN keeps what is
   shown; a letter or digit typed first replaces it; DEL edits it. A blank address skips dialling. If CONNECT does not come in
   about 10 seconds the questions come back, with the current values shown, and are saved if changed. Delete `PETTY.CFG` to be
-  asked from scratch. Without a drive the answers are asked each time. On the C128 the file is read and written with the 2 MHz mode off.
+  asked from scratch. Without a drive the answers are asked each time. On the C128 the file is read and written with the 2 MHz mode off;
+  it keeps the C64's screen, so the two can share a disk. A `PETTY.CFG` from before the screen question still loads, and starts on `START`'s screen.
 
   `DIALDEBUG=1` (or the question) shows the dial's progress in rows 21-24 of the screen, on both clients (the C64's on its text screen, before it switches): `>D` and the ACIA status
   (`10`, say, as two hex digits), `>I` after the start-up command, `>T` after `ATDT`, what the modem sends, `>C` on

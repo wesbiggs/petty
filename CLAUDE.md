@@ -32,7 +32,7 @@ From a code review. Not fixed on purpose or for lack of a way to test; pick them
   (`bridge.js`, `screen.js`, `image.js`). `@xterm/headless` is `^6.0.0`: pin the exact version, or add a startup self-check that
   these exist, before taking a new xterm release.
 - **`PETTY.CFG` (DIALASK) is untested on a real drive.** Tested in VICE with a D64 only. `cfg_load` loads straight into the cassette
-  buffer, so a PETTY.CFG far longer than 71 bytes would overrun it (the end address is checked after the fact). Tested in VICE (x64sc, x128)
+  buffer, so a PETTY.CFG far longer than 72 bytes would overrun it (the end address is checked after the fact). Tested in VICE (x64sc, x128)
   on the single-screen C64 clients this one replaced and on the C128, never on hardware; on today's C64 client (it asks on its text screen)
   only the setup screen was looked at. The dial reads the modem through each client's RX ring (`dial_rx`), so a client's NMI must stay as it is.
 - **RUN/STOP+RESTORE (`c64/restart.inc`) is untested with a real RESTORE key.** VICE cannot press it: `bridge/vice/restart.js`
@@ -45,8 +45,8 @@ From a code review. Not fixed on purpose or for lack of a way to test; pick them
   (`make screen-check`), the game and picture checks pass on every screen, `bridge/vice/` checks its hello, drawing and
   RUN/STOP+RESTORE on each screen, and the dial, `DIALASK`'s setup screen and RUN/STOP+RESTORE (faked as above) were tried
   once by hand, before the game hardware, pictures and images came to the soft screens. Sound was measured
-  on its hi-res screen only. C=+F3 was not pressed in VICE: the key is covered by the bridge's tests. `PETTY.CFG` does not hold the
-  screen to start on (only `make START=...` does).
+  on its hi-res screen only. C=+F3 was not pressed in VICE: the key is covered by the bridge's tests. `PETTY.CFG`'s start screen (its last
+  byte; a 71-byte file from before it still loads) was checked once in VICE with a script, not in `bridge/vice/`.
 - **A connection that never says HELLO still takes the session over first.** `Session.attach` drops the current client as soon as a
   TCP connection arrives, before `onData` sees whether it opens with HELLO, so anything connecting to the client port (a port scan, a
   mistyped `petty-ctl --port`) hangs up the real C64. Seen while testing; not fixed.

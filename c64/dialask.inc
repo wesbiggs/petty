@@ -7,13 +7,17 @@
 ;                  show the progress live in PETTY.CFG on the drive the program came from (the KERNAL's last device,
 ;                  8 if that is not a disk). At start the file is loaded; if there is none, the screen asks, with the
 ;                  built-in DIAL, DIALINIT and DIALDEBUG as what is shown, and saves the answers. If the call does not
-;                  come in 9-13 seconds the screen asks again, with the current values shown.
+;                  come in 9-13 seconds the screen asks again, with the current values shown. A client with more than
+;                  one screen (CFG_SCREENS) also asks which to go to once the call is up; the file keeps it either way.
 ;
 ; Everything is drawn one character at a time through the client's own routine, so one engine serves the C64
 ; client (on its text screen) and the C128's 80-column VDC. A client provides:
 ;
 ;   UI_COLS      its width (40 or 80); the height is 25
-;   CFG          where the settings live (RAM the KERNAL's tape code would use): 71 bytes
+;   CFG          where the settings live (RAM the KERNAL's tape code would use): 72 bytes
+;   CFG_SCREENS  (optional) how many screens it can start on, with CFG_SCREEN_DEF the default and the tables
+;                cfg_scr_keys (the key for each, ASCII capitals or digits), cfg_scr_ids (its display) and
+;                cfg_scr_names (its name, 6 screen codes); cfg_screen is then the display to go to once the call is up
 ;   ui_cell      A = screen code, X = column, Y = row: draw it there. May clobber anything but the stack.
 ;   ui_clear     clear the screen
 ;   init_screen  draw the "waiting for bridge" banner (also clears)
@@ -21,7 +25,8 @@
 ;
 ; Keys come from the KERNAL's GETIN: its interrupt still scans the keyboard in every client. Characters in this
 ; file's strings are screen codes for the lowercase set (a-z at 1, A-Z at 65).
-; The settings: debug flag ($80 = show), command + 0 (30 characters), host + 0 (38).
+; The settings: debug flag ($80 = show), command + 0 (30 characters), host + 0 (38), the screen to start on (a display
+; id). A file of 71 bytes, from before the screen, is read too, and keeps CFG_SCREEN_DEF.
 
 .if DIAL_DBGCODE
 
@@ -193,9 +198,15 @@ FA          = $BA               ; the last device used
 cfg_dbg     = CFG
 cfg_init    = CFG + 1
 cfg_host    = CFG + 1 + 31
+cfg_screen  = CFG + 1 + 31 + 39
 INIT_MAX    = 30
 HOST_MAX    = 38
-CFG_SIZE    = 1 + 31 + 39
+CFG_SIZE    = 1 + 31 + 39 + 1
+CFG_SIZE_OLD = CFG_SIZE - 1     ; a PETTY.CFG from before cfg_screen
+.assert >(CFG + CFG_SIZE) = >(CFG + CFG_SIZE_OLD), error, "cfg_load compares only the low byte of the two sizes"
+.ifndef CFG_SCREEN_DEF
+CFG_SCREEN_DEF = $FF            ; one screen: the byte is kept as the file has it, for a C64 sharing the disk
+.endif
 
 NL          = $FF               ; new line in a string (13 is the letter m)
 CURSOR      = 31                ; screen code of the underscore
@@ -271,6 +282,12 @@ cfg_ask:
         ldx #>msg_dbg
         jsr puts
         jsr ask_dbg
+.ifdef CFG_SCREENS
+        lda #<msg_screen
+        ldx #>msg_screen
+        jsr puts
+        jsr ask_screen
+.endif
         lda #NL
         jsr ui_putc
         lda cfg_dirty
@@ -315,9 +332,10 @@ ask_dbg:
         beq :+
         sta cfg_dbg
         inc cfg_dirty
-:       ; fall through
+:       lda cfg_dbg             ; the answer's flags for show_yn
+        ; fall through
 
-; A: $80 shows "yes", else "no"; the cursor goes back over it.
+; A: $80 shows "yes", else "no"; the cursor goes back over it. (ask_dbg falls through to here.)
 show_yn:
         bpl @no
         lda #<msg_yes
@@ -331,6 +349,61 @@ show_yn:
         sbc #3
         sta ui_col
         rts
+
+.ifdef CFG_SCREENS
+; The screen to start on, with the current answer shown: its key answers, RETURN keeps it.
+ask_screen:
+        jsr show_screen
+@key:   jsr GETIN
+        and #$7F                ; shifted or not
+        cmp #13
+        bne :+
+        rts
+:       ldx #CFG_SCREENS - 1
+:       cmp cfg_scr_keys,x
+        beq :+
+        dex
+        bpl :-
+        bmi @key
+:       lda cfg_scr_ids,x
+        cmp cfg_screen
+        bne :+
+        rts
+:       sta cfg_screen
+        inc cfg_dirty
+        ; fall through
+show_screen:
+        ldx #CFG_SCREENS - 1
+:       lda cfg_scr_ids,x
+        cmp cfg_screen
+        beq :+
+        dex
+        bne :-                  ; (cfg_load sees that it is one of them)
+:       txa
+        asl
+        sta ui_y
+        asl
+        adc ui_y                ; x6
+        adc #<cfg_scr_names
+        tay
+        lda #>cfg_scr_names
+        adc #0
+        sty ed_dst
+        sta ed_dst+1
+        ldy #0
+:       sty ui_y
+        lda (ed_dst),y
+        jsr ui_putc
+        ldy ui_y
+        iny
+        cpy #6
+        bne :-
+        lda ui_col
+        sec
+        sbc #6
+        sta ui_col
+        rts
+.endif
 
 ; Edit the 0-terminated ASCII string at (ed_ptr), at most ed_max characters, which the screen already shows with the
 ; cursor at its end. A letter or digit typed first replaces it; DEL edits. Returns on RETURN.
@@ -492,7 +565,9 @@ cfg_defaults:
         bne :-
         lda #0
         sta cfg_host,x
-:       lda #0
+:       lda #CFG_SCREEN_DEF
+        sta cfg_screen
+        lda #0
         sta cfg_dirty
 .if DIAL_DEBUG
         lda #$80
@@ -549,13 +624,26 @@ cfg_load:
         ldy #>CFG
         jsr LOAD
         bcs @bad
-        cpx #<(CFG + CFG_SIZE)
-        bne @bad
         cpy #>(CFG + CFG_SIZE)
         bne @bad
-        lda #0                  ; whatever the file said, the strings end
+        cpx #<(CFG + CFG_SIZE)
+        beq :+
+        cpx #<(CFG + CFG_SIZE_OLD) ; no screen in it: cfg_screen keeps cfg_defaults'
+        bne @bad
+:       lda #0                  ; whatever the file said, the strings end
         sta cfg_init + INIT_MAX
         sta cfg_host + HOST_MAX
+.ifdef CFG_SCREENS
+        lda cfg_screen          ; and the screen is one there is
+        ldx #CFG_SCREENS - 1
+:       cmp cfg_scr_ids,x
+        beq :+
+        dex
+        bpl :-
+        lda #CFG_SCREEN_DEF
+        sta cfg_screen
+:
+.endif
         jsr cfg_fast
         clc
         rts
@@ -620,6 +708,10 @@ msg_init:   .byte NL, "Modem start-up command (blank for", NL
             .byte "none; a TeensyROM wants ATC):", NL, 0
 msg_host:   .byte NL, "Bridge to dial, as host:port:", NL, 0
 msg_dbg:    .byte NL, "Show the dial's progress? (Y/N) ", 0
+.ifdef CFG_SCREENS
+msg_screen: .byte NL, NL, "Start screen? T text, H hi-res,", NL
+            .byte "8 80 columns, 5 53 columns: ", 0
+.endif
 msg_yes:    .byte "yes", 0
 msg_no:     .byte "no ", 0
 msg_nosave: .byte "Could not save PETTY.CFG.", 0
