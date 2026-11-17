@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **The C64's start screen in `PETTY.CFG`** (`make DIALASK=1`): the setup screen asks which screen to go to once the call
+  is up (T, H, 8 or 5), and the file keeps it as a 72nd byte. A 71-byte file still loads and starts on `START`'s screen;
+  the C128 keeps the byte as it found it. The setup screen's dial-progress answer now shows "yes" when Y is pressed.
 - **One C64 client with four screens** (`petty.prg`): the text, hi-res, soft 80-column and the new soft 53-column screens in
   one program, which replaces `petty.prg` (text), `pettyhires.prg` and `petty80.prg`. It starts on hi-res (`make START=c64-80`
   and so on for another), and says which displays it can show after its `HELLO_ON` (`MODES`); the bridge switches it with

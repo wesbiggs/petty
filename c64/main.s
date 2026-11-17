@@ -9,7 +9,8 @@
 ; and POKE. The command loop dispatches through the current screen's opcode table.
 ;
 ; It starts on the text screen, which the dial (and DIALASK's settings screen)
-; draws on, then switches to START_DISPLAY and says HELLO_ON with it, and
+; draws on, then switches to START_DISPLAY (or, built with DIALASK, the screen
+; PETTY.CFG names) and says HELLO_ON with it, and
 ; MODES: the displays it can switch to. MODE display (from the bridge, between
 ; frames) switches: the screen is cleared, the sprites and the SID's scripts
 ; are stopped, and it says HELLO_ON and MODES again, for a full redraw. An id
@@ -77,6 +78,7 @@ DISPLAY_C64_53 = 4
 MODES_MASK  = $80 | 1 << DISPLAY_C64 | 1 << DISPLAY_C64_80 | 1 << DISPLAY_C64_HIRES | 1 << DISPLAY_C64_53
 .include "start.inc"            ; START_DISPLAY, from make START=...
 .include "version.inc"          ; PETTY_VERSION, from bridge/package.json
+.include "dialopt.inc"          ; DIAL_DEBUG, DIAL_ASK, from make DIALDEBUG=... DIALASK=...
 
 REPEAT_DELAY = 20               ; jiffies before auto-repeat
 REPEAT_RATE  = 3                ; jiffies between repeats
@@ -133,7 +135,11 @@ start:
         jsr init_acia
         cli
         jsr dial                ; through a WiFi modem, if built with DIAL
+.if DIAL_ASK
+        lda cfg_screen          ; PETTY.CFG's (START_DISPLAY if it has none), once the call is up
+.else
         lda #START_DISPLAY
+.endif
         cmp display
         beq :+
         jsr set_screen
@@ -555,4 +561,19 @@ ui_cell     = text::ui_cell
 ui_clear    = text::ui_clear
 .endif
 init_screen = text::init_screen
+; The screens the setup screen offers to go to once the call is up: the key, the display and its name (6 screen codes,
+; lowercase a-z at 1).
+.if DIAL_ASKING
+CFG_SCREEN_DEF = START_DISPLAY
+CFG_SCREENS = NUM_SCREENS
+cfg_scr_keys:   .byte "T", "H", "8", "5"
+cfg_scr_ids:    .byte DISPLAY_C64, DISPLAY_C64_HIRES, DISPLAY_C64_80, DISPLAY_C64_53
+.repeat 26, i
+.charmap $61 + i, 1 + i
+.endrep
+cfg_scr_names:  .byte "text  ", "hi-res", "80 col", "53 col"
+.repeat 26, i
+.charmap $61 + i, $61 + i
+.endrep
+.endif
 .include "dialask.inc"

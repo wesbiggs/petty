@@ -611,6 +611,7 @@ init_acia:
         rts
 
 .include "version.inc"          ; PETTY_VERSION, from bridge/package.json
+.include "dialopt.inc"          ; DIAL_DEBUG, DIAL_ASK, from make DIALDEBUG=... DIALASK=...
 .include "dial.inc"
 .include "restart.inc"
 
