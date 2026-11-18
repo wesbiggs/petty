@@ -138,8 +138,13 @@ export async function vice(client, { port, prg, sound, args = [] } = {}) {
     '-remotemonitor', '-remotemonitoraddress', `ip4://127.0.0.1:${monPort}`,
     ...args,
   ], { cwd: work, stdio: 'ignore' });
-  let exited = false;
-  const exit = new Promise(r => proc.once('exit', () => { exited = true; r(); }));
+  // How VICE ended, said when it ends before it is asked to: on a runner it has died without a word (or a log).
+  let exited = false, asked = false;
+  const exit = new Promise(r => proc.once('exit', (code, signal) => {
+    exited = true;
+    if (!asked) console.error(`${c.emu} (${client}) ended by itself: ${signal ? `signal ${signal}` : `exit code ${code}`}`);
+    r();
+  }));
   proc.once('error', e => { console.error(`can't run ${c.emu}: ${e.message}`); });
 
   // One connection to the monitor, kept: a command sent just after a connection closes can be lost.
@@ -191,6 +196,7 @@ export async function vice(client, { port, prg, sound, args = [] } = {}) {
     // Asks VICE to quit (so it writes what it records), and waits until it has.
     async quit() {
       if (exited) return;
+      asked = true;
       mon ??= await connect();
       mon.write('quit\n');
       await Promise.race([exit, sleep(10000)]);
@@ -198,6 +204,7 @@ export async function vice(client, { port, prg, sound, args = [] } = {}) {
     },
     async stop() {
       mon?.destroy();
+      asked = true;
       if (!exited) { proc.kill(); await Promise.race([exit, sleep(5000)]); if (!exited) proc.kill('SIGKILL'); }
       if (process.env.PETTY_KEEP) console.error(`kept ${work}`);
       else rmSync(work, { recursive: true, force: true });
