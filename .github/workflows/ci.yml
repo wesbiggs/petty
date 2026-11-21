@@ -13,11 +13,11 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
           cache-dependency-path: bridge/package-lock.json
 
@@ -40,7 +40,7 @@ jobs:
           node bridge/scripts/gen-title.js
           git diff --exit-code -- c64/glyphs.inc c64/font4x8.inc c64/font6x8.inc bridge/title.ans
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: prg
           path: build/*.prg
@@ -51,18 +51,18 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
           cache-dependency-path: bridge/package-lock.json
 
       - name: Install cc65
         run: sudo apt-get update && sudo apt-get install -y cc65
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         id: vice
         with:
           path: ~/vice
@@ -96,7 +96,7 @@ jobs:
 
       - name: VICE logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: vice-logs
           path: /tmp/petty-vice-*/vice.log
